@@ -11,6 +11,7 @@ Settings settings = {
     .fullscreen = false,
     .integer_scale = false,
     .no_sprite_limit = true,
+    .internal_scale = 3,
     .window_scale = 4,
     .rewind = true,
     .rewind_mb = 64,
@@ -36,6 +37,7 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "fullscreen")) settings.fullscreen = parse_bool(v);
         else if (!strcmp(k, "integer_scale")) settings.integer_scale = parse_bool(v);
         else if (!strcmp(k, "no_sprite_limit")) settings.no_sprite_limit = parse_bool(v);
+        else if (!strcmp(k, "internal_scale")) settings.internal_scale = atoi(v);
         else if (!strcmp(k, "window_scale")) settings.window_scale = atoi(v);
         else if (!strcmp(k, "rewind")) settings.rewind = parse_bool(v);
         else if (!strcmp(k, "rewind_mb")) settings.rewind_mb = atoi(v);
@@ -49,6 +51,7 @@ void settings_load(const char *path) {
     fclose(f);
     if (settings.aspect_w <= 0 || settings.aspect_h <= 0) { settings.aspect_w = 16; settings.aspect_h = 9; }
     if (settings.window_scale < 1 || settings.window_scale > 10) settings.window_scale = 4;
+    if (settings.internal_scale < 1 || settings.internal_scale > 4) settings.internal_scale = 3;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
     if (settings.state_slot < 1 || settings.state_slot > 9) settings.state_slot = 1;
 }
@@ -63,6 +66,7 @@ void settings_save(const char *path) {
     fprintf(f, "fullscreen=%d\n", settings.fullscreen);
     fprintf(f, "integer_scale=%d\n", settings.integer_scale);
     fprintf(f, "no_sprite_limit=%d\n", settings.no_sprite_limit);
+    fprintf(f, "internal_scale=%d\n", settings.internal_scale);
     fprintf(f, "window_scale=%d\n", settings.window_scale);
     fprintf(f, "rewind=%d\n", settings.rewind);
     fprintf(f, "rewind_mb=%d\n", settings.rewind_mb);
@@ -112,6 +116,10 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_INTEGER:    snprintf(out, n, "%s", settings.integer_scale ? "On" : "Off"); break;
     case OPT_WINDOW:     snprintf(out, n, "%d\xC3\x97", settings.window_scale); break;
     case OPT_FLICKER:    snprintf(out, n, "%s", settings.no_sprite_limit ? "On" : "Off"); break;
+    case OPT_INTERNAL:
+        if (settings.internal_scale <= 1) snprintf(out, n, "Native");
+        else snprintf(out, n, "%d\xC3\x97", settings.internal_scale);
+        break;
     case OPT_REWIND:     snprintf(out, n, "%s", settings.rewind ? "On" : "Off"); break;
     case OPT_REWIND_MB:  snprintf(out, n, "%d MB", settings.rewind_mb); break;
     case OPT_LAUNCHER:   snprintf(out, n, "%s", settings.show_launcher ? "On" : "Off"); break;
@@ -142,6 +150,7 @@ void settings_option_change(int id, int dir) {
     case OPT_INTEGER:    settings.integer_scale = !settings.integer_scale; break;
     case OPT_WINDOW:     settings.window_scale = settings_cycle(settings.window_scale - 2, 5, dir) + 2; break;
     case OPT_FLICKER:    settings.no_sprite_limit = !settings.no_sprite_limit; break;
+    case OPT_INTERNAL:   settings.internal_scale = settings_cycle(settings.internal_scale - 1, 4, dir) + 1; break;
     case OPT_REWIND:     settings.rewind = !settings.rewind; break;
     case OPT_REWIND_MB: {
         int cur = 1;

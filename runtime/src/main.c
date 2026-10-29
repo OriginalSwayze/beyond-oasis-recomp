@@ -7,6 +7,7 @@
 #include "png.h"
 #include "launcher.h"
 #include "cheats.h"
+#include "hd.h"
 #include "menu.h"
 #include "savestate.h"
 #include "ui.h"
@@ -127,6 +128,7 @@ static void apply_settings(void) {
     vdp_opts.extra_width = settings_extra_width();
     widescreen_patches(vdp_opts.extra_width);
     vdp_opts.no_sprite_limit = settings.no_sprite_limit;
+    vdp_opts.hd_capture = settings.internal_scale > 1;
 }
 
 /* ---- Input -------------------------------------------------------------------- */
@@ -212,6 +214,7 @@ int main(int argc, char **argv) {
     int menu_w = 1920, menu_h = 1080;
     int save_to = 0;
     int load_from = 0;
+    const char *hd_shot = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--headless") && i + 1 < argc) headless_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
@@ -240,6 +243,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--shots") && i + 2 < argc) { shot_every = atoi(argv[++i]); shot_dir = argv[++i]; }
         else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) settings.widescreen = atoi(argv[++i]) != 0;
         else if (!strcmp(argv[i], "--no-launcher")) no_launcher = true;
+        else if (!strcmp(argv[i], "--hd-shot") && i + 2 < argc) {
+            /* --hd-shot F.png SCALE: save the last frame at the internal resolution SCALE (2-4). */
+            hd_shot = argv[++i];
+            settings.internal_scale = atoi(argv[++i]);
+        }
         else if (!strcmp(argv[i], "--save-to") && i + 1 < argc) save_to = atoi(argv[++i]);   /* save a slot at the end */
         else if (!strcmp(argv[i], "--states-base") && i + 1 < argc) savestate_init(argv[++i]);  /* e.g. "test_" -> test_states/ */
         else if (!strcmp(argv[i], "--slot") && i + 1 < argc) settings.state_slot = atoi(argv[++i]);
@@ -388,6 +396,13 @@ int main(int argc, char **argv) {
             }
         }
         if (shot && save_shot(shot) != 0) fprintf(stderr, "could not save %s\n", shot);
+        if (hd_shot) {
+            Uint64 t0 = SDL_GetPerformanceCounter();
+            hd_compose(settings.internal_scale);
+            double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency();
+            printf("hd frame %dx%d in %.2f ms\n", hd_w, hd_h, ms);
+            png_write(hd_shot, hd_px, hd_w, hd_h, hd_w);
+        }
         if (save_to && !savestate_save(save_to, framebuffer, frame_width(), vdp_screen_height(), FB_W))
             fprintf(stderr, "could not save slot %d\n", save_to);
         if (menu_shot) {
@@ -413,6 +428,8 @@ int main(int argc, char **argv) {
                                        (settings.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
     SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, FB_W, FB_H);
+    SDL_Texture *hd_tex = NULL;         /* the frame at the internal resolution */
+    int hd_tex_w = 0, hd_tex_h = 0;
     SDL_GameController *pad = NULL;
     SDL_AudioSpec want = { .freq = 48000, .format = AUDIO_S16SYS, .channels = 2, .samples = 1024 }, have;
     SDL_AudioDeviceID audio = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
@@ -539,12 +556,24 @@ int main(int argc, char **argv) {
                 SDL_QueueAudio(audio, sound_out, (Uint32)sound_out_count * 4);
         }
 
-        SDL_UpdateTexture(tex, NULL, framebuffer, FB_W * 4);
-        SDL_Rect src = { 0, 0, frame_width(), vdp_screen_height() };
         SDL_Rect dst = display_rect(ww, wh);
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
-        SDL_RenderCopy(ren, tex, &src, &dst);
+        if (settings.internal_scale > 1 && hd_frame.h == vdp_screen_height()) {
+            hd_compose(settings.internal_scale);
+            if (!hd_tex || hd_tex_w != hd_w || hd_tex_h != hd_h) {
+                if (hd_tex) SDL_DestroyTexture(hd_tex);
+                hd_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, hd_w, hd_h);
+                SDL_SetTextureScaleMode(hd_tex, SDL_ScaleModeLinear);   /* the last, non-integer step to the window */
+                hd_tex_w = hd_w; hd_tex_h = hd_h;
+            }
+            SDL_UpdateTexture(hd_tex, NULL, hd_px, hd_w * 4);
+            SDL_RenderCopy(ren, hd_tex, NULL, &dst);
+        } else {
+            SDL_UpdateTexture(tex, NULL, framebuffer, FB_W * 4);
+            SDL_Rect src = { 0, 0, frame_width(), vdp_screen_height() };
+            SDL_RenderCopy(ren, tex, &src, &dst);
+        }
         SDL_RenderPresent(ren);
 
         next += (Uint64)(frame_s * freq);

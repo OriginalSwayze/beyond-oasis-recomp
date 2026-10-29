@@ -23,6 +23,7 @@ static const Item items[] = {
     { ITEM_OPTION, "Aspect ratio", OPT_ASPECT },
     { ITEM_OPTION, "Fullscreen", OPT_FULLSCREEN },
     { ITEM_OPTION, "Integer scaling", OPT_INTEGER },
+    { ITEM_OPTION, "Internal resolution", OPT_INTERNAL },
     { ITEM_OPTION, "Sprite flicker fix", OPT_FLICKER },
     { ITEM_HEADER, "CHEATS", 0 },
     { ITEM_OPTION, "Infinite health", OPT_CHEAT_HEALTH },
@@ -43,8 +44,8 @@ static const Item items[] = {
 #define LIST_X  (PANEL_X + 40)
 #define LIST_R  (PANEL_X + PANEL_W - 36)
 #define LIST_Y  (PANEL_Y + 92)
-#define ROW_H   30
-#define HEAD_H  28
+#define ROW_H   28
+#define HEAD_H  27
 #define CARD_X  662
 #define CARD_Y  166
 #define CARD_W  532

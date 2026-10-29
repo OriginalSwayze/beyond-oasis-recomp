@@ -17,6 +17,7 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | Save states and rewind (`runtime/src/state.c`, `rewind.c`) | done |
 | Launcher (`runtime/src/launcher.c`) | done: settings, ROM picker, foil steelbook |
 | In-game menu (`runtime/src/menu.c`) | done: save/load slots with thumbnails, options, reset, quit |
+| Internal resolution 2-4x (`runtime/src/hd.c`) | done: per-layer Scale2x/Scale3x |
 | Cheats (`runtime/src/cheats.c`) | done: infinite health and spirit, unbreakable weapons, RAM codes |
 
 ## Testing
@@ -49,6 +50,7 @@ Other headless options:
 * `--menu-shot F.png W H`: open the in-game menu over the last frame and render it at W x H
 * `--save-to N`, `--slot N`, `--states-base PREFIX`: save a slot at the end, pick the menu's slot,
   and keep test slots in `PREFIXstates/` instead of the real ones
+* `--hd-shot F.png SCALE`: save the last frame at internal resolution SCALE (2-4), with the time it took
 * `--load N`: load slot N (from the `--states-base` folder) before the first frame
 * `--cheat health|spirit|weapons`: turn a built-in cheat on for this run
 * `--poke FFxxxx:VV[VV],...`: hold RAM bytes or words every frame (applied after the built-in cheats)
@@ -74,6 +76,24 @@ too. "Show launcher at startup" turns it off; `show_launcher=1` in `settings.ini
 Esc pauses the game over a blurred copy of the last frame. The menu saves and loads
 the nine slots (each with a thumbnail and the time it was saved), changes the display
 options and rewind on the spot, and resets or quits (both ask for a second press).
+
+## Internal resolution
+
+"Internal resolution" (launcher and pause menu, `internal_scale` in `settings.ini`,
+default 3x) redraws the game at 2x, 3x or 4x of its 320x224 picture. The VDP keeps each
+line's three layers (plane B, plane A with the window, sprites) with their colours and
+priorities. `hd.c` scales each layer on its own with Scale2x or Scale3x (4x is 2x twice),
+then composites them at that size with the VDP's own rules, priorities and
+shadow/highlight included.
+
+These scalers only copy whole source pixels, so outlines and diagonals get smoothed while
+colours stay exact and layers never bleed into each other. Mid-frame palette changes and
+line scrolling still work, because every line was captured with its own colours. The art
+gains no new detail: it is the original art, drawn smoother at the window's size.
+
+At 3x a frame takes about 4 ms (6-8 ms at 4x with widescreen) on one core. "Native" turns
+it off and shows the original pixels. The native picture is unchanged, as are save-state
+thumbnails and screenshots.
 
 ## Cheats
 

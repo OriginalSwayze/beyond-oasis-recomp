@@ -2,6 +2,7 @@
  * The renderer can draw extra columns on both sides of the 320-pixel screen
  * (vdp_opts.extra_width) for widescreen; the game still thinks it is 320 wide. */
 #include "genesis.h"
+#include "hd.h"
 #include <string.h>
 #include <stdio.h>
 #include "m68k.h"
@@ -310,10 +311,58 @@ static uint32_t rgb(uint16_t c, int mode) {
     return (uint32_t)t[(c >> 1) & 7] << 16 | (uint32_t)t[(c >> 5) & 7] << 8 | t[(c >> 9) & 7];
 }
 
+/* A layer pixel: the CRAM colour in bits 0-15 and the layer byte in bits 16-23 (the
+ * priority bit is kept on transparent pixels too: shadow/highlight looks at it). */
+static inline uint32_t layer_px(uint8_t v) {
+    return (v & 0x0F) ? (uint32_t)vdp.cram[v & 0x3F] | (uint32_t)v << 16 : (uint32_t)(v & PRI) << 16;
+}
+
+uint32_t vdp_compose(uint32_t a, uint32_t b, uint32_t s, uint16_t backdrop, bool sh) {
+    uint8_t ab = (uint8_t)(a >> 16), bb = (uint8_t)(b >> 16), sb = (uint8_t)(s >> 16);
+    /* Top-most opaque pixel: S-high, A-high, B-high, S-low, A-low, B-low, backdrop. */
+    uint32_t layers[6] = {
+        (sb & PRI) ? s : 0, (ab & PRI) ? a : 0, (bb & PRI) ? b : 0,
+        (sb & PRI) ? 0 : s, (ab & PRI) ? 0 : a, (bb & PRI) ? 0 : b,
+    };
+    int which = -1;
+    for (int k = 0; k < 6; k++) {
+        if ((layers[k] >> 16) & 0x0F) { which = k; break; }
+    }
+    uint16_t color = which < 0 ? backdrop : (uint16_t)layers[which];
+    int mode = 1;
+    if (sh) {
+        /* Planes are shadowed unless one of them is high priority. */
+        mode = ((ab | bb) & PRI) ? 1 : 0;
+        if (which == 0 || which == 3) {
+            int sc = sb & 0x3F;
+            if (sc == 0x3E || sc == 0x3F) {
+                /* Palette 3 colours 14/15 are operators: tint whatever is below. */
+                int below = -1;
+                for (int k = 0; k < 6; k++) {
+                    if (k == 0 || k == 3) continue;
+                    if ((layers[k] >> 16) & 0x0F) { below = k; break; }
+                }
+                color = below < 0 ? backdrop : (uint16_t)layers[below];
+                mode = sc == 0x3E ? (mode == 0 ? 1 : 2) : 0;
+            } else if (sb & PRI) {
+                mode = 1;
+            }
+        }
+    }
+    return rgb(color, mode);
+}
+
 void vdp_render_line(int line, uint32_t *dst) {
     int extra = vdp_opts.extra_width;
     int w = vdp_screen_width() + extra * 2;
     uint16_t backdrop = vdp.cram[vdp.reg[7] & 0x3F];
+    bool capture = vdp_opts.hd_capture && line < HD_MAX_H;
+    if (capture) {
+        if (line == 0) { hd_frame.w = w; hd_frame.extra = extra; hd_frame.mask_sides = vdp_opts.mask_sides; }
+        hd_frame.h = line + 1;
+        hd_frame.backdrop[line] = backdrop;
+        hd_frame.flags[line] = 0;
+    }
     if (!(vdp.reg[1] & 0x40)) {
         uint32_t c = rgb(backdrop, 1);
         for (int i = 0; i < w; i++) dst[i] = c;
@@ -333,38 +382,15 @@ void vdp_render_line(int line, uint32_t *dst) {
     }
 
     bool sh = vdp.reg[12] & 0x08;
-    for (int i = 0; i < w; i++) {
-        /* Top-most opaque pixel: S-high, A-high, B-high, S-low, A-low, B-low, backdrop. */
-        uint8_t layers[6] = {
-            (s[i] & PRI) ? s[i] : 0, (a[i] & PRI) ? a[i] : 0, (b[i] & PRI) ? b[i] : 0,
-            (s[i] & PRI) ? 0 : s[i], (a[i] & PRI) ? 0 : a[i], (b[i] & PRI) ? 0 : b[i],
-        };
-        int idx = -1, which = -1;
-        for (int k = 0; k < 6; k++) {
-            if (layers[k] & 0x0F) { idx = layers[k] & 0x3F; which = k; break; }
+    if (capture) {
+        hd_frame.flags[line] = HD_LINE_DISPLAY | (sh ? HD_LINE_SH : 0);
+        for (int i = 0; i < w; i++) {
+            uint32_t pa = layer_px(a[i]), pb = layer_px(b[i]), ps = layer_px(s[i]);
+            hd_frame.a[line][i] = pa; hd_frame.b[line][i] = pb; hd_frame.s[line][i] = ps;
+            dst[i] = vdp_compose(pa, pb, ps, backdrop, sh);
         }
-        uint16_t color = idx < 0 ? backdrop : vdp.cram[idx];
-        int mode = 1;
-        if (sh) {
-            /* Planes are shadowed unless one of them is high priority. */
-            mode = ((a[i] | b[i]) & PRI) ? 1 : 0;
-            if (which == 0 || which == 3) {
-                int sc = s[i] & 0x3F;
-                if (sc == 0x3E || sc == 0x3F) {
-                    /* Palette 3 colours 14/15 are operators: tint whatever is below. */
-                    int below = -1;
-                    for (int k = 0; k < 6; k++) {
-                        if (k == 0 || k == 3) continue;
-                        if (layers[k] & 0x0F) { below = layers[k] & 0x3F; break; }
-                    }
-                    color = below < 0 ? backdrop : vdp.cram[below];
-                    mode = sc == 0x3E ? (mode == 0 ? 1 : 2) : 0;
-                } else if (s[i] & PRI) {
-                    mode = 1;
-                }
-            }
-        }
-        dst[i] = rgb(color, mode);
+    } else {
+        for (int i = 0; i < w; i++) dst[i] = vdp_compose(layer_px(a[i]), layer_px(b[i]), layer_px(s[i]), backdrop, sh);
     }
     if (vdp_opts.mask_sides && extra) {
         memset(dst, 0, (size_t)extra * sizeof *dst);

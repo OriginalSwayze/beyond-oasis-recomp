@@ -56,6 +56,7 @@ typedef struct {
     bool no_sprite_limit;               /* draw past the 20-per-line hardware limit (no flicker) */
     bool mask_sides;                    /* draw the widescreen columns black (screens made for 320) */
     int  hide_layers;                   /* debugging: bit 0 plane A, 1 plane B, 2 sprites, 3 window */
+    bool hd_capture;                    /* keep each line's layers for hd_compose() (hd.h) */
 } VdpOptions;
 
 extern Vdp vdp;
@@ -70,6 +71,8 @@ int      vdp_screen_width(void);        /* 256 or 320, before widescreen */
 int      vdp_screen_height(void);       /* 224 or 240 */
 /* Renders one active line into dst (0x00RRGGBB), width = screen width + 2*extra_width. */
 void     vdp_render_line(int line, uint32_t *dst);
+/* Final colour of one pixel from its plane A, plane B and sprite layer pixels (hd.h). */
+uint32_t vdp_compose(uint32_t a, uint32_t b, uint32_t s, uint16_t backdrop, bool sh);
 int      vdp_irq_level(void);
 
 /* ---- Controllers (io.c) --------------------------------------------------- */

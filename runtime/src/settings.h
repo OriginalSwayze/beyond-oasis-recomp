@@ -12,6 +12,7 @@ typedef struct {
     bool fullscreen;
     bool integer_scale;
     bool no_sprite_limit;
+    int  internal_scale;                /* 1 = native; 2-4 = layers redrawn at that scale (hd.c) */
     int  window_scale;
     bool rewind;                        /* keep a rewind buffer (hold the rewind key to step back) */
     int  rewind_mb;                     /* rewind buffer size; frames cost ~1 KB, so 64 MB is many minutes */
@@ -30,7 +31,7 @@ void settings_save(const char *path);
 /* Options the launcher and the in-game menu show: a value label, and stepping it. */
 enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_FLICKER, OPT_REWIND, OPT_REWIND_MB,
        OPT_LAUNCHER, OPT_CHEAT_HEALTH, OPT_CHEAT_SPIRIT, OPT_CHEAT_WEAPONS,
-       OPT_CHEATS };                    /* all three cheats as presets: Off, Health, Health + spirit, All */
+       OPT_CHEATS, OPT_INTERNAL };                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);
 void settings_option_change(int id, int dir);
 int  settings_cycle(int v, int count, int dir);     /* (v + dir) wrapped into 0..count-1 */

@@ -485,6 +485,7 @@ static const Row rows[] = {
     { ROW_OPTION, "Integer scaling", OPT_INTEGER },
     { ROW_OPTION, "Window size", OPT_WINDOW },
     { ROW_HEADER, "ENHANCEMENTS", 0 },
+    { ROW_OPTION, "Internal resolution", OPT_INTERNAL },
     { ROW_OPTION, "Sprite flicker fix", OPT_FLICKER },
     { ROW_OPTION, "Rewind", OPT_REWIND },
     { ROW_OPTION, "Rewind buffer", OPT_REWIND_MB },
@@ -499,8 +500,8 @@ static const Row rows[] = {
 #define PANEL_X 572
 #define PANEL_R 1196
 #define ROWS_Y  176
-#define ROW_H   30
-#define HEAD_H  28
+#define ROW_H   29
+#define HEAD_H  26
 
 /* Selectable items: the option/ROM rows, then PLAY and QUIT. */
 enum { ITEM_PLAY = 100, ITEM_QUIT = 101 };
