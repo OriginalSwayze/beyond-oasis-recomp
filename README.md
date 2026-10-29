@@ -19,6 +19,7 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | In-game menu (`runtime/src/menu.c`) | done: save/load slots with thumbnails, options, reset, quit |
 | Internal resolution 2-4x (`runtime/src/hd.c`) | done: per-layer Scale2x/Scale3x |
 | Smooth motion, 60-144 Hz+ (`runtime/src/hd.c`) | done: glides between the game's 30 Hz updates |
+| Display filters (`runtime/src/filter.c`) | done: scanlines, CRT, LCD |
 | Cheats (`runtime/src/cheats.c`) | done: infinite health and spirit, unbreakable weapons, RAM codes |
 
 ## Testing
@@ -53,6 +54,8 @@ Other headless options:
   and keep test slots in `PREFIXstates/` instead of the real ones
 * `--hd-shot F.png SCALE`: save the last frame at internal resolution SCALE (2-4), with the time it took
 * `--smooth-check DIR SCALE`: smooth motion over the last 8 frames at 120 Hz; prints how far each picture is between motion updates and saves them
+* `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
+* `--filter-shot F.png W H MODE`: draw the last frame at W x H with filter MODE on the GPU (hidden window) and save it
 * `--load N`: load slot N (from the `--states-base` folder) before the first frame
 * `--cheat health|spirit|weapons`: turn a built-in cheat on for this run
 * `--poke FFxxxx:VV[VV],...`: hold RAM bytes or words every frame (applied after the built-in cheats)
@@ -119,6 +122,23 @@ glides from one motion update to the next instead of jumping:
 Motion is shown one update (about 33 ms) late. Smooth motion works at any internal
 resolution; at Native it moves whole pixels. A picture takes about 3 ms at 3x (16:9) on
 several cores, 5 ms on frames that also scale new layers.
+
+## Display filters
+
+"Filter" (launcher and pause menu, `filter=off|scanlines|crt|lcd` in `settings.ini`)
+draws the picture with a screen look, on the GPU through SDL's renderer:
+
+* **Scanlines**: a dark gap between the game's lines, lined up with its 224 lines at
+  any window size (they fade out when a line is under three screen pixels tall).
+* **CRT**: scanlines, red/green/blue aperture-grille stripes, a soft glow, a vignette
+  and a gently curved picture.
+* **LCD**: a thin grid between the game's pixels, like a handheld screen.
+
+The scanlines, stripes, grid and vignette are one overlay texture, built once per
+window size and multiplied over the picture. The glow is the picture drawn at 1/8 size
+and added back stretched, which blurs it. The curve draws the picture and the overlay
+as a bent 40x30 triangle mesh (`SDL_RenderGeometry`). Filters work with every internal
+resolution and with smooth motion; screenshots and save thumbnails stay unfiltered.
 
 ## Cheats
 

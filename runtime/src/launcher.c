@@ -481,9 +481,9 @@ static const Row rows[] = {
     { ROW_HEADER, "DISPLAY", 0 },
     { ROW_OPTION, "Widescreen", OPT_WIDESCREEN },
     { ROW_OPTION, "Aspect ratio", OPT_ASPECT },
-    { ROW_OPTION, "Fullscreen", OPT_FULLSCREEN },
     { ROW_OPTION, "Integer scaling", OPT_INTEGER },
-    { ROW_OPTION, "Window size", OPT_WINDOW },
+    { ROW_OPTION, "Window", OPT_WINDOW_ALL },
+    { ROW_OPTION, "Filter", OPT_FILTER },
     { ROW_HEADER, "ENHANCEMENTS", 0 },
     { ROW_OPTION, "Internal resolution", OPT_INTERNAL },
     { ROW_OPTION, "Smooth motion", OPT_SMOOTH },
@@ -514,7 +514,7 @@ static float row_y(int r) {
     return y;
 }
 
-#define BTN_Y 604
+#define BTN_Y 612
 #define BTN_H 54
 #define PLAY_X PANEL_X
 #define PLAY_W 300

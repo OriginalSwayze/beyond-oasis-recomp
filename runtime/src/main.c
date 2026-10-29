@@ -8,6 +8,7 @@
 #include "launcher.h"
 #include "cheats.h"
 #include "hd.h"
+#include "filter.h"
 #include "menu.h"
 #include "savestate.h"
 #include "ui.h"
@@ -216,6 +217,8 @@ int main(int argc, char **argv) {
     int load_from = 0;
     const char *hd_shot = NULL;
     const char *smooth_dir = NULL;      /* --smooth-check DIR SCALE */
+    const char *filter_shot = NULL;     /* --filter-shot F.png W H MODE */
+    int filter_w = 1920, filter_h = 1080, filter_mode = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--headless") && i + 1 < argc) headless_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
@@ -243,7 +246,16 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--press") && i + 1 < argc) parse_presses(argv[++i]);
         else if (!strcmp(argv[i], "--shots") && i + 2 < argc) { shot_every = atoi(argv[++i]); shot_dir = argv[++i]; }
         else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) settings.widescreen = atoi(argv[++i]) != 0;
+        else if (!strcmp(argv[i], "--filter") && i + 1 < argc) settings.filter = atoi(argv[++i]) % FILTER_COUNT;   /* 0 off, 1 scanlines, 2 CRT, 3 LCD */
         else if (!strcmp(argv[i], "--no-launcher")) no_launcher = true;
+        else if (!strcmp(argv[i], "--filter-shot") && i + 4 < argc) {
+            /* --filter-shot F.png W H MODE: draw the last frame into a W x H picture with
+             * filter MODE (0 off, 1 scanlines, 2 CRT, 3 LCD), on the GPU in a hidden window. */
+            filter_shot = argv[++i];
+            filter_w = atoi(argv[++i]);
+            filter_h = atoi(argv[++i]);
+            filter_mode = atoi(argv[++i]);
+        }
         else if (!strcmp(argv[i], "--smooth-check") && i + 2 < argc) {
             /* --smooth-check DIR SCALE: smooth motion over the last 8 frames at 120 Hz: prints
              * where each picture is between the motion updates and saves it as DIR/NN.png. */
@@ -419,6 +431,36 @@ int main(int argc, char **argv) {
             }
         }
         if (shot && save_shot(shot) != 0) fprintf(stderr, "could not save %s\n", shot);
+        if (filter_shot) {
+            SDL_InitSubSystem(SDL_INIT_VIDEO);
+            SDL_Window *hw = SDL_CreateWindow("filter", 0, 0, 64, 64, SDL_WINDOW_HIDDEN);
+            SDL_Renderer *sr = hw ? SDL_CreateRenderer(hw, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE) : NULL;
+            SDL_Texture *target = sr ? SDL_CreateTexture(sr, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_TARGET, filter_w, filter_h) : NULL;
+            uint32_t *pixels = malloc((size_t)filter_w * filter_h * 4);
+            if (target && pixels) {
+                SDL_SetRenderTarget(sr, target);
+                bool hd = settings.internal_scale > 1;
+                if (hd) hd_compose(settings.internal_scale);
+                int tw = hd ? hd_w : frame_width(), th = hd ? hd_h : vdp_screen_height();
+                SDL_Texture *t = SDL_CreateTexture(sr, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STATIC, tw, th);
+                SDL_UpdateTexture(t, NULL, hd ? hd_px : framebuffer, (hd ? hd_w : FB_W) * 4);
+                SDL_SetRenderDrawColor(sr, 0, 0, 0, 255);
+                SDL_RenderClear(sr);
+                Uint64 t0 = SDL_GetPerformanceCounter();
+                if (hd) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
+                filter_draw(sr, t, NULL, display_rect(filter_w, filter_h), frame_width(), vdp_screen_height(), filter_mode);
+                SDL_RenderReadPixels(sr, NULL, SDL_PIXELFORMAT_XRGB8888, pixels, filter_w * 4);
+                printf("filter %d drawn in %.1f ms (GPU, first draw builds the overlay)\n", filter_mode,
+                       (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency());
+                png_write(filter_shot, pixels, filter_w, filter_h, filter_w);
+                SDL_DestroyTexture(t);
+            } else {
+                fprintf(stderr, "no GPU renderer for --filter-shot: %s\n", SDL_GetError());
+            }
+            free(pixels);
+            if (sr) SDL_DestroyRenderer(sr);
+            if (hw) SDL_DestroyWindow(hw);
+        }
         if (hd_shot) {
             Uint64 t0 = SDL_GetPerformanceCounter();
             hd_compose(settings.internal_scale);
@@ -609,11 +651,11 @@ int main(int argc, char **argv) {
                 hd_tex_w = hd_w; hd_tex_h = hd_h;
             }
             SDL_UpdateTexture(hd_tex, NULL, hd_px, hd_w * 4);
-            SDL_RenderCopy(ren, hd_tex, NULL, &dst);
+            filter_draw(ren, hd_tex, NULL, dst, frame_width(), vdp_screen_height(), settings.filter);
         } else {
             SDL_UpdateTexture(tex, NULL, framebuffer, FB_W * 4);
             SDL_Rect src = { 0, 0, frame_width(), vdp_screen_height() };
-            SDL_RenderCopy(ren, tex, &src, &dst);
+            filter_draw(ren, tex, &src, dst, frame_width(), vdp_screen_height(), settings.filter);
         }
         Uint64 before_present = SDL_GetPerformanceCounter();
         SDL_RenderPresent(ren);

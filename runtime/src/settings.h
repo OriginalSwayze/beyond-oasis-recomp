@@ -14,6 +14,7 @@ typedef struct {
     bool no_sprite_limit;
     int  internal_scale;                /* 1 = native; 2-4 = layers redrawn at that scale (hd.c) */
     bool smooth_motion;                 /* glide between the game's 30 Hz motion updates (hd.c) */
+    int  filter;                        /* FILTER_* (filter.h): off, scanlines, CRT, LCD */
     int  window_scale;
     bool rewind;                        /* keep a rewind buffer (hold the rewind key to step back) */
     int  rewind_mb;                     /* rewind buffer size; frames cost ~1 KB, so 64 MB is many minutes */
@@ -33,7 +34,8 @@ void settings_save(const char *path);
 enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_FLICKER, OPT_REWIND, OPT_REWIND_MB,
        OPT_LAUNCHER, OPT_CHEAT_HEALTH, OPT_CHEAT_SPIRIT, OPT_CHEAT_WEAPONS,
        OPT_CHEATS, OPT_INTERNAL, OPT_SMOOTH,
-       OPT_REWIND_ALL };                /* rewind off or its buffer size, in one option */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
+       OPT_REWIND_ALL,                  /* rewind off or its buffer size, in one option */
+       OPT_FILTER, OPT_WINDOW_ALL };    /* fullscreen or a window size, in one option */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);
 void settings_option_change(int id, int dir);
 int  settings_cycle(int v, int count, int dir);     /* (v + dir) wrapped into 0..count-1 */

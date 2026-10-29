@@ -77,6 +77,7 @@ add_executable(BeyondOasis
   runtime/src/savestate.c
   runtime/src/cheats.c
   runtime/src/hd.c
+  runtime/src/filter.c
   runtime/src/bus.c
   runtime/src/vdp.c
   runtime/src/io.c

@@ -1,5 +1,6 @@
 #include "settings.h"
 #include "genesis.h"
+#include "filter.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,12 +14,16 @@ Settings settings = {
     .no_sprite_limit = true,
     .internal_scale = 3,
     .smooth_motion = true,
+    .filter = FILTER_OFF,
     .window_scale = 4,
     .rewind = true,
     .rewind_mb = 64,
     .state_slot = 1,
     .show_launcher = true,
 };
+
+static const char *filter_keys[FILTER_COUNT] = { "off", "scanlines", "crt", "lcd" };
+static const char *filter_names[FILTER_COUNT] = { "Off", "Scanlines", "CRT", "LCD" };
 
 static bool parse_bool(const char *v) { return !strcmp(v, "1") || !strcmp(v, "true") || !strcmp(v, "on"); }
 
@@ -40,6 +45,9 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "no_sprite_limit")) settings.no_sprite_limit = parse_bool(v);
         else if (!strcmp(k, "internal_scale")) settings.internal_scale = atoi(v);
         else if (!strcmp(k, "smooth_motion")) settings.smooth_motion = parse_bool(v);
+        else if (!strcmp(k, "filter")) {
+            for (int i = 0; i < FILTER_COUNT; i++) if (!strcmp(v, filter_keys[i])) settings.filter = i;
+        }
         else if (!strcmp(k, "window_scale")) settings.window_scale = atoi(v);
         else if (!strcmp(k, "rewind")) settings.rewind = parse_bool(v);
         else if (!strcmp(k, "rewind_mb")) settings.rewind_mb = atoi(v);
@@ -54,6 +62,7 @@ void settings_load(const char *path) {
     if (settings.aspect_w <= 0 || settings.aspect_h <= 0) { settings.aspect_w = 16; settings.aspect_h = 9; }
     if (settings.window_scale < 1 || settings.window_scale > 10) settings.window_scale = 4;
     if (settings.internal_scale < 1 || settings.internal_scale > 4) settings.internal_scale = 3;
+    if (settings.filter < 0 || settings.filter >= FILTER_COUNT) settings.filter = FILTER_OFF;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
     if (settings.state_slot < 1 || settings.state_slot > 9) settings.state_slot = 1;
 }
@@ -70,6 +79,7 @@ void settings_save(const char *path) {
     fprintf(f, "no_sprite_limit=%d\n", settings.no_sprite_limit);
     fprintf(f, "internal_scale=%d\n", settings.internal_scale);
     fprintf(f, "smooth_motion=%d\n", settings.smooth_motion);
+    fprintf(f, "filter=%s\n", filter_keys[settings.filter]);
     fprintf(f, "window_scale=%d\n", settings.window_scale);
     fprintf(f, "rewind=%d\n", settings.rewind);
     fprintf(f, "rewind_mb=%d\n", settings.rewind_mb);
@@ -120,6 +130,11 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_WINDOW:     snprintf(out, n, "%d\xC3\x97", settings.window_scale); break;
     case OPT_FLICKER:    snprintf(out, n, "%s", settings.no_sprite_limit ? "On" : "Off"); break;
     case OPT_SMOOTH:     snprintf(out, n, "%s", settings.smooth_motion ? "On" : "Off"); break;
+    case OPT_FILTER:     snprintf(out, n, "%s", filter_names[settings.filter]); break;
+    case OPT_WINDOW_ALL:
+        if (settings.fullscreen) snprintf(out, n, "Fullscreen");
+        else snprintf(out, n, "Window %d\xC3\x97", settings.window_scale);
+        break;
     case OPT_REWIND_ALL:
         if (!settings.rewind) snprintf(out, n, "Off");
         else snprintf(out, n, "%d MB", settings.rewind_mb);
@@ -159,6 +174,15 @@ void settings_option_change(int id, int dir) {
     case OPT_WINDOW:     settings.window_scale = settings_cycle(settings.window_scale - 2, 5, dir) + 2; break;
     case OPT_FLICKER:    settings.no_sprite_limit = !settings.no_sprite_limit; break;
     case OPT_SMOOTH:     settings.smooth_motion = !settings.smooth_motion; break;
+    case OPT_FILTER:     settings.filter = settings_cycle(settings.filter, FILTER_COUNT, dir); break;
+    case OPT_WINDOW_ALL: {
+        int cur = settings.fullscreen ? 0 : settings.window_scale - 1;      /* 0 = fullscreen, 1-5 = 2x-6x */
+        if (cur < 0 || cur > 5) cur = 3;
+        cur = settings_cycle(cur, 6, dir);
+        settings.fullscreen = cur == 0;
+        if (cur) settings.window_scale = cur + 1;
+        break;
+    }
     case OPT_REWIND_ALL: {
         int cur = 0;                    /* 0 = off, 1.. = rewind_sizes */
         if (settings.rewind) for (int i = 0; i < 5; i++) if (rewind_sizes[i] == settings.rewind_mb) cur = i + 1;
