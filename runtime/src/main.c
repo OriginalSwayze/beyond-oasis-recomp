@@ -6,6 +6,9 @@
 #include "settings.h"
 #include "png.h"
 #include "launcher.h"
+#include "menu.h"
+#include "savestate.h"
+#include "ui.h"
 #include <SDL.h>
 #include "m68k.h"
 #include <stdio.h>
@@ -100,45 +103,6 @@ static void load_sram(void) {
     if (f) { if (fread(bus.sram, 1, SRAM_SIZE, f) != SRAM_SIZE) { /* keep what was read */ } fclose(f); }
 }
 
-/* ---- Save states: states/slotN.state next to the executable ------------------- */
-#ifdef _WIN32
-#include <direct.h>
-#define make_dir(p) _mkdir(p)
-#else
-#include <sys/stat.h>
-#define make_dir(p) mkdir(p, 0755)
-#endif
-
-static void state_path(char *out, size_t n, int slot) {
-    char dir[1100];
-    path_in_base(dir, sizeof dir, "states");
-    make_dir(dir);
-    snprintf(out, n, "%s/slot%d.state", dir, slot);
-}
-
-static bool save_state_slot(int slot) {
-    static uint8_t buf[STATE_MAX];
-    size_t len = state_save(buf, sizeof buf);
-    char p[1200];
-    state_path(p, sizeof p, slot);
-    FILE *f = len ? fopen(p, "wb") : NULL;
-    if (!f) return false;
-    bool ok = fwrite(buf, 1, len, f) == len;
-    fclose(f);
-    return ok;
-}
-
-static bool load_state_slot(int slot) {
-    static uint8_t buf[STATE_MAX];
-    char p[1200];
-    state_path(p, sizeof p, slot);
-    FILE *f = fopen(p, "rb");
-    if (!f) return false;
-    size_t len = fread(buf, 1, sizeof buf, f);
-    fclose(f);
-    return state_load(buf, len);
-}
-
 static int frame_width(void) { return vdp_screen_width() + vdp_opts.extra_width * 2; }
 
 static int save_bmp(const char *path) {
@@ -224,6 +188,7 @@ int main(int argc, char **argv) {
     if (bp) { snprintf(base_dir, sizeof base_dir, "%s", bp); SDL_free(bp); }
     char ini[1100];
     path_in_base(ini, sizeof ini, "settings.ini");
+    savestate_init(base_dir);
     settings_load(ini);
 
     int headless_frames = 0;
@@ -242,6 +207,9 @@ int main(int argc, char **argv) {
     const char *launcher_shot = NULL;
     int shot_width = 1280;
     float shot_lx = 0, shot_ly = 0;
+    const char *menu_shot = NULL;
+    int menu_w = 1920, menu_h = 1080;
+    int save_to = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--headless") && i + 1 < argc) headless_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
@@ -270,6 +238,15 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--shots") && i + 2 < argc) { shot_every = atoi(argv[++i]); shot_dir = argv[++i]; }
         else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) settings.widescreen = atoi(argv[++i]) != 0;
         else if (!strcmp(argv[i], "--no-launcher")) no_launcher = true;
+        else if (!strcmp(argv[i], "--save-to") && i + 1 < argc) save_to = atoi(argv[++i]);   /* save a slot at the end */
+        else if (!strcmp(argv[i], "--states-base") && i + 1 < argc) savestate_init(argv[++i]);  /* e.g. "test_" -> test_states/ */
+        else if (!strcmp(argv[i], "--slot") && i + 1 < argc) settings.state_slot = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--menu-shot") && i + 3 < argc) {
+            /* --menu-shot F.png W H: open the in-game menu over the last frame and render it. */
+            menu_shot = argv[++i];
+            menu_w = atoi(argv[++i]);
+            menu_h = atoi(argv[++i]);
+        }
         else if (!strcmp(argv[i], "--launcher-shot") && i + 4 < argc) {
             /* --launcher-shot F.png WIDTH LX LY: render the launcher (light direction LX, LY). */
             launcher_shot = argv[++i];
@@ -398,6 +375,14 @@ int main(int argc, char **argv) {
             }
         }
         if (shot && save_shot(shot) != 0) fprintf(stderr, "could not save %s\n", shot);
+        if (save_to && !savestate_save(save_to, framebuffer, frame_width(), vdp_screen_height(), FB_W))
+            fprintf(stderr, "could not save slot %d\n", save_to);
+        if (menu_shot) {
+            SDL_Rect r = display_rect(menu_w, menu_h);
+            menu_open(framebuffer, frame_width(), vdp_screen_height(), FB_W, r.x, r.y, r.w, r.h, menu_w, menu_h, 1);
+            menu_render(1.0);
+            png_write(menu_shot, ui_px, ui_w, ui_h, ui_w);
+        }
         save_coverage();
         save_sram();
         printf("ran %d frames, screen %dx%d\n", headless_frames, frame_width(), vdp_screen_height());
@@ -428,13 +413,44 @@ int main(int argc, char **argv) {
     char shown_title[160] = "";
 
     const double frame_s = 1.0 / 59.922743;     /* NTSC Genesis refresh rate */
-    Uint64 freq = SDL_GetPerformanceFrequency(), next = SDL_GetPerformanceCounter();
+    Uint64 freq = SDL_GetPerformanceFrequency(), next = SDL_GetPerformanceCounter(), start = next;
+    SDL_Texture *menu_tex = NULL;
+    int menu_tex_w = 0, menu_tex_h = 0;
     bool running = true;
     while (running) {
         SDL_Event e;
+        int ww, wh;
+        SDL_GetRendererOutputSize(ren, &ww, &wh);
         while (SDL_PollEvent(&e)) {
+            bool open_menu = (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !e.key.repeat) ||
+                             (e.type == SDL_CONTROLLERBUTTONDOWN && (e.cbutton.button == SDL_CONTROLLER_BUTTON_BACK ||
+                                                                     e.cbutton.button == SDL_CONTROLLER_BUTTON_GUIDE));
             if (e.type == SDL_QUIT) running = false;
             else if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
+            else if (menu_is_open()) {
+                bool was_rewind = settings.rewind;
+                switch (menu_event(&e)) {
+                case MENU_CLOSE: case MENU_LOADED: menu_close(); break;
+                case MENU_SETTINGS:
+                    apply_settings();
+                    SDL_SetWindowFullscreen(win, settings.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+                    if (settings.rewind != was_rewind) rewind_reset(settings.rewind ? (size_t)settings.rewind_mb << 20 : 0);
+                    break;
+                case MENU_RESET:
+                    machine_reset();
+                    rewind_reset(settings.rewind ? (size_t)settings.rewind_mb << 20 : 0);
+                    menu_close();
+                    break;
+                case MENU_QUIT: running = false; break;
+                case MENU_NONE: break;
+                }
+            } else if (open_menu) {
+                int win_w, win_h;
+                SDL_GetWindowSize(win, &win_w, &win_h);
+                SDL_Rect r = display_rect(ww, wh);
+                menu_open(framebuffer, frame_width(), vdp_screen_height(), FB_W, r.x, r.y, r.w, r.h, ww, wh,
+                          win_w ? (float)ww / win_w : 1);
+            }
             else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F11) {
                 settings.fullscreen = !settings.fullscreen;
                 SDL_SetWindowFullscreen(win, settings.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
@@ -442,16 +458,43 @@ int main(int argc, char **argv) {
                 settings.widescreen = !settings.widescreen;
                 apply_settings();
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F2 && !e.key.repeat) {
-                if (save_state_slot(settings.state_slot)) NOTIFY("Saved to slot %d", settings.state_slot);
+                if (savestate_save(settings.state_slot, framebuffer, frame_width(), vdp_screen_height(), FB_W))
+                    NOTIFY("Saved to slot %d", settings.state_slot);
                 else NOTIFY("Could not save slot %d", settings.state_slot);
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F4 && !e.key.repeat) {
-                if (load_state_slot(settings.state_slot)) NOTIFY("Loaded slot %d", settings.state_slot);
+                if (savestate_load(settings.state_slot)) NOTIFY("Loaded slot %d", settings.state_slot);
                 else NOTIFY("Slot %d is empty or from another version", settings.state_slot);
             } else if (e.type == SDL_KEYDOWN && (e.key.keysym.sym == SDLK_F6 || e.key.keysym.sym == SDLK_F7)) {
                 settings.state_slot = (settings.state_slot + (e.key.keysym.sym == SDLK_F7 ? 1 : 7)) % 9 + 1;
                 NOTIFY("Slot %d", settings.state_slot);
             }
         }
+        if (menu_is_open()) {
+            if (ww != ui_w || wh != ui_h) {     /* resized or fullscreen toggled: rebuild the backdrop */
+                int win_w, win_h;
+                SDL_GetWindowSize(win, &win_w, &win_h);
+                SDL_Rect r = display_rect(ww, wh);
+                menu_open(framebuffer, frame_width(), vdp_screen_height(), FB_W, r.x, r.y, r.w, r.h, ww, wh,
+                          win_w ? (float)ww / win_w : 1);
+            }
+            menu_render((double)(SDL_GetPerformanceCounter() - start) / freq);
+            if (!menu_tex || menu_tex_w != ui_w || menu_tex_h != ui_h) {
+                if (menu_tex) SDL_DestroyTexture(menu_tex);
+                menu_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, ui_w, ui_h);
+                menu_tex_w = ui_w; menu_tex_h = ui_h;
+            }
+            SDL_UpdateTexture(menu_tex, NULL, ui_px, ui_w * 4);
+            SDL_RenderClear(ren);
+            SDL_RenderCopy(ren, menu_tex, NULL, NULL);
+            SDL_RenderPresent(ren);
+            if (strcmp(shown_title, "Beyond Oasis - Paused")) { SDL_SetWindowTitle(win, "Beyond Oasis - Paused"); strcpy(shown_title, "Beyond Oasis - Paused"); }
+            next += (Uint64)(frame_s * freq);
+            Uint64 now = SDL_GetPerformanceCounter();
+            if (now < next) SDL_Delay((Uint32)((next - now) * 1000 / freq));
+            else next = now;
+            continue;
+        }
+
         const Uint8 *keys = SDL_GetKeyboardState(NULL);
         bool rewinding = settings.rewind && (keys[SDL_SCANCODE_BACKSPACE] ||
                          (pad && SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)));
@@ -483,8 +526,6 @@ int main(int argc, char **argv) {
         }
 
         SDL_UpdateTexture(tex, NULL, framebuffer, FB_W * 4);
-        int ww, wh;
-        SDL_GetRendererOutputSize(ren, &ww, &wh);
         SDL_Rect src = { 0, 0, frame_width(), vdp_screen_height() };
         SDL_Rect dst = display_rect(ww, wh);
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);

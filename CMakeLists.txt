@@ -72,6 +72,9 @@ add_executable(BeyondOasis
   runtime/src/png.c
   runtime/src/text.c
   runtime/src/launcher.c
+  runtime/src/ui.c
+  runtime/src/menu.c
+  runtime/src/savestate.c
   runtime/src/bus.c
   runtime/src/vdp.c
   runtime/src/io.c

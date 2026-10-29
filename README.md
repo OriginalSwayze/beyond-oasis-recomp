@@ -16,7 +16,8 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | Widescreen game patches (`runtime/src/widescreen.c`, `config/patches.json`) | done: gameplay at 16:9, other screens pillarboxed |
 | Save states and rewind (`runtime/src/state.c`, `rewind.c`) | done |
 | Launcher (`runtime/src/launcher.c`) | done: settings, ROM picker, foil steelbook |
-| Cheats, in-game menu | next |
+| In-game menu (`runtime/src/menu.c`) | done: save/load slots with thumbnails, options, reset, quit |
+| Cheats | next |
 
 ## Testing
 
@@ -45,6 +46,9 @@ Other headless options:
 * `--rewind-check K`: record every frame, rewind K frames; must equal the snapshot taken then
 * `--launcher-shot F.png WIDTH LX LY`: render the launcher to a PNG with the light at (LX, LY), -1..1
 * `--no-launcher`: start the game directly this time
+* `--menu-shot F.png W H`: open the in-game menu over the last frame and render it at W x H
+* `--save-to N`, `--slot N`, `--states-base PREFIX`: save a slot at the end, pick the menu's slot,
+  and keep test slots in `PREFIXstates/` instead of the real ones
 * `--wav F.wav`, `--pc-profile N` (hottest interpreted code)
 
 ## Launcher
@@ -61,6 +65,12 @@ split across CPU cores (about 8 ms per frame at 1080p).
 
 Keys: arrows select and change, Enter activates, Esc quits; mouse and controller work
 too. "Show launcher at startup" turns it off; `show_launcher=1` in `settings.ini` brings it back.
+
+## In-game menu
+
+Esc pauses the game over a blurred copy of the last frame. The menu saves and loads
+the nine slots (each with a thumbnail and the time it was saved), changes the display
+options and rewind on the spot, and resets or quits (both ask for a second press).
 
 ## Save states and rewind
 
@@ -108,6 +118,7 @@ build/cmake/BeyondOasis.exe "<path to ROM>"
 ```
 
 Keys: arrows, Z/X/C = A/B/C, Enter = Start, F5 = widescreen on/off, F11 = fullscreen.
+Menu: Esc (or Back/Guide on a controller) pauses the game and opens the in-game menu.
 Save states: F2 save, F4 load, F6/F7 previous/next slot (1-9, files in `states/`).
 Rewind: hold Backspace (or the left shoulder button on a controller).
 Settings live in `settings.ini` next to the executable.

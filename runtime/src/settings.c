@@ -79,3 +79,49 @@ int settings_extra_width(void) {
     if (extra > MAX_EXTRA_WIDTH) extra = MAX_EXTRA_WIDTH;
     return extra;
 }
+
+/* ---- Options shown by the launcher and the in-game menu ---------------------------- */
+static const int aspects[][2] = { { 16, 10 }, { 16, 9 }, { 2, 1 } };
+static const int rewind_sizes[] = { 32, 64, 128, 256, 512 };
+
+void settings_option_text(int id, char *out, size_t n) {
+    switch (id) {
+    case OPT_WIDESCREEN: snprintf(out, n, "%s", settings.widescreen ? "On" : "Off"); break;
+    case OPT_ASPECT:     snprintf(out, n, "%d:%d", settings.aspect_w, settings.aspect_h); break;
+    case OPT_FULLSCREEN: snprintf(out, n, "%s", settings.fullscreen ? "On" : "Off"); break;
+    case OPT_INTEGER:    snprintf(out, n, "%s", settings.integer_scale ? "On" : "Off"); break;
+    case OPT_WINDOW:     snprintf(out, n, "%d\xC3\x97", settings.window_scale); break;
+    case OPT_FLICKER:    snprintf(out, n, "%s", settings.no_sprite_limit ? "On" : "Off"); break;
+    case OPT_REWIND:     snprintf(out, n, "%s", settings.rewind ? "On" : "Off"); break;
+    case OPT_REWIND_MB:  snprintf(out, n, "%d MB", settings.rewind_mb); break;
+    case OPT_LAUNCHER:   snprintf(out, n, "%s", settings.show_launcher ? "On" : "Off"); break;
+    }
+}
+
+int settings_cycle(int v, int count, int dir) { return ((v + dir) % count + count) % count; }
+
+void settings_option_change(int id, int dir) {
+    switch (id) {
+    case OPT_WIDESCREEN: settings.widescreen = !settings.widescreen; break;
+    case OPT_ASPECT: {
+        int cur = 1;
+        for (int i = 0; i < 3; i++) if (aspects[i][0] == settings.aspect_w && aspects[i][1] == settings.aspect_h) cur = i;
+        cur = settings_cycle(cur, 3, dir);
+        settings.aspect_w = aspects[cur][0]; settings.aspect_h = aspects[cur][1];
+        break;
+    }
+    case OPT_FULLSCREEN: settings.fullscreen = !settings.fullscreen; break;
+    case OPT_INTEGER:    settings.integer_scale = !settings.integer_scale; break;
+    case OPT_WINDOW:     settings.window_scale = settings_cycle(settings.window_scale - 2, 5, dir) + 2; break;
+    case OPT_FLICKER:    settings.no_sprite_limit = !settings.no_sprite_limit; break;
+    case OPT_REWIND:     settings.rewind = !settings.rewind; break;
+    case OPT_REWIND_MB: {
+        int cur = 1;
+        for (int i = 0; i < 5; i++) if (rewind_sizes[i] == settings.rewind_mb) cur = i;
+        settings.rewind_mb = rewind_sizes[settings_cycle(cur, 5, dir)];
+        break;
+    }
+    case OPT_LAUNCHER: settings.show_launcher = !settings.show_launcher; break;
+    }
+}
+

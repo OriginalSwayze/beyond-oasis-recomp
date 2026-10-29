@@ -5,11 +5,11 @@
  * The artwork comes from the user's own ROM: the launcher runs the game's intro
  * silently and captures the armlet scene and the title screen, then caches them in
  * launcher_art.cache next to the executable. Everything is drawn in software into one
- * canvas (also used for headless screenshots), at the window's pixel scale. */
+ * ui_px (also used for headless screenshots), at the window's pixel scale. */
 #include "launcher.h"
 #include "genesis.h"
 #include "settings.h"
-#include "text.h"
+#include "ui.h"
 #include "png.h"
 #include <SDL.h>
 #include <math.h>
@@ -23,31 +23,10 @@
 #include <commdlg.h>
 #endif
 
-#define BASE_W 1280
-#define BASE_H 720
+#define BASE_W UI_BASE_W
+#define BASE_H UI_BASE_H
 
-/* ---- Small math helpers ----------------------------------------------------- */
-static float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
-static float smooth(float e0, float e1, float x) { float t = clampf((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); }
-static uint32_t hash32(uint32_t x) { x ^= x >> 16; x *= 0x7FEB352Du; x ^= x >> 15; x *= 0x846CA68Bu; x ^= x >> 16; return x; }
-static float hashf(uint32_t x) { return (hash32(x) & 0xFFFFFF) / 16777216.0f; }
-
-typedef struct { float r, g, b; } Rgb;
-static Rgb rgb(float r, float g, float b) { return (Rgb){ r, g, b }; }
-static Rgb rgb_hex(uint32_t c) { return rgb(((c >> 16) & 255) / 255.f, ((c >> 8) & 255) / 255.f, (c & 255) / 255.f); }
-static Rgb mix(Rgb a, Rgb b, float t) { return rgb(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t); }
-static Rgb add(Rgb a, Rgb b, float k) { return rgb(a.r + b.r * k, a.g + b.g * k, a.b + b.b * k); }
-static Rgb scale(Rgb a, float k) { return rgb(a.r * k, a.g * k, a.b * k); }
-static uint32_t pack(Rgb c) {
-    int r = (int)(clampf(c.r, 0, 1) * 255 + .5f), g = (int)(clampf(c.g, 0, 1) * 255 + .5f), b = (int)(clampf(c.b, 0, 1) * 255 + .5f);
-    return (uint32_t)(r << 16 | g << 8 | b);
-}
-static Rgb unpack(uint32_t c) { return rgb_hex(c); }
-static Rgb hue(float h) {   /* saturated rainbow */
-    h = h - floorf(h);
-    float r = fabsf(h * 6 - 3) - 1, g = 2 - fabsf(h * 6 - 2), b = 2 - fabsf(h * 6 - 4);
-    return rgb(clampf(r, 0, 1), clampf(g, 0, 1), clampf(b, 0, 1));
-}
+static uint32_t *background;            /* static parts of the frame, drawn once per size */
 
 /* ---- Artwork captured from the ROM -------------------------------------------- */
 typedef struct { int w, h; uint32_t *rgb; uint8_t *mask; } Art;
@@ -212,68 +191,6 @@ static void art_prepare(void) {
     if (!art_load_cache()) art_capture();
 }
 
-/* ---- Canvas ------------------------------------------------------------------- */
-static uint32_t *canvas, *background;
-static int CW, CH;                      /* canvas size in pixels */
-static float S;                         /* pixels per layout unit (layout is 1280x720) */
-
-static void blend_px(int x, int y, Rgb c, float a) {
-    if (x < 0 || y < 0 || x >= CW || y >= CH || a <= 0) return;
-    uint32_t *p = &canvas[y * CW + x];
-    *p = pack(mix(unpack(*p), c, clampf(a, 0, 1)));
-}
-
-static void fill_rect(float x, float y, float w, float h, Rgb c, float a) {
-    int x0 = (int)(x * S), y0 = (int)(y * S), x1 = (int)((x + w) * S), y1 = (int)((y + h) * S);
-    for (int yy = y0; yy < y1; yy++) for (int xx = x0; xx < x1; xx++) blend_px(xx, yy, c, a);
-}
-
-/* Signed distance to a rounded rectangle (negative inside), in pixels. */
-static float rrect_dist(float px, float py, float x, float y, float w, float h, float r) {
-    float cx = x + w / 2, cy = y + h / 2;
-    float qx = fabsf(px - cx) - (w / 2 - r), qy = fabsf(py - cy) - (h / 2 - r);
-    float ox = qx > 0 ? qx : 0, oy = qy > 0 ? qy : 0;
-    return sqrtf(ox * ox + oy * oy) + fminf(fmaxf(qx, qy), 0) - r;
-}
-
-/* ---- Text (cached masks) -------------------------------------------------------- */
-typedef struct { char key[160]; TextMask m; } TextEntry;
-static TextEntry text_cache[96];
-static int text_count;
-
-static const TextMask *text_get(const char *s, const char *face, float px, int weight, float tracking) {
-    char key[160];
-    snprintf(key, sizeof key, "%s|%s|%d|%d|%d", s, face, (int)(px * S), weight, (int)(tracking * S));
-    for (int i = 0; i < text_count; i++) if (!strcmp(text_cache[i].key, key)) return &text_cache[i].m;
-    if (text_count == (int)(sizeof text_cache / sizeof *text_cache)) {
-        for (int i = 0; i < text_count; i++) text_free(&text_cache[i].m);
-        text_count = 0;
-    }
-    TextEntry *e = &text_cache[text_count++];
-    snprintf(e->key, sizeof e->key, "%s", key);
-    e->m = text_render(s, face, (int)(px * S + .5f), weight, (int)(tracking * S + .5f));
-    return &e->m;
-}
-
-static float text_width(const char *s, const char *face, float px, int weight, float tracking) {
-    return text_get(s, face, px, weight, tracking)->w / S;
-}
-
-/* Draws text with its top-left at (x, y), vertically blending from `top` to `bottom`. */
-static void draw_text(const char *s, const char *face, float px, int weight, float tracking,
-                      float x, float y, Rgb top, Rgb bottom, float alpha) {
-    const TextMask *m = text_get(s, face, px, weight, tracking);
-    if (!m->a) return;
-    int ox = (int)(x * S), oy = (int)(y * S);
-    for (int yy = 0; yy < m->h; yy++) {
-        Rgb c = mix(top, bottom, m->h > 1 ? (float)yy / (m->h - 1) : 0);
-        for (int xx = 0; xx < m->w; xx++) {
-            uint8_t a = m->a[yy * m->w + xx];
-            if (a) blend_px(ox + xx, oy + yy, c, a / 255.f * alpha);
-        }
-    }
-}
-
 /* ---- The steelbook -------------------------------------------------------------- */
 #define CASE_X 84
 #define CASE_Y 54
@@ -315,7 +232,7 @@ static float place_art(const Art *a, float cx, float top, float width, int mater
     if (!a->w) return top;
     float k = width / a->w, h = a->h * k;
     float *m = calloc((size_t)sw * sh, sizeof(float));
-    int x0 = (int)((cx - width / 2) * S), y0 = (int)(top * S), pw = (int)(width * S), ph = (int)(h * S);
+    int x0 = (int)((cx - width / 2) * ui_s), y0 = (int)(top * ui_s), pw = (int)(width * ui_s), ph = (int)(h * ui_s);
     for (int y = 0; y < ph; y++)
         for (int x = 0; x < pw; x++) {
             int X = x0 + x, Y = y0 + y;
@@ -339,16 +256,16 @@ static float place_art(const Art *a, float cx, float top, float width, int mater
             art_color[Y * sw + X] = pack(cc);
             height[Y * sw + X] += (cc.r * .3f + cc.g * .5f + cc.b * .2f) * detail;
         }
-    blur(m, sw, sh, (int)(1.5f * S + .5f));
+    blur(m, sw, sh, (int)(1.5f * ui_s + .5f));
     for (int i = 0; i < sw * sh; i++) height[i] += m[i] * lift;
     free(m);
     return top + h;
 }
 
 static void place_text(const char *s, const char *face, float px, int weight, float tracking, float cy, float depth) {
-    const TextMask *t = text_get(s, face, px, weight, tracking);
+    const TextMask *t = ui_text_get(s, face, px, weight, tracking);
     if (!t->a) return;
-    int x0 = (sw - t->w) / 2, y0 = (int)(cy * S) - t->h / 2;
+    int x0 = (sw - t->w) / 2, y0 = (int)(cy * ui_s) - t->h / 2;
     for (int y = 0; y < t->h; y++)
         for (int x = 0; x < t->w; x++) {
             int X = x0 + x, Y = y0 + y;
@@ -360,7 +277,7 @@ static void place_text(const char *s, const char *face, float px, int weight, fl
 }
 
 static void build_case(void) {
-    sw = (int)(CASE_W * S); sh = (int)(CASE_H * S);
+    sw = (int)(CASE_W * ui_s); sh = (int)(CASE_H * ui_s);
     size_t n = (size_t)sw * sh;
     free(height); free(mat); free(coverage); free(brush); free(art_color);
     free(nrm_x); free(nrm_y); free(nrm_z);
@@ -372,7 +289,7 @@ static void build_case(void) {
     for (int y = 0; y < sh; y++) {
         float row = hashf((uint32_t)y * 7919u);
         for (int x = 0; x < sw; x++) {
-            float drift = hashf((uint32_t)(y * 31 + x / (int)(37 * S + 1)) * 104729u);
+            float drift = hashf((uint32_t)(y * 31 + x / (int)(37 * ui_s + 1)) * 104729u);
             float fine = hashf((uint32_t)(y * 8191 + x) * 2654435761u);
             brush[y * sw + x] = (uint8_t)((row * .55f + drift * .25f + fine * .2f) * 255);
         }
@@ -381,12 +298,12 @@ static void build_case(void) {
     float frame_in = 18, cxu = CASE_W / 2.f;
     for (int y = 0; y < sh; y++)
         for (int x = 0; x < sw; x++) {
-            float ux = x / S, uy = y / S;
-            float d = rrect_dist(ux, uy, 0, 0, CASE_W, CASE_H, CASE_R);
-            coverage[y * sw + x] = (uint8_t)(clampf(.5f - d * S, 0, 1) * 255);
+            float ux = x / ui_s, uy = y / ui_s;
+            float d = ui_rrect_dist(ux, uy, 0, 0, CASE_W, CASE_H, CASE_R);
+            coverage[y * sw + x] = (uint8_t)(clampf(.5f - d * ui_s, 0, 1) * 255);
             float h = smooth(0, 7, -d) * .9f;                              /* rounded bevel at the edge */
-            float d1 = rrect_dist(ux, uy, frame_in, frame_in, CASE_W - 2 * frame_in, CASE_H - 2 * frame_in, 8);
-            float d2 = rrect_dist(ux, uy, frame_in + 7, frame_in + 7, CASE_W - 2 * frame_in - 14, CASE_H - 2 * frame_in - 14, 5);
+            float d1 = ui_rrect_dist(ux, uy, frame_in, frame_in, CASE_W - 2 * frame_in, CASE_H - 2 * frame_in, 8);
+            float d2 = ui_rrect_dist(ux, uy, frame_in + 7, frame_in + 7, CASE_W - 2 * frame_in - 14, CASE_H - 2 * frame_in - 14, 5);
             float line1 = 1 - smooth(.6f, 1.8f, fabsf(d1)), line2 = 1 - smooth(.3f, 1.1f, fabsf(d2));
             h += line1 * .55f + line2 * .3f;                                 /* raised double frame */
             if (line1 > .4f || line2 > .5f) mat[y * sw + x] = MAT_FOIL;
@@ -406,7 +323,7 @@ static void build_case(void) {
     if (!logo.w) place_text("BEYOND OASIS", "Palatino Linotype", 46, 700, 6, 120, .9f);
 
     nrm_x = malloc(n * sizeof(float)); nrm_y = malloc(n * sizeof(float)); nrm_z = malloc(n * sizeof(float));
-    float bump = 2.2f * S;
+    float bump = 2.2f * ui_s;
     for (int y = 0; y < sh; y++)
         for (int x = 0; x < sw; x++) {
             int i = y * sw + x;
@@ -417,7 +334,7 @@ static void build_case(void) {
         }
 }
 
-/* Shades the case for light direction (lx, ly) and time t, onto the canvas. The work is
+/* Shades the case for light direction (lx, ly) and time t, onto the ui_px. The work is
  * split by rows across threads; normals were precomputed with the height field. */
 typedef struct { float lx, ly, t; int y0, y1; } ShadeJob;
 
@@ -431,19 +348,19 @@ static inline float gauss(float x2k) {  /* ~exp(-x2k), cheap */
 static int shade_rows(void *arg) {
     const ShadeJob *j = arg;
     float lx = j->lx, ly = j->ly, t = j->t;
-    int ox = (int)(CASE_X * S), oy = (int)(CASE_Y * S);
+    int ox = (int)(CASE_X * ui_s), oy = (int)(CASE_Y * ui_s);
     float ln = sqrtf(lx * lx + ly * ly + 1);
     float Lx = lx / ln, Ly = ly / ln, Lz = 1 / ln;
     float hx = Lx, hy = Ly, hz = Lz + 1, hn = sqrtf(hx * hx + hy * hy + hz * hz);
     hx /= hn; hy /= hn; hz /= hn;
-    float cell = 5 * S;
+    float cell = 5 * ui_s;
     Rgb steel_tint = rgb(.90f, .94f, 1.0f);
     float glint_at = .7f + .6f * lx + .3f * ly;
     for (int y = j->y0; y < j->y1; y++) {
         float v = (float)y / sh;
         float bd = (v - .5f - ly * .42f) * 3.6f;
         float band = gauss(bd * bd);
-        uint32_t *row = canvas + (size_t)(oy + y) * CW + ox;
+        uint32_t *row = ui_px + (size_t)(oy + y) * ui_w + ox;
         int gy = (int)(y / cell);
         for (int x = 0; x < sw; x++) {
             int i = y * sw + x;
@@ -500,7 +417,7 @@ static int shade_rows(void *arg) {
             float hp = hashf(hcell);
             if (hp < (m == MAT_STEEL ? .02f : m == MAT_ART ? .03f : .08f)) {
                 float sx = (gx + .2f + .6f * hashf(hcell + 1)) * cell, sy = (gy + .2f + .6f * hashf(hcell + 2)) * cell;
-                float d2 = ((x - sx) * (x - sx) + (y - sy) * (y - sy)) / (S * S);
+                float d2 = ((x - sx) * (x - sx) + (y - sy) * (y - sy)) / (ui_s * ui_s);
                 if (d2 < 3.5f * 3.5f) {
                     float sn = fmaxf(0, sinf(hashf(hcell + 3) * 40 + lx * 7 + ly * 5 + t * .6f));
                     float f2 = sn * sn, f4 = f2 * f2, f8 = f4 * f4, f16 = f8 * f8;
@@ -538,30 +455,27 @@ static void draw_case(float lx, float ly, float t) {
 /* ---- Background ----------------------------------------------------------------- */
 static void build_background(void) {
     free(background);
-    background = malloc((size_t)CW * CH * 4);
-    for (int y = 0; y < CH; y++)
-        for (int x = 0; x < CW; x++) {
-            float ux = x / S, uy = y / S;
+    background = malloc((size_t)ui_w * ui_h * 4);
+    for (int y = 0; y < ui_h; y++)
+        for (int x = 0; x < ui_w; x++) {
+            float ux = x / ui_s, uy = y / ui_s;
             float r = sqrtf((ux - 760) * (ux - 760) + (uy - 300) * (uy - 300));
             Rgb c = mix(rgb_hex(0x1A1E29), rgb_hex(0x07080C), smooth(0, 900, r));
             /* Warm desert glow behind the case. */
             float g = sqrtf((ux - 290) * (ux - 290) + (uy - 380) * (uy - 380));
             c = add(c, rgb(.55f, .33f, .10f), .22f * expf(-g * g / (2 * 330.f * 330.f)));
             /* Soft shadow under the case. */
-            float d = rrect_dist(ux, uy, CASE_X + 10, CASE_Y + 22, CASE_W, CASE_H, CASE_R);
+            float d = ui_rrect_dist(ux, uy, CASE_X + 10, CASE_Y + 22, CASE_W, CASE_H, CASE_R);
             c = scale(c, 1 - .65f * (1 - smooth(-6, 34, d)));
-            float dither = (hashf((uint32_t)(y * CW + x)) - .5f) / 255.f;
+            float dither = (hashf((uint32_t)(y * ui_w + x)) - .5f) / 255.f;
             c = add(c, rgb(1, 1, 1), dither);
-            background[y * CW + x] = pack(c);
+            background[y * ui_w + x] = pack(c);
         }
 }
 
 /* ---- Settings rows -------------------------------------------------------------- */
 typedef enum { ROW_HEADER, ROW_OPTION, ROW_ROM } RowKind;
 typedef struct { RowKind kind; const char *label; int id; } Row;
-
-enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_FLICKER, OPT_REWIND, OPT_REWIND_MB,
-       OPT_LAUNCHER };
 
 static const Row rows[] = {
     { ROW_HEADER, "DISPLAY", 0 },
@@ -579,50 +493,6 @@ static const Row rows[] = {
     { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER },
 };
 #define ROW_COUNT ((int)(sizeof rows / sizeof *rows))
-
-static const int aspects[][2] = { { 16, 10 }, { 16, 9 }, { 2, 1 } };
-static const int rewind_sizes[] = { 32, 64, 128, 256, 512 };
-
-static void option_text(int id, char *out, size_t n) {
-    switch (id) {
-    case OPT_WIDESCREEN: snprintf(out, n, "%s", settings.widescreen ? "On" : "Off"); break;
-    case OPT_ASPECT:     snprintf(out, n, "%d:%d", settings.aspect_w, settings.aspect_h); break;
-    case OPT_FULLSCREEN: snprintf(out, n, "%s", settings.fullscreen ? "On" : "Off"); break;
-    case OPT_INTEGER:    snprintf(out, n, "%s", settings.integer_scale ? "On" : "Off"); break;
-    case OPT_WINDOW:     snprintf(out, n, "%d\xC3\x97", settings.window_scale); break;
-    case OPT_FLICKER:    snprintf(out, n, "%s", settings.no_sprite_limit ? "On" : "Off"); break;
-    case OPT_REWIND:     snprintf(out, n, "%s", settings.rewind ? "On" : "Off"); break;
-    case OPT_REWIND_MB:  snprintf(out, n, "%d MB", settings.rewind_mb); break;
-    case OPT_LAUNCHER:   snprintf(out, n, "%s", settings.show_launcher ? "On" : "Off"); break;
-    }
-}
-
-static int cycle(int v, int count, int dir) { return ((v + dir) % count + count) % count; }
-
-static void option_change(int id, int dir) {
-    switch (id) {
-    case OPT_WIDESCREEN: settings.widescreen = !settings.widescreen; break;
-    case OPT_ASPECT: {
-        int cur = 1;
-        for (int i = 0; i < 3; i++) if (aspects[i][0] == settings.aspect_w && aspects[i][1] == settings.aspect_h) cur = i;
-        cur = cycle(cur, 3, dir);
-        settings.aspect_w = aspects[cur][0]; settings.aspect_h = aspects[cur][1];
-        break;
-    }
-    case OPT_FULLSCREEN: settings.fullscreen = !settings.fullscreen; break;
-    case OPT_INTEGER:    settings.integer_scale = !settings.integer_scale; break;
-    case OPT_WINDOW:     settings.window_scale = cycle(settings.window_scale - 2, 5, dir) + 2; break;
-    case OPT_FLICKER:    settings.no_sprite_limit = !settings.no_sprite_limit; break;
-    case OPT_REWIND:     settings.rewind = !settings.rewind; break;
-    case OPT_REWIND_MB: {
-        int cur = 1;
-        for (int i = 0; i < 5; i++) if (rewind_sizes[i] == settings.rewind_mb) cur = i;
-        settings.rewind_mb = rewind_sizes[cycle(cur, 5, dir)];
-        break;
-    }
-    case OPT_LAUNCHER: settings.show_launcher = !settings.show_launcher; break;
-    }
-}
 
 /* ---- Layout --------------------------------------------------------------------- */
 #define PANEL_X 572
@@ -667,68 +537,41 @@ static void move_selection(int dir) {
     for (int r = 0; r < ROW_COUNT; r++) if (rows[r].kind != ROW_HEADER) order[n++] = r;
     order[n++] = ITEM_PLAY; order[n++] = ITEM_QUIT;
     for (int i = 0; i < n; i++) if (order[i] == selected) at = i;
-    selected = order[cycle(at, n, dir)];
+    selected = order[settings_cycle(at, n, dir)];
 }
 
 static void draw_button(float x, float w, const char *label, bool primary, bool focus, bool enabled, float lx, float ly, float t) {
-    float y = BTN_Y, h = BTN_H;
-    int x0 = (int)(x * S), y0 = (int)(y * S), x1 = (int)((x + w) * S), y1 = (int)((y + h) * S);
-    for (int py = y0; py < y1; py++)
-        for (int px = x0; px < x1; px++) {
-            float ux = px / S, uy = py / S;
-            float d = rrect_dist(ux, uy, x, y, w, h, 10);
-            float a = clampf(.5f - d * S, 0, 1);
-            if (a <= 0) continue;
-            float u = (ux - x) / w, v = (uy - y) / h;
-            Rgb c;
-            if (primary && enabled) {
-                /* Foil button: gold base with a holographic sheen that follows the light. */
-                Rgb gold = mix(rgb_hex(0xF6DE9C), rgb_hex(0xB8862E), v);
-                Rgb holo = mix(rgb(1, 1, 1), hue(u * .8f + v * .4f + lx * .6f + ly * .3f + t * .02f), .5f);
-                float gd = u - (.5f + .7f * lx);
-                c = mix(gold, holo, .22f + .06f * sinf(u * 5 + t * .8f));
-                c = add(c, rgb(1, 1, 1), expf(-gd * gd * 30) * .45f);
-                if (!focus) c = scale(c, .86f);
-            } else {
-                float edge = 1 - smooth(.5f, 1.6f, fabsf(d) * S / S);
-                c = mix(rgb_hex(0x141821), rgb_hex(0x1C2230), v);
-                c = mix(c, focus ? rgb_hex(0xD9B567) : rgb_hex(0x4A5265), edge);
-            }
-            blend_px(px, py, c, a);
-        }
-    float tw = text_width(label, "Segoe UI Semibold", 20, 600, 6);
-    Rgb tc = primary && enabled ? rgb_hex(0x2A1B05) : enabled ? (focus ? rgb_hex(0xF3DDA4) : rgb_hex(0xC9CED8)) : rgb_hex(0x5A6070);
-    draw_text(label, "Segoe UI Semibold", 20, 600, 6, x + (w - tw) / 2, y + 13, tc, tc, 1);
+    ui_button(x, BTN_Y, w, BTN_H, label, 20, primary, focus, enabled, lx, ly, t);
 }
 
 static char rom_status[96];
 
 static void draw_ui(float lx, float ly, float t) {
     Rgb gold_top = rgb_hex(0xFBEBB8), gold_bot = rgb_hex(0xC08A2C);
-    draw_text("BEYOND OASIS", "Palatino Linotype", 54, 700, 7, PANEL_X - 3, 50, gold_top, gold_bot, 1);
-    draw_text("NATIVE PC EDITION  \xC2\xB7  RECOMPILED FROM YOUR CARTRIDGE", "Segoe UI", 12.5f, 600, 3.5f, PANEL_X, 122,
+    ui_draw_text("BEYOND OASIS", "Palatino Linotype", 54, 700, 7, PANEL_X - 3, 50, gold_top, gold_bot, 1);
+    ui_draw_text("NATIVE PC EDITION  \xC2\xB7  RECOMPILED FROM YOUR CARTRIDGE", "Segoe UI", 12.5f, 600, 3.5f, PANEL_X, 122,
               rgb_hex(0x99A2B4), rgb_hex(0x99A2B4), 1);
     /* Divider fading out to the right. */
-    for (int px = (int)(PANEL_X * S); px < (int)(PANEL_R * S); px++) {
-        float u = (px / S - PANEL_X) / (PANEL_R - PANEL_X);
-        for (int py = (int)(152 * S); py < (int)(152 * S) + (S > 1.5f ? 2 : 1); py++)
-            blend_px(px, py, mix(rgb_hex(0xD9B567), rgb_hex(0x2A2F3B), u), .9f * (1 - u * .8f));
+    for (int px = (int)(PANEL_X * ui_s); px < (int)(PANEL_R * ui_s); px++) {
+        float u = (px / ui_s - PANEL_X) / (PANEL_R - PANEL_X);
+        for (int py = (int)(152 * ui_s); py < (int)(152 * ui_s) + (ui_s > 1.5f ? 2 : 1); py++)
+            ui_blend_px(px, py, mix(rgb_hex(0xD9B567), rgb_hex(0x2A2F3B), u), .9f * (1 - u * .8f));
     }
 
     for (int r = 0; r < ROW_COUNT; r++) {
         float y = row_y(r);
         const Row *row = &rows[r];
         if (row->kind == ROW_HEADER) {
-            draw_text(row->label, "Segoe UI Semibold", 11.5f, 600, 3.5f, PANEL_X, y + 12, rgb_hex(0xC9A45C), rgb_hex(0xC9A45C), 1);
+            ui_draw_text(row->label, "Segoe UI Semibold", 11.5f, 600, 3.5f, PANEL_X, y + 12, rgb_hex(0xC9A45C), rgb_hex(0xC9A45C), 1);
             continue;
         }
         bool focus = selected == r;
         if (focus) {
-            fill_rect(PANEL_X - 12, y + 1, PANEL_R - PANEL_X + 16, ROW_H - 2, rgb_hex(0xD9B567), .07f);
-            fill_rect(PANEL_X - 12, y + 1, 3, ROW_H - 2, rgb_hex(0xE8C77A), .95f);
+            ui_fill_rect(PANEL_X - 12, y + 1, PANEL_R - PANEL_X + 16, ROW_H - 2, rgb_hex(0xD9B567), .07f);
+            ui_fill_rect(PANEL_X - 12, y + 1, 3, ROW_H - 2, rgb_hex(0xE8C77A), .95f);
         }
         Rgb lc = focus ? rgb_hex(0xFFFFFF) : rgb_hex(0xC5CAD5);
-        draw_text(row->label, "Segoe UI", 16.5f, 400, 0, PANEL_X + 2, y + 5, lc, lc, 1);
+        ui_draw_text(row->label, "Segoe UI", 16.5f, 400, 0, PANEL_X + 2, y + 5, lc, lc, 1);
         char value[96];
         Rgb vc = focus ? rgb_hex(0xF3DDA4) : rgb_hex(0xE6E9EF);
         if (row->kind == ROW_ROM) {
@@ -736,44 +579,39 @@ static void draw_ui(float lx, float ly, float t) {
             vc = rom_ok ? rgb_hex(0x8FD19E) : rgb_hex(0xE58A7A);
             if (focus) {
                 const char *hint = "Enter to choose\xE2\x80\xA6";
-                float hw = text_width(hint, "Segoe UI", 13, 400, 0);
-                float vw = text_width(value, "Segoe UI Semibold", 16.5f, 600, 0);
-                draw_text(hint, "Segoe UI", 13, 400, 0, PANEL_R - vw - hw - 18, y + 8, rgb_hex(0x8C93A3), rgb_hex(0x8C93A3), 1);
+                float hw = ui_text_width(hint, "Segoe UI", 13, 400, 0);
+                float vw = ui_text_width(value, "Segoe UI Semibold", 16.5f, 600, 0);
+                ui_draw_text(hint, "Segoe UI", 13, 400, 0, PANEL_R - vw - hw - 18, y + 8, rgb_hex(0x8C93A3), rgb_hex(0x8C93A3), 1);
             }
         } else {
-            option_text(row->id, value, sizeof value);
+            settings_option_text(row->id, value, sizeof value);
         }
-        float vw = text_width(value, "Segoe UI Semibold", 16.5f, 600, 0);
+        float vw = ui_text_width(value, "Segoe UI Semibold", 16.5f, 600, 0);
         float vx = PANEL_R - vw;
         if (row->kind == ROW_OPTION) {
             vx -= 22;
             Rgb ac = focus ? rgb_hex(0xE8C77A) : rgb_hex(0x5B6274);
-            draw_text("\xE2\x80\xB9", "Segoe UI Semibold", 18, 600, 0, vx - 18, y + 3, ac, ac, 1);
-            draw_text("\xE2\x80\xBA", "Segoe UI Semibold", 18, 600, 0, PANEL_R - 12, y + 3, ac, ac, 1);
+            ui_draw_text("\xE2\x80\xB9", "Segoe UI Semibold", 18, 600, 0, vx - 18, y + 3, ac, ac, 1);
+            ui_draw_text("\xE2\x80\xBA", "Segoe UI Semibold", 18, 600, 0, PANEL_R - 12, y + 3, ac, ac, 1);
         }
-        draw_text(value, "Segoe UI Semibold", 16.5f, 600, 0, vx, y + 5, vc, vc, 1);
+        ui_draw_text(value, "Segoe UI Semibold", 16.5f, 600, 0, vx, y + 5, vc, vc, 1);
     }
 
     draw_button(PLAY_X, PLAY_W, "PLAY", true, selected == ITEM_PLAY, play_enabled(), lx, ly, t);
     draw_button(QUIT_X, QUIT_W, "QUIT", false, selected == ITEM_QUIT, true, lx, ly, t);
     const char *keys = "\xE2\x86\x91\xE2\x86\x93 select     \xE2\x86\x90\xE2\x86\x92 change     Enter  select     Esc  quit";
-    draw_text(keys, "Segoe UI", 12, 400, 1, PANEL_X, 684, rgb_hex(0x6C7385), rgb_hex(0x6C7385), 1);
+    ui_draw_text(keys, "Segoe UI", 12, 400, 1, PANEL_X, 684, rgb_hex(0x6C7385), rgb_hex(0x6C7385), 1);
 }
 
 /* ---- Frame -------------------------------------------------------------------- */
 static void layout(int pixel_w) {
-    S = pixel_w / (float)BASE_W;
-    CW = pixel_w; CH = (int)(BASE_H * S + .5f);
-    free(canvas);
-    canvas = malloc((size_t)CW * CH * 4);
-    for (int i = 0; i < text_count; i++) text_free(&text_cache[i].m);
-    text_count = 0;
+    ui_begin(pixel_w, (int)(BASE_H * (pixel_w / (float)BASE_W) + .5f));
     build_background();
     build_case();
 }
 
 static void render(float lx, float ly, float t) {
-    memcpy(canvas, background, (size_t)CW * CH * 4);
+    memcpy(ui_px, background, (size_t)ui_w * ui_h * 4);
     draw_case(lx, ly, t);
     draw_ui(lx, ly, t);
 }
@@ -806,8 +644,8 @@ int launcher_screenshot(const char *png, int width, float lx, float ly, float t)
     layout(width);
     Uint64 t0 = SDL_GetPerformanceCounter();
     for (int i = 0; i < 10; i++) render(lx, ly, t);
-    printf("launcher frame: %.1f ms at %dx%d\n", (SDL_GetPerformanceCounter() - t0) * 100.0 / SDL_GetPerformanceFrequency(), CW, CH);
-    return png_write(png, canvas, CW, CH, CW);
+    printf("launcher frame: %.1f ms at %dx%d\n", (SDL_GetPerformanceCounter() - t0) * 100.0 / SDL_GetPerformanceFrequency(), ui_w, ui_h);
+    return png_write(png, ui_px, ui_w, ui_h, ui_w);
 }
 
 /* ---- ROM picker ------------------------------------------------------------------ */
@@ -846,7 +684,7 @@ int launcher_run(const char *ini_path) {
     int ow, oh;
     SDL_GetRendererOutputSize(ren, &ow, &oh);
     layout(ow);
-    SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, CW, CH);
+    SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, ui_w, ui_h);
     SDL_GameController *pad = NULL;
     if (!rom_ok) selected = 11;         /* the ROM row */
     else selected = ITEM_PLAY;
@@ -903,7 +741,7 @@ int launcher_run(const char *ini_path) {
                 break;
             }
             if (selected < ROW_COUNT && rows[selected].kind == ROW_OPTION && (change || activate))
-                option_change(rows[selected].id, change ? change : 1);
+                settings_option_change(rows[selected].id, change ? change : 1);
             else if (selected < ROW_COUNT && rows[selected].kind == ROW_ROM && activate)
                 choose_rom(win);
             else if (activate && selected == ITEM_PLAY && play_enabled()) result = 1;
@@ -918,7 +756,7 @@ int launcher_run(const char *ini_path) {
         lx += (gx - lx) * .12f; ly += (gy - ly) * .12f;
 
         render(lx, ly, t);
-        SDL_UpdateTexture(tex, NULL, canvas, CW * 4);
+        SDL_UpdateTexture(tex, NULL, ui_px, ui_w * 4);
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, NULL, NULL);
         SDL_RenderPresent(ren);
