@@ -15,6 +15,7 @@ typedef struct {
     bool rewind;                        /* keep a rewind buffer (hold the rewind key to step back) */
     int  rewind_mb;                     /* rewind buffer size; frames cost ~1 KB, so 64 MB is many minutes */
     int  state_slot;                    /* save state slot, 1-9 */
+    bool show_launcher;                 /* show the launcher at startup (--no-launcher skips it once) */
 } Settings;
 
 extern Settings settings;

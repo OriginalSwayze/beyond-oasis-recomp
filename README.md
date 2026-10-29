@@ -15,7 +15,8 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | 68000 → C recompiler (`tools/recomp.mjs`, built automatically by CMake) | done: 99.98% of 68000 time runs as native C |
 | Widescreen game patches (`runtime/src/widescreen.c`, `config/patches.json`) | done: gameplay at 16:9, other screens pillarboxed |
 | Save states and rewind (`runtime/src/state.c`, `rewind.c`) | done |
-| Cheats, launcher, in-game menu | next |
+| Launcher (`runtime/src/launcher.c`) | done: settings, ROM picker, foil steelbook |
+| Cheats, in-game menu | next |
 
 ## Testing
 
@@ -42,7 +43,24 @@ Other headless options:
 * `--hide-layers MASK`: hide plane A (1), plane B (2) or sprites (4)
 * `--state-check A B`: snapshot before frame A, run to B, reload and replay; both runs must end identical
 * `--rewind-check K`: record every frame, rewind K frames; must equal the snapshot taken then
+* `--launcher-shot F.png WIDTH LX LY`: render the launcher to a PNG with the light at (LX, LY), -1..1
+* `--no-launcher`: start the game directly this time
 * `--wav F.wav`, `--pc-profile N` (hottest interpreted code)
+
+## Launcher
+
+Before the game starts, a launcher shows the settings (display, enhancements, ROM) next
+to the game presented as a collector's steelbook: brushed steel with a holographic foil
+frame, the title logo in gold foil and the Gold Armlet embossed over a sunburst. The
+light follows the mouse like tilting a real case, and sways by itself when the mouse rests.
+
+The artwork comes from your ROM: on first start the launcher plays the intro silently
+(about two seconds), captures the armlet scene and the title screen, and caches them in
+`launcher_art.cache` next to the executable. It is redrawn in software every frame,
+split across CPU cores (about 8 ms per frame at 1080p).
+
+Keys: arrows select and change, Enter activates, Esc quits; mouse and controller work
+too. "Show launcher at startup" turns it off; `show_launcher=1` in `settings.ini` brings it back.
 
 ## Save states and rewind
 

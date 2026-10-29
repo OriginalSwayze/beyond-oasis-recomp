@@ -4,6 +4,8 @@
  *   headless extras: --press "FRAME:BUTTONS[:FRAMES],..." --shots EVERY DIR --widescreen 0|1 */
 #include "genesis.h"
 #include "settings.h"
+#include "png.h"
+#include "launcher.h"
 #include <SDL.h>
 #include "m68k.h"
 #include <stdio.h>
@@ -148,74 +150,7 @@ static int save_bmp(const char *path) {
     return r;
 }
 
-/* Minimal PNG writer (stored deflate blocks), so screenshots open anywhere. */
-static uint32_t crc_table[256];
-static uint32_t png_crc(uint32_t c, const uint8_t *p, size_t n) {
-    if (!crc_table[1])
-        for (uint32_t i = 0; i < 256; i++) {
-            uint32_t v = i;
-            for (int k = 0; k < 8; k++) v = v & 1 ? 0xEDB88320u ^ (v >> 1) : v >> 1;
-            crc_table[i] = v;
-        }
-    c = ~c;
-    while (n--) c = crc_table[(c ^ *p++) & 0xFF] ^ (c >> 8);
-    return ~c;
-}
-
-static void put32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
-
-static void png_chunk(FILE *f, const char *type, const uint8_t *data, uint32_t n) {
-    uint8_t h[8];
-    put32(h, n);
-    memcpy(h + 4, type, 4);
-    fwrite(h, 1, 8, f);
-    fwrite(data, 1, n, f);
-    uint32_t c = png_crc(png_crc(0, (const uint8_t *)type, 4), data, n);
-    put32(h, c);
-    fwrite(h, 1, 4, f);
-}
-
-static int save_png(const char *path) {
-    int w = frame_width(), h = vdp_screen_height();
-    size_t row = (size_t)w * 3 + 1, raw_n = row * (size_t)h;
-    uint8_t *raw = malloc(raw_n);
-    for (int y = 0; y < h; y++) {
-        uint8_t *r = raw + row * (size_t)y;
-        *r++ = 0;
-        for (int x = 0; x < w; x++) {
-            uint32_t p = framebuffer[y * FB_W + x];
-            *r++ = (uint8_t)(p >> 16); *r++ = (uint8_t)(p >> 8); *r++ = (uint8_t)p;
-        }
-    }
-    size_t blocks = (raw_n + 65534) / 65535;
-    uint8_t *z = malloc(raw_n + blocks * 5 + 6), *o = z;
-    *o++ = 0x78; *o++ = 0x01;
-    uint32_t a = 1, b = 0;
-    for (size_t i = 0; i < raw_n; i++) { a = (a + raw[i]) % 65521; b = (b + a) % 65521; }
-    for (size_t at = 0; at < raw_n; at += 65535) {
-        size_t n = raw_n - at < 65535 ? raw_n - at : 65535;
-        *o++ = at + n == raw_n;
-        *o++ = (uint8_t)n; *o++ = (uint8_t)(n >> 8); *o++ = (uint8_t)~n; *o++ = (uint8_t)(~n >> 8);
-        memcpy(o, raw + at, n);
-        o += n;
-    }
-    put32(o, b << 16 | a);
-    o += 4;
-    FILE *f = fopen(path, "wb");
-    if (f) {
-        static const uint8_t sig[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
-        uint8_t ihdr[13];
-        put32(ihdr, (uint32_t)w); put32(ihdr + 4, (uint32_t)h);
-        ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = ihdr[11] = ihdr[12] = 0;
-        fwrite(sig, 1, 8, f);
-        png_chunk(f, "IHDR", ihdr, 13);
-        png_chunk(f, "IDAT", z, (uint32_t)(o - z));
-        png_chunk(f, "IEND", NULL, 0);
-        fclose(f);
-    }
-    free(raw); free(z);
-    return f ? 0 : -1;
-}
+static int save_png(const char *path) { return png_write(path, framebuffer, frame_width(), vdp_screen_height(), FB_W); }
 
 /* Saves as PNG or BMP depending on the file extension. */
 static int save_shot(const char *path) {
@@ -303,6 +238,10 @@ int main(int argc, char **argv) {
     int watch_count = 0;
     int check_from = -1, check_to = -1;     /* --state-check A B */
     int rewind_check = 0;                   /* --rewind-check K */
+    bool no_launcher = false;
+    const char *launcher_shot = NULL;
+    int shot_width = 1280;
+    float shot_lx = 0, shot_ly = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--headless") && i + 1 < argc) headless_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
@@ -330,12 +269,28 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--press") && i + 1 < argc) parse_presses(argv[++i]);
         else if (!strcmp(argv[i], "--shots") && i + 2 < argc) { shot_every = atoi(argv[++i]); shot_dir = argv[++i]; }
         else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) settings.widescreen = atoi(argv[++i]) != 0;
+        else if (!strcmp(argv[i], "--no-launcher")) no_launcher = true;
+        else if (!strcmp(argv[i], "--launcher-shot") && i + 4 < argc) {
+            /* --launcher-shot F.png WIDTH LX LY: render the launcher (light direction LX, LY). */
+            launcher_shot = argv[++i];
+            shot_width = atoi(argv[++i]);
+            shot_lx = (float)atof(argv[++i]);
+            shot_ly = (float)atof(argv[++i]);
+        }
         else snprintf(settings.rom_path, sizeof settings.rom_path, "%s", argv[i]);
     }
 
+    if (launcher_shot) {
+        apply_settings();
+        return launcher_screenshot(launcher_shot, shot_width, shot_lx, shot_ly, 1.0f) ? 1 : 0;
+    }
     if (SDL_Init(headless_frames ? 0 : SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
+    }
+    if (!headless_frames && settings.show_launcher && !no_launcher) {
+        apply_settings();
+        if (!launcher_run(ini)) { SDL_Quit(); return 0; }
     }
     const char *err = settings.rom_path[0] ? bus_load_rom(settings.rom_path) : "no ROM selected";
     if (err) {

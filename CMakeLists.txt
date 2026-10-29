@@ -69,6 +69,9 @@ add_executable(BeyondOasis
   runtime/src/widescreen.c
   runtime/src/state.c
   runtime/src/rewind.c
+  runtime/src/png.c
+  runtime/src/text.c
+  runtime/src/launcher.c
   runtime/src/bus.c
   runtime/src/vdp.c
   runtime/src/io.c
@@ -79,4 +82,5 @@ target_link_libraries(BeyondOasis PRIVATE recomp musashi z80core ymfm SDL2::SDL2
 target_compile_options(BeyondOasis PRIVATE -Wall -Wextra -Wno-unused-parameter)
 if(WIN32)
   target_link_options(BeyondOasis PRIVATE -static)
+  target_link_libraries(BeyondOasis PRIVATE gdi32 comdlg32)
 endif()

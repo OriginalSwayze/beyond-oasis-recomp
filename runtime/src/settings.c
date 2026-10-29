@@ -15,6 +15,7 @@ Settings settings = {
     .rewind = true,
     .rewind_mb = 64,
     .state_slot = 1,
+    .show_launcher = true,
 };
 
 static bool parse_bool(const char *v) { return !strcmp(v, "1") || !strcmp(v, "true") || !strcmp(v, "on"); }
@@ -39,6 +40,7 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "rewind")) settings.rewind = parse_bool(v);
         else if (!strcmp(k, "rewind_mb")) settings.rewind_mb = atoi(v);
         else if (!strcmp(k, "state_slot")) settings.state_slot = atoi(v);
+        else if (!strcmp(k, "show_launcher")) settings.show_launcher = parse_bool(v);
     }
     fclose(f);
     if (settings.aspect_w <= 0 || settings.aspect_h <= 0) { settings.aspect_w = 16; settings.aspect_h = 9; }
@@ -61,6 +63,7 @@ void settings_save(const char *path) {
     fprintf(f, "rewind=%d\n", settings.rewind);
     fprintf(f, "rewind_mb=%d\n", settings.rewind_mb);
     fprintf(f, "state_slot=%d\n", settings.state_slot);
+    fprintf(f, "show_launcher=%d\n", settings.show_launcher);
     fclose(f);
 }
 
