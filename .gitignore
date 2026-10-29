@@ -1,0 +1,11 @@
+# Never commit game data or anything generated from it.
+local.json
+rom/
+*.md
+!README.md
+!docs/*.md
+*.bin
+*.gen
+build/
+generated/
+out/
