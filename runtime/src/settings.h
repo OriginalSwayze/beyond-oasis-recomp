@@ -21,6 +21,7 @@ typedef struct {
     int  rewind_mb;                     /* rewind buffer size; frames cost ~1 KB, so 64 MB is many minutes */
     int  state_slot;                    /* save state slot, 1-9 */
     bool show_launcher;                 /* show the launcher at startup (--no-launcher skips it once) */
+    bool launcher_music;                /* the launcher plays the title theme (M toggles it) */
     bool cheat_health;                  /* infinite health: no damage, health held full */
     bool cheat_spirit;                  /* infinite spirit power */
     bool cheat_weapons;                 /* weapons never break */

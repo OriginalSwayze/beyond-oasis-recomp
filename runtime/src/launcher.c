@@ -191,6 +191,162 @@ static void art_prepare(void) {
     if (!art_load_cache()) art_capture();
 }
 
+static void init_common(void);
+
+/* ---- Music ------------------------------------------------------------------------ *
+ * The launcher plays the game's title theme: the ROM runs on a background thread from a
+ * reset (with blank save RAM, like the art capture) to the title screen in a fraction of
+ * a second without sound, then in real time, its sound driver feeding the audio device.
+ * The title lasts a fixed time before the attract demo; just before it ends the music
+ * fades out and the title starts again from a snapshot.
+ * The thread owns the machine until music_stop(); the game resets it afterwards. */
+static SDL_Thread *music_thread;
+static SDL_AudioDeviceID music_dev;
+static SDL_atomic_t music_quit;
+static uint8_t *music_sram;             /* the real save RAM, put back by music_stop() */
+static bool music_sram_dirty;
+static uint8_t music_snap[STATE_MAX];   /* the machine at the title screen */
+static size_t music_snap_len;
+static uint32_t music_fb[320 * 240];
+
+/* Runs to the title screen, keeps a snapshot of it, and measures (silently, in a
+ * fraction of a second) how many frames the title stays before the attract demo. */
+static int music_len;                   /* frames from the snapshot until the demo, or 0 */
+
+static bool title_up(void) {
+    return count(music_fb, is_gold, 140) > 900 && count(music_fb, is_teal, 224) > 25000;
+}
+
+static bool music_to_title(void) {
+    vdp_opts.extra_width = 0;
+    widescreen_patches(0);
+    memset(bus.sram, 0xFF, SRAM_SIZE);
+    machine_reset();
+    if (!run_until(music_fb, title_shown, 100, 3000)) return false;
+    music_snap_len = state_save(music_snap, sizeof music_snap);
+    if (!music_snap_len) return false;
+    music_len = 0;
+    for (int f = 1; f <= 60 * 60; f++) {
+        bool check = f % 2 == 0;
+        machine_run_frame(check ? music_fb : NULL, 320);
+        if (check && !title_up()) { music_len = f - 2; break; }
+    }
+    return state_load(music_snap, music_snap_len);
+}
+
+/* One frame of music, scaled by volume (0-1). Returns the stereo frames in sound_out. */
+static int music_frame(float volume) {
+    machine_run_frame(NULL, 320);
+    int v = (int)(volume * 256);
+    for (int i = 0; i < sound_out_count * 2; i++) sound_out[i] = (int16_t)(sound_out[i] * v / 256);
+    return sound_out_count;
+}
+
+#define MUSIC_FADE_OUT 15               /* frames: a quarter second */
+
+static int music_run(void *arg) {
+    (void)arg;
+    if (!music_to_title()) return 0;
+    const Uint32 target = (Uint32)sound_out_rate * 4 / 10;      /* keep about 100 ms queued */
+    float volume = 0, peak = .7f;                               /* fade in to 70% */
+    int frame = 0;
+    bool quitting = false;
+    for (;;) {
+        if (SDL_AtomicGet(&music_quit)) quitting = true;
+        if (SDL_GetQueuedAudioSize(music_dev) > (quitting ? target / 2 : target)) { SDL_Delay(2); continue; }
+        /* In over two seconds at the start; out over a quarter second to stop, and just
+         * before the title ends, so each loop ends before the demo's sound begins. */
+        bool ending = music_len && frame >= music_len - MUSIC_FADE_OUT;
+        if (quitting || ending) volume -= peak / MUSIC_FADE_OUT;
+        else if (volume < peak) volume += peak / 120;
+        volume = clampf(volume, 0, peak);
+        int n = music_frame(volume);
+        SDL_QueueAudio(music_dev, sound_out, (Uint32)n * 4);
+        frame++;
+        if (quitting && volume <= 0) break;
+        if (music_len && frame >= music_len) {
+            state_load(music_snap, music_snap_len);
+            frame = 0;
+            volume = peak;              /* the title starts again at full volume */
+        }
+    }
+    return 0;
+}
+
+static void music_start(void) {
+    if (music_thread || !rom_ok || !settings.launcher_music) return;
+    SDL_InitSubSystem(SDL_INIT_AUDIO);
+    SDL_AudioSpec want = { .freq = 48000, .format = AUDIO_S16SYS, .channels = 2, .samples = 1024 }, have;
+    music_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+    if (!music_dev) return;
+    sound_out_rate = have.freq;
+    music_sram = malloc(SRAM_SIZE);
+    memcpy(music_sram, bus.sram, SRAM_SIZE);
+    music_sram_dirty = bus.sram_dirty;
+    SDL_AtomicSet(&music_quit, 0);
+    SDL_PauseAudioDevice(music_dev, 0);
+    music_thread = SDL_CreateThread(music_run, "music", NULL);
+}
+
+static void music_stop(void) {
+    if (!music_thread) return;
+    SDL_AtomicSet(&music_quit, 1);
+    SDL_WaitThread(music_thread, NULL);
+    music_thread = NULL;
+    SDL_Delay(60);                      /* let the faded tail play out */
+    SDL_CloseAudioDevice(music_dev);
+    music_dev = 0;
+    memcpy(bus.sram, music_sram, SRAM_SIZE);
+    bus.sram_dirty = music_sram_dirty;
+    free(music_sram);
+    music_sram = NULL;
+    vdp_opts.extra_width = settings_extra_width();
+    widescreen_patches(vdp_opts.extra_width);
+    pad_state[0] = 0;
+}
+
+int launcher_music_check(int seconds) {
+    init_common();
+    if (!rom_ok) {
+        const char *why = settings.rom_path[0] ? bus_load_rom(settings.rom_path) : "no ROM path in settings";
+        fprintf(stderr, "could not load the ROM: %s\n", why ? why : "?");
+        return 1;
+    }
+    uint8_t *sram = malloc(SRAM_SIZE);
+    memcpy(sram, bus.sram, SRAM_SIZE);
+    bool dirty = bus.sram_dirty;
+    Uint64 t0 = SDL_GetPerformanceCounter();
+    bool ok = music_to_title();
+    printf("title reached and measured in %.0f ms: %s, it lasts %d frames (%.1f s)\n",
+           (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency(), ok ? "yes" : "NO",
+           music_len, music_len / 59.92);
+    /* Level per second over two loops; both loops must match, and the fade at the end of
+     * each loop must reach silence before the restart. */
+    int frame = 0;
+    float volume = 1;
+    for (int s = 0; ok && s < seconds; s++) {
+        double sum = 0;
+        long n = 0;
+        for (int f = 0; f < 60; f++) {
+            bool ending = music_len && frame >= music_len - MUSIC_FADE_OUT;
+            volume = ending ? volume - 1.f / MUSIC_FADE_OUT : 1;
+            if (volume < 0) volume = 0;
+            int c = music_frame(volume);
+            for (int i = 0; i < c * 2; i++) { sum += (double)sound_out[i] * sound_out[i]; n++; }
+            if (++frame >= music_len && music_len) {
+                printf("  loop ends with volume %.2f\n", volume);
+                state_load(music_snap, music_snap_len);
+                frame = 0;
+            }
+        }
+        printf("second %3d: level %5.0f rms\n", s, n ? sqrt(sum / n) : 0);
+    }
+    memcpy(bus.sram, sram, SRAM_SIZE);
+    bus.sram_dirty = dirty;
+    free(sram);
+    return ok ? 0 : 1;
+}
+
 /* ---- The steelbook -------------------------------------------------------------- */
 #define CASE_X 84
 #define CASE_Y 54
@@ -602,7 +758,7 @@ static void draw_ui(float lx, float ly, float t) {
 
     draw_button(PLAY_X, PLAY_W, "PLAY", true, selected == ITEM_PLAY, play_enabled(), lx, ly, t);
     draw_button(QUIT_X, QUIT_W, "QUIT", false, selected == ITEM_QUIT, true, lx, ly, t);
-    const char *keys = "\xE2\x86\x91\xE2\x86\x93 select     \xE2\x86\x90\xE2\x86\x92 change     Enter  select     Esc  quit";
+    const char *keys = "\xE2\x86\x91\xE2\x86\x93 select     \xE2\x86\x90\xE2\x86\x92 change     Enter  select     M  music     Esc  quit";
     ui_draw_text(keys, "Segoe UI", 12, 400, 1, PANEL_X, 684, rgb_hex(0x6C7385), rgb_hex(0x6C7385), 1);
 }
 
@@ -669,9 +825,11 @@ static void choose_rom(SDL_Window *win) {
     for (char *p = path; *p; p++) if (*p == '\\') *p = '/';
     snprintf(settings.rom_path, sizeof settings.rom_path, "%s", path);
     remove(cache_path);
+    music_stop();
     art_prepare();
     update_rom_status();
     build_case();
+    music_start();
 #else
     (void)win;
 #endif
@@ -691,6 +849,7 @@ int launcher_run(const char *ini_path) {
     SDL_GameController *pad = NULL;
     if (!rom_ok) selected = 11;         /* the ROM row */
     else selected = ITEM_PLAY;
+    music_start();
 
     float lx = 0, ly = 0, tx = 0, ty = 0;
     Uint64 freq = SDL_GetPerformanceFrequency(), start = SDL_GetPerformanceCounter(), last_mouse = 0;
@@ -729,6 +888,10 @@ int launcher_run(const char *ini_path) {
                 case SDLK_RIGHT: case SDLK_d: change = 1; break;
                 case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: activate = 1; break;
                 case SDLK_ESCAPE: result = 0; break;
+                case SDLK_m:            /* music on/off */
+                    settings.launcher_music = !settings.launcher_music;
+                    if (settings.launcher_music) music_start(); else music_stop();
+                    break;
                 }
                 break;
             case SDL_CONTROLLERBUTTONDOWN:
@@ -765,6 +928,7 @@ int launcher_run(const char *ini_path) {
         SDL_RenderPresent(ren);
     }
 
+    music_stop();
     settings_save(ini_path);
     if (pad) SDL_GameControllerClose(pad);
     SDL_DestroyTexture(tex);

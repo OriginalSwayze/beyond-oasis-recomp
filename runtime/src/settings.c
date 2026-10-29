@@ -21,6 +21,7 @@ Settings settings = {
     .rewind_mb = 64,
     .state_slot = 1,
     .show_launcher = true,
+    .launcher_music = true,
 };
 
 static const char *filter_keys[FILTER_COUNT] = { "off", "scanlines", "crt", "lcd" };
@@ -55,6 +56,7 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "rewind_mb")) settings.rewind_mb = atoi(v);
         else if (!strcmp(k, "state_slot")) settings.state_slot = atoi(v);
         else if (!strcmp(k, "show_launcher")) settings.show_launcher = parse_bool(v);
+        else if (!strcmp(k, "launcher_music")) settings.launcher_music = parse_bool(v);
         else if (!strcmp(k, "cheat_health")) settings.cheat_health = parse_bool(v);
         else if (!strcmp(k, "cheat_spirit")) settings.cheat_spirit = parse_bool(v);
         else if (!strcmp(k, "cheat_weapons")) settings.cheat_weapons = parse_bool(v);
@@ -89,6 +91,7 @@ void settings_save(const char *path) {
     fprintf(f, "rewind_mb=%d\n", settings.rewind_mb);
     fprintf(f, "state_slot=%d\n", settings.state_slot);
     fprintf(f, "show_launcher=%d\n", settings.show_launcher);
+    fprintf(f, "launcher_music=%d\n", settings.launcher_music);
     fprintf(f, "cheat_health=%d\n", settings.cheat_health);
     fprintf(f, "cheat_spirit=%d\n", settings.cheat_spirit);
     fprintf(f, "cheat_weapons=%d\n", settings.cheat_weapons);

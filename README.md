@@ -50,6 +50,7 @@ Other headless options:
 * `--rewind-check K`: record every frame, rewind K frames; must equal the snapshot taken then
 * `--launcher-shot F.png WIDTH LX LY`: render the launcher to a PNG with the light at (LX, LY), -1..1
 * `--no-launcher`: start the game directly this time
+* `--launcher-music-check SECONDS`: run the launcher music without an audio device and print its level per second and each loop's fade
 * `--menu-shot F.png W H`: open the in-game menu over the last frame and render it at W x H
 * `--save-to N`, `--slot N`, `--states-base PREFIX`: save a slot at the end, pick the menu's slot,
   and keep test slots in `PREFIXstates/` instead of the real ones
@@ -75,7 +76,16 @@ The artwork comes from your ROM: on first start the launcher plays the intro sil
 `launcher_art.cache` next to the executable. It is redrawn in software every frame,
 split across CPU cores (about 8 ms per frame at 1080p).
 
-Keys: arrows select and change, Enter activates, Esc quits; mouse and controller work
+The launcher plays the game's title theme, made live by your ROM's own sound driver on
+the emulated Z80, YM2612 and PSG; no audio is stored anywhere. A background thread runs
+the ROM from a reset (with blank save RAM, like the art capture) to the title screen
+without sound, measures how long the title stays before the attract demo (740 frames,
+12.3 s), then plays it in real time, fading in, and loops it with a short fade just
+before the demo would start. M turns the music on and off (`launcher_music` in
+`settings.ini`); pressing Play fades it out. The game then starts from a reset with
+your real save RAM.
+
+Keys: arrows select and change, Enter activates, M music, Esc quits; mouse and controller work
 too. "Show launcher at startup" turns it off; `show_launcher=1` in `settings.ini` brings it back.
 
 ## In-game menu

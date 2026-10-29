@@ -252,6 +252,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--overclock") && i + 1 < argc) { settings.overclock = atoi(argv[++i]); test_overrides = true; }   /* percent */
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) { settings.filter = atoi(argv[++i]) % FILTER_COUNT; test_overrides = true; }   /* 0 off, 1 scanlines, 2 CRT, 3 LCD */
         else if (!strcmp(argv[i], "--no-launcher")) no_launcher = true;
+        else if (!strcmp(argv[i], "--launcher-music-check") && i + 1 < argc) {
+            /* --launcher-music-check SECONDS: run the launcher music headless, print its level. */
+            apply_settings();
+            return launcher_music_check(atoi(argv[++i]));
+        }
         else if (!strcmp(argv[i], "--filter-shot") && i + 4 < argc) {
             /* --filter-shot F.png W H MODE: draw the last frame into a W x H picture with
              * filter MODE (0 off, 1 scanlines, 2 CRT, 3 LCD), on the GPU in a hidden window. */

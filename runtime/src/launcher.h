@@ -7,5 +7,8 @@ int launcher_run(const char *ini_path);
 /* Renders one launcher frame, `width` pixels wide, with light direction (lx, ly) in
  * -1..1 and time t, to a PNG (for checking the look without a window). */
 int launcher_screenshot(const char *png, int width, float lx, float ly, float t);
+/* Plays the launcher music for `seconds` without an audio device and prints its level
+ * per second (for checking it headless). */
+int launcher_music_check(int seconds);
 
 #endif
