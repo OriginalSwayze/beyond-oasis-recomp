@@ -20,6 +20,7 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | Internal resolution 2-4x (`runtime/src/hd.c`) | done: per-layer Scale2x/Scale3x |
 | Smooth motion, 60-144 Hz+ (`runtime/src/hd.c`) | done: glides between the game's 30 Hz updates |
 | Display filters (`runtime/src/filter.c`) | done: scanlines, CRT, LCD |
+| Slowdown fix (`runtime/src/machine.c`) | done: 68000 at 150-300% |
 | Cheats (`runtime/src/cheats.c`) | done: infinite health and spirit, unbreakable weapons, RAM codes |
 
 ## Testing
@@ -56,10 +57,11 @@ Other headless options:
 * `--smooth-check DIR SCALE`: smooth motion over the last 8 frames at 120 Hz; prints how far each picture is between motion updates and saves them
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--filter-shot F.png W H MODE`: draw the last frame at W x H with filter MODE on the GPU (hidden window) and save it
+* `--overclock PERCENT`: run the 68000 at this speed (also below 100, to simulate a heavy scene); headless runs print the spare time, game ticks and late ticks
 * `--load N`: load slot N (from the `--states-base` folder) before the first frame
 * `--cheat health|spirit|weapons`: turn a built-in cheat on for this run
 * `--poke FFxxxx:VV[VV],...`: hold RAM bytes or words every frame (applied after the built-in cheats)
-* `--wav F.wav`, `--pc-profile N` (hottest interpreted code)
+* `--wav F.wav`, `--pc-profile N` (hottest code over the last N frames: cycles per native block, instructions for interpreted code)
 
 ## Launcher
 
@@ -139,6 +141,26 @@ window size and multiplied over the picture. The glow is the picture drawn at 1/
 and added back stretched, which blurs it. The curve draws the picture and the overlay
 as a bent 40x30 triangle mesh (`SDL_RenderGeometry`). Filters work with every internal
 resolution and with smooth motion; screenshots and save thumbnails stay unfiltered.
+
+## Slowdown fix
+
+The game runs its logic every other frame (30 Hz). Each tick runs the game logic, waits
+for the first V blank (`$8B72`), draws, and waits for the tick countdown at `$FF1654`
+to run out (`$8ACA`). When a busy scene needs more than two frames of 68000 time, the
+countdown has already run out at the end of the tick and the game slows down.
+
+"Slowdown fix" (Off, 150%, 200%, 300% CPU; `overclock` in `settings.ini`) gives the
+68000 that many more cycles per scanline. The Z80, the sound chips, the video timing and
+the in-line position the VDP reports keep their real timing, so music and the frame rate
+are unchanged; the game just finishes each tick sooner and waits longer.
+
+Headless runs report it (`--overclock`): in the village, normal speed leaves 52% of
+the time spare, 200% leaves 76%. Run at 40% to imitate a scene too heavy for the real
+hardware and 230 of 300 ticks happen, all late: that is the slowdown the fix removes.
+At 100% the machine is unchanged (`--verify` and native/interpreter logs match).
+
+Moments that were CPU-bound, like area loading, also get shorter. Save states work at
+any speed, but replays are only identical at the speed they were recorded at.
 
 ## Cheats
 

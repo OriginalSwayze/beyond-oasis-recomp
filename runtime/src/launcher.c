@@ -488,6 +488,7 @@ static const Row rows[] = {
     { ROW_OPTION, "Internal resolution", OPT_INTERNAL },
     { ROW_OPTION, "Smooth motion", OPT_SMOOTH },
     { ROW_OPTION, "Sprite flicker fix", OPT_FLICKER },
+    { ROW_OPTION, "Slowdown fix", OPT_OVERCLOCK },
     { ROW_OPTION, "Rewind", OPT_REWIND_ALL },
     { ROW_HEADER, "GAME", 0 },
     { ROW_ROM, "ROM", 0 },
@@ -500,8 +501,8 @@ static const Row rows[] = {
 #define PANEL_X 572
 #define PANEL_R 1196
 #define ROWS_Y  176
-#define ROW_H   29
-#define HEAD_H  26
+#define ROW_H   27
+#define HEAD_H  24
 
 /* Selectable items: the option/ROM rows, then PLAY and QUIT. */
 enum { ITEM_PLAY = 100, ITEM_QUIT = 101 };

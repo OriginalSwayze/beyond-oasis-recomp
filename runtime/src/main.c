@@ -130,6 +130,7 @@ static void apply_settings(void) {
     widescreen_patches(vdp_opts.extra_width);
     vdp_opts.no_sprite_limit = settings.no_sprite_limit;
     vdp_opts.hd_capture = settings.internal_scale > 1 || settings.smooth_motion;
+    machine_opts.overclock = settings.overclock;
 }
 
 /* ---- Input -------------------------------------------------------------------- */
@@ -215,6 +216,8 @@ int main(int argc, char **argv) {
     int menu_w = 1920, menu_h = 1080;
     int save_to = 0;
     int load_from = 0;
+    bool rom_from_args = false;         /* a ROM path was given on the command line */
+    bool test_overrides = false;        /* settings overridden on the command line: don't save them */
     const char *hd_shot = NULL;
     const char *smooth_dir = NULL;      /* --smooth-check DIR SCALE */
     const char *filter_shot = NULL;     /* --filter-shot F.png W H MODE */
@@ -245,8 +248,9 @@ int main(int argc, char **argv) {
         }
         else if (!strcmp(argv[i], "--press") && i + 1 < argc) parse_presses(argv[++i]);
         else if (!strcmp(argv[i], "--shots") && i + 2 < argc) { shot_every = atoi(argv[++i]); shot_dir = argv[++i]; }
-        else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) settings.widescreen = atoi(argv[++i]) != 0;
-        else if (!strcmp(argv[i], "--filter") && i + 1 < argc) settings.filter = atoi(argv[++i]) % FILTER_COUNT;   /* 0 off, 1 scanlines, 2 CRT, 3 LCD */
+        else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) { settings.widescreen = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--overclock") && i + 1 < argc) { settings.overclock = atoi(argv[++i]); test_overrides = true; }   /* percent */
+        else if (!strcmp(argv[i], "--filter") && i + 1 < argc) { settings.filter = atoi(argv[++i]) % FILTER_COUNT; test_overrides = true; }   /* 0 off, 1 scanlines, 2 CRT, 3 LCD */
         else if (!strcmp(argv[i], "--no-launcher")) no_launcher = true;
         else if (!strcmp(argv[i], "--filter-shot") && i + 4 < argc) {
             /* --filter-shot F.png W H MODE: draw the last frame into a W x H picture with
@@ -270,12 +274,13 @@ int main(int argc, char **argv) {
         }
         else if (!strcmp(argv[i], "--save-to") && i + 1 < argc) save_to = atoi(argv[++i]);   /* save a slot at the end */
         else if (!strcmp(argv[i], "--states-base") && i + 1 < argc) savestate_init(argv[++i]);  /* e.g. "test_" -> test_states/ */
-        else if (!strcmp(argv[i], "--slot") && i + 1 < argc) settings.state_slot = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--slot") && i + 1 < argc) { settings.state_slot = atoi(argv[++i]); test_overrides = true; }
         else if (!strcmp(argv[i], "--load") && i + 1 < argc) load_from = atoi(argv[++i]);   /* load a slot first */
         else if (!strcmp(argv[i], "--poke") && i + 1 < argc) cheats_add_codes(argv[++i]);   /* FFxxxx:VV[VV],... */
         else if (!strcmp(argv[i], "--cheat") && i + 1 < argc) {
             /* --cheat health|spirit|weapons: turn a built-in cheat on for this run. */
             const char *c = argv[++i];
+            test_overrides = true;
             if (!strcmp(c, "health")) settings.cheat_health = true;
             else if (!strcmp(c, "spirit")) settings.cheat_spirit = true;
             else if (!strcmp(c, "weapons")) settings.cheat_weapons = true;
@@ -293,7 +298,7 @@ int main(int argc, char **argv) {
             shot_lx = (float)atof(argv[++i]);
             shot_ly = (float)atof(argv[++i]);
         }
-        else snprintf(settings.rom_path, sizeof settings.rom_path, "%s", argv[i]);
+        else { snprintf(settings.rom_path, sizeof settings.rom_path, "%s", argv[i]); rom_from_args = true; }
     }
 
     if (launcher_shot) {
@@ -316,7 +321,15 @@ int main(int argc, char **argv) {
         else SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Beyond Oasis Recomp", msg, NULL);
         return 1;
     }
-    if (!headless_frames) settings_save(ini); /* remember a ROM path given on the command line */
+    if (!headless_frames && rom_from_args) {
+        /* Remember a ROM path given on the command line, but not the other options
+         * given there (--filter, --widescreen, ...): those are for this run. */
+        Settings run = settings;
+        settings_load(ini);
+        snprintf(settings.rom_path, sizeof settings.rom_path, "%s", run.rom_path);
+        settings_save(ini);
+        settings = run;
+    }
     load_sram();
     apply_settings();
     machine_reset();
@@ -479,6 +492,9 @@ int main(int argc, char **argv) {
         save_coverage();
         save_sram();
         printf("ran %d frames, screen %dx%d\n", headless_frames, frame_width(), vdp_screen_height());
+        if (stat_total_cycles)
+            printf("68000 at %d%%: %.1f%% of its time spare, %u game ticks, %u late (slowdown)\n", machine_opts.overclock,
+                   100.0 * stat_wait_cycles / stat_total_cycles, stat_ticks, stat_late_ticks);
         if (stat_native_cycles + stat_interp_cycles)
             printf("68000 time: %.2f%% native, %.2f%% interpreted\n",
                    100.0 * stat_native_cycles / (stat_native_cycles + stat_interp_cycles),
@@ -673,7 +689,7 @@ int main(int argc, char **argv) {
 
     save_coverage();
     save_sram();
-    settings_save(ini);
+    if (!test_overrides) settings_save(ini);
     SDL_Quit();
     return 0;
 }

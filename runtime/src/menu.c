@@ -27,6 +27,7 @@ static const Item items[] = {
     { ITEM_OPTION, "Smooth motion", OPT_SMOOTH },
     { ITEM_OPTION, "Filter", OPT_FILTER },
     { ITEM_OPTION, "Sprite flicker fix", OPT_FLICKER },
+    { ITEM_OPTION, "Slowdown fix", OPT_OVERCLOCK },
     { ITEM_HEADER, "CHEATS", 0 },
     { ITEM_OPTION, "Infinite health", OPT_CHEAT_HEALTH },
     { ITEM_OPTION, "Infinite spirit", OPT_CHEAT_SPIRIT },
@@ -42,12 +43,12 @@ static const Item items[] = {
 #define PANEL_X 86
 #define PANEL_Y 36
 #define PANEL_W 520
-#define PANEL_H 648
+#define PANEL_H 660
 #define LIST_X  (PANEL_X + 40)
 #define LIST_R  (PANEL_X + PANEL_W - 36)
 #define LIST_Y  (PANEL_Y + 90)
-#define ROW_H   26
-#define HEAD_H  24
+#define ROW_H   25
+#define HEAD_H  23
 #define CARD_X  662
 #define CARD_Y  166
 #define CARD_W  532

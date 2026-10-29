@@ -15,6 +15,7 @@ Settings settings = {
     .internal_scale = 3,
     .smooth_motion = true,
     .filter = FILTER_OFF,
+    .overclock = 100,
     .window_scale = 4,
     .rewind = true,
     .rewind_mb = 64,
@@ -45,6 +46,7 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "no_sprite_limit")) settings.no_sprite_limit = parse_bool(v);
         else if (!strcmp(k, "internal_scale")) settings.internal_scale = atoi(v);
         else if (!strcmp(k, "smooth_motion")) settings.smooth_motion = parse_bool(v);
+        else if (!strcmp(k, "overclock")) settings.overclock = atoi(v);
         else if (!strcmp(k, "filter")) {
             for (int i = 0; i < FILTER_COUNT; i++) if (!strcmp(v, filter_keys[i])) settings.filter = i;
         }
@@ -63,6 +65,7 @@ void settings_load(const char *path) {
     if (settings.window_scale < 1 || settings.window_scale > 10) settings.window_scale = 4;
     if (settings.internal_scale < 1 || settings.internal_scale > 4) settings.internal_scale = 3;
     if (settings.filter < 0 || settings.filter >= FILTER_COUNT) settings.filter = FILTER_OFF;
+    if (settings.overclock < 100 || settings.overclock > 400) settings.overclock = 100;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
     if (settings.state_slot < 1 || settings.state_slot > 9) settings.state_slot = 1;
 }
@@ -80,6 +83,7 @@ void settings_save(const char *path) {
     fprintf(f, "internal_scale=%d\n", settings.internal_scale);
     fprintf(f, "smooth_motion=%d\n", settings.smooth_motion);
     fprintf(f, "filter=%s\n", filter_keys[settings.filter]);
+    fprintf(f, "overclock=%d\n", settings.overclock);
     fprintf(f, "window_scale=%d\n", settings.window_scale);
     fprintf(f, "rewind=%d\n", settings.rewind);
     fprintf(f, "rewind_mb=%d\n", settings.rewind_mb);
@@ -109,6 +113,7 @@ int settings_extra_width(void) {
 /* ---- Options shown by the launcher and the in-game menu ---------------------------- */
 static const int aspects[][2] = { { 16, 10 }, { 16, 9 }, { 2, 1 } };
 static const int rewind_sizes[] = { 32, 64, 128, 256, 512 };
+static const int overclocks[] = { 100, 150, 200, 300 };
 static const char *cheat_presets[] = { "Off", "Health", "Health + spirit", "All" };
 
 /* Index of the cheat preset matching the current toggles, or -1 for another mix. */
@@ -131,6 +136,10 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_FLICKER:    snprintf(out, n, "%s", settings.no_sprite_limit ? "On" : "Off"); break;
     case OPT_SMOOTH:     snprintf(out, n, "%s", settings.smooth_motion ? "On" : "Off"); break;
     case OPT_FILTER:     snprintf(out, n, "%s", filter_names[settings.filter]); break;
+    case OPT_OVERCLOCK:
+        if (settings.overclock <= 100) snprintf(out, n, "Off");
+        else snprintf(out, n, "%d%% CPU", settings.overclock);
+        break;
     case OPT_WINDOW_ALL:
         if (settings.fullscreen) snprintf(out, n, "Fullscreen");
         else snprintf(out, n, "Window %d\xC3\x97", settings.window_scale);
@@ -175,6 +184,12 @@ void settings_option_change(int id, int dir) {
     case OPT_FLICKER:    settings.no_sprite_limit = !settings.no_sprite_limit; break;
     case OPT_SMOOTH:     settings.smooth_motion = !settings.smooth_motion; break;
     case OPT_FILTER:     settings.filter = settings_cycle(settings.filter, FILTER_COUNT, dir); break;
+    case OPT_OVERCLOCK: {
+        int cur = 0;
+        for (int i = 0; i < 4; i++) if (overclocks[i] == settings.overclock) cur = i;
+        settings.overclock = overclocks[settings_cycle(cur, 4, dir)];
+        break;
+    }
     case OPT_WINDOW_ALL: {
         int cur = settings.fullscreen ? 0 : settings.window_scale - 1;      /* 0 = fullscreen, 1-5 = 2x-6x */
         if (cur < 0 || cur > 5) cur = 3;

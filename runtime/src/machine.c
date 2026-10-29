@@ -22,14 +22,42 @@ static int overrun;                     /* cycles the last run() went past its b
  * coverage.bin so the static tracer can learn code it could not find alone. */
 uint8_t coverage[ROM_SIZE / 16];
 
-int machine_cycles_in_line(void) { return line_cycle_base + seg_done + piece_start - m68ki_remaining_cycles; }
+/* Position in the line in real 68000 clocks (overclocked cycles count proportionally less). */
+int machine_cycles_in_line(void) {
+    return line_cycle_base + (seg_done + piece_start - m68ki_remaining_cycles) * 100 / machine_opts.overclock;
+}
 
 /* ---- Recompiled code dispatch ----------------------------------------------
  * recomp_fn[pc / 2] is the native function for a block starting at pc. Hand-written
  * C replacements (the decompilation) register here too and win over generated code. */
 extern const RecompEntry *const recomp_tables[];
 static RecompBlock recomp_fn[ROM_SIZE / 2];
-MachineOptions machine_opts = { .recomp = true };
+MachineOptions machine_opts = { .recomp = true, .overclock = 100 };
+uint64_t stat_wait_cycles, stat_total_cycles;
+uint32_t stat_ticks, stat_late_ticks;
+
+/* The main loop's waits. A game tick runs its logic, waits for the first V blank
+ * ($8B72), draws, and waits for the tick countdown ($FF1654) to run out ($8ACA);
+ * $8B56/$8B7C wait for the V blank's display work. Blocks may start at the branch too. */
+static bool is_wait(uint32_t pc) {
+    switch (pc) {
+    case 0x8ACA: case 0x8AD0: case 0x8B72: case 0x8B7A: case 0x8B56: case 0x8B5E: case 0x8B7C: case 0x8B84: return true;
+    default: return false;
+    }
+}
+
+/* Called for every native block: counts spare time, ticks, and ticks that arrived at
+ * the end-of-tick wait after the countdown had already run out (slowdown). */
+static void note_block(uint32_t at, int cycles) {
+    static uint32_t last;
+    if (is_wait(at)) stat_wait_cycles += (uint64_t)cycles;
+    /* A tick arrives from the code just before the wait (not back from an interrupt). */
+    if (at == 0x8ACA && last >= 0x8AA6 && last <= 0x8AC4) {
+        stat_ticks++;
+        if (bus.ram[0x1654] == 0 && bus.ram[0x1655] == 0) stat_late_ticks++;
+    }
+    last = at;
+}
 static bool irq_taken;                  /* an interrupt started since the last check */
 
 static void recomp_init(void);
@@ -194,7 +222,10 @@ void machine_state(StateIO *s) {
  * Blocks stop after any instruction that exhausts the budget, exactly where the
  * interpreter would, so both paths produce identical timing. */
 static void run(int cycles) {
-    int budget = cycles - overrun;
+    /* Overclocked, the 68000 gets more cycles in the same time; the Z80, sound and the
+     * line position below still advance by the real amount. */
+    int cpu_cycles = machine_opts.overclock == 100 ? cycles : cycles * machine_opts.overclock / 100;
+    int budget = cpu_cycles - overrun;
     seg_done = 0;
     if (budget > 0) {
         m68k_set_irq(vdp_irq_level());
@@ -221,7 +252,11 @@ static void run(int cycles) {
                 piece_start = m68ki_remaining_cycles = budget - seg_done;
                 uint32_t ret = 0;
                 while (fn && m68ki_remaining_cycles > 0) {
-                    ret = fn(REG_PC & 0xFFFFFF);
+                    int before = m68ki_remaining_cycles;
+                    uint32_t at = REG_PC & 0xFFFFFF;
+                    ret = fn(at);
+                    note_block(at, before - m68ki_remaining_cycles);
+                    if (pc_profile) pc_profile[at >> 1] += (uint32_t)(before - m68ki_remaining_cycles);   /* cycles per block */
                     REG_PC = ret & 0xFFFFFF;
                     if (ret & BAIL) break;
                     fn = REG_PC < ROM_SIZE ? recomp_fn[REG_PC >> 1] : NULL;
@@ -241,8 +276,9 @@ static void run(int cycles) {
             piece_start = m68ki_remaining_cycles = 0;
         }
         overrun = seg_done - budget;
+        stat_total_cycles += (uint64_t)seg_done;
     } else {
-        overrun -= cycles;
+        overrun -= cpu_cycles;
     }
     seg_done = 0;
     line_cycle_base += cycles;

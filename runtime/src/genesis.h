@@ -111,9 +111,15 @@ void    psg_write(uint8_t v);
 typedef struct {
     bool recomp;                        /* run recompiled blocks (otherwise interpret everything) */
     bool verify;                        /* check each recompiled block against the interpreter */
+    int  overclock;                     /* 68000 speed in percent of the real clock (100 = original);
+                                         * the Z80, sound and video keep their own timing */
 } MachineOptions;
 extern MachineOptions machine_opts;
 extern uint32_t verify_checked, verify_failed;
+/* 68000 cycles spent in the game's main loop waits (machine.c is_wait): the
+ * time to spare. When it reaches 0 the game slows down. */
+extern uint64_t stat_wait_cycles, stat_total_cycles;
+extern uint32_t stat_ticks, stat_late_ticks;    /* game ticks, and ticks that ran late (slowdown) */
 extern uint64_t stat_native_cycles, stat_interp_cycles;
 
 void machine_reset(void);
