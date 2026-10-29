@@ -51,3 +51,13 @@ void z80_set_irq(bool on) {
     if (on) z80_gen_int(&cpu, 0xFF);
     else cpu.int_pending = false;
 }
+
+void z80_state(StateIO *s) {
+    /* The callbacks and userdata point into this process: keep the live ones. */
+    z80 live = cpu;
+    state_io(s, &cpu, sizeof cpu);
+    cpu.read_byte = live.read_byte; cpu.write_byte = live.write_byte;
+    cpu.port_in = live.port_in; cpu.port_out = live.port_out; cpu.userdata = live.userdata;
+    state_io(s, &bank, sizeof bank);
+    state_io(s, &cycle_debt, sizeof cycle_debt);
+}

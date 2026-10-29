@@ -12,6 +12,9 @@ typedef struct {
     bool integer_scale;
     bool no_sprite_limit;
     int  window_scale;
+    bool rewind;                        /* keep a rewind buffer (hold the rewind key to step back) */
+    int  rewind_mb;                     /* rewind buffer size; frames cost ~1 KB, so 64 MB is many minutes */
+    int  state_slot;                    /* save state slot, 1-9 */
 } Settings;
 
 extern Settings settings;

@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #define ROM_SIZE        0x300000
 #define SRAM_SIZE       0x4000          /* bytes on the odd addresses $200001-$203FFF */
@@ -115,6 +116,26 @@ extern uint64_t stat_native_cycles, stat_interp_cycles;
 void machine_reset(void);
 void machine_run_frame(uint32_t *framebuffer, int pitch_pixels);
 int  machine_cycles_in_line(void);      /* cycles executed since the current line started */
+
+/* ---- Snapshots (state.c) ------------------------------------------------------
+ * Taken between frames, for save states and rewind. Each module with private state
+ * reads or writes it through state_io(). */
+#define STATE_MAX (512 * 1024)          /* bytes; a snapshot is about 160 KB */
+typedef struct { uint8_t *buf; size_t pos, cap; bool saving, ok; } StateIO;
+void   state_io(StateIO *s, void *p, size_t n);
+size_t state_save(uint8_t *buf, size_t cap);        /* returns the size, 0 on failure */
+bool   state_load(const uint8_t *buf, size_t len);  /* false (and no change) if it does not fit this build */
+void   z80_state(StateIO *s);                       /* z80bus.c */
+void   sound_state(StateIO *s);                     /* sound.cpp */
+void   machine_state(StateIO *s);                   /* machine.c */
+
+/* Rewind (rewind.c): rewind_push() before each frame; rewind_step() goes back one. */
+void rewind_reset(size_t budget_bytes);             /* 0 turns rewind off */
+void rewind_push(uint16_t pad);
+bool rewind_step(uint16_t *pad);
+void rewind_restore_head(void);
+int  rewind_frames(void);
+size_t rewind_bytes(void);
 
 /* ---- Game patches ------------------------------------------------------------ */
 void widescreen_patches(int extra_width);   /* widescreen.c: 0 restores the original code */

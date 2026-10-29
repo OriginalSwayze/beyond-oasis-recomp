@@ -12,6 +12,9 @@ Settings settings = {
     .integer_scale = false,
     .no_sprite_limit = true,
     .window_scale = 4,
+    .rewind = true,
+    .rewind_mb = 64,
+    .state_slot = 1,
 };
 
 static bool parse_bool(const char *v) { return !strcmp(v, "1") || !strcmp(v, "true") || !strcmp(v, "on"); }
@@ -33,10 +36,15 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "integer_scale")) settings.integer_scale = parse_bool(v);
         else if (!strcmp(k, "no_sprite_limit")) settings.no_sprite_limit = parse_bool(v);
         else if (!strcmp(k, "window_scale")) settings.window_scale = atoi(v);
+        else if (!strcmp(k, "rewind")) settings.rewind = parse_bool(v);
+        else if (!strcmp(k, "rewind_mb")) settings.rewind_mb = atoi(v);
+        else if (!strcmp(k, "state_slot")) settings.state_slot = atoi(v);
     }
     fclose(f);
     if (settings.aspect_w <= 0 || settings.aspect_h <= 0) { settings.aspect_w = 16; settings.aspect_h = 9; }
     if (settings.window_scale < 1 || settings.window_scale > 10) settings.window_scale = 4;
+    if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
+    if (settings.state_slot < 1 || settings.state_slot > 9) settings.state_slot = 1;
 }
 
 void settings_save(const char *path) {
@@ -50,6 +58,9 @@ void settings_save(const char *path) {
     fprintf(f, "integer_scale=%d\n", settings.integer_scale);
     fprintf(f, "no_sprite_limit=%d\n", settings.no_sprite_limit);
     fprintf(f, "window_scale=%d\n", settings.window_scale);
+    fprintf(f, "rewind=%d\n", settings.rewind);
+    fprintf(f, "rewind_mb=%d\n", settings.rewind_mb);
+    fprintf(f, "state_slot=%d\n", settings.state_slot);
     fclose(f);
 }
 

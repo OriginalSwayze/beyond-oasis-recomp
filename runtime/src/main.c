@@ -98,6 +98,45 @@ static void load_sram(void) {
     if (f) { if (fread(bus.sram, 1, SRAM_SIZE, f) != SRAM_SIZE) { /* keep what was read */ } fclose(f); }
 }
 
+/* ---- Save states: states/slotN.state next to the executable ------------------- */
+#ifdef _WIN32
+#include <direct.h>
+#define make_dir(p) _mkdir(p)
+#else
+#include <sys/stat.h>
+#define make_dir(p) mkdir(p, 0755)
+#endif
+
+static void state_path(char *out, size_t n, int slot) {
+    char dir[1100];
+    path_in_base(dir, sizeof dir, "states");
+    make_dir(dir);
+    snprintf(out, n, "%s/slot%d.state", dir, slot);
+}
+
+static bool save_state_slot(int slot) {
+    static uint8_t buf[STATE_MAX];
+    size_t len = state_save(buf, sizeof buf);
+    char p[1200];
+    state_path(p, sizeof p, slot);
+    FILE *f = len ? fopen(p, "wb") : NULL;
+    if (!f) return false;
+    bool ok = fwrite(buf, 1, len, f) == len;
+    fclose(f);
+    return ok;
+}
+
+static bool load_state_slot(int slot) {
+    static uint8_t buf[STATE_MAX];
+    char p[1200];
+    state_path(p, sizeof p, slot);
+    FILE *f = fopen(p, "rb");
+    if (!f) return false;
+    size_t len = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    return state_load(buf, len);
+}
+
 static int frame_width(void) { return vdp_screen_width() + vdp_opts.extra_width * 2; }
 
 static int save_bmp(const char *path) {
@@ -262,6 +301,8 @@ int main(int argc, char **argv) {
     const char *dump = NULL;
     uint32_t watch[16];
     int watch_count = 0;
+    int check_from = -1, check_to = -1;     /* --state-check A B */
+    int rewind_check = 0;                   /* --rewind-check K */
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--headless") && i + 1 < argc) headless_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
@@ -277,6 +318,8 @@ int main(int argc, char **argv) {
             vdp_trace_hi = (uint32_t)strtoul(argv[++i], NULL, 16);
         }
         else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dump = argv[++i];
+        else if (!strcmp(argv[i], "--state-check") && i + 2 < argc) { check_from = atoi(argv[++i]); check_to = atoi(argv[++i]); }
+        else if (!strcmp(argv[i], "--rewind-check") && i + 1 < argc) rewind_check = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--watch") && i + 1 < argc) {
             /* --watch ADDR,ADDR,...: print these RAM bytes whenever one changes. */
             for (char *p = argv[++i]; *p && watch_count < 16; ) {
@@ -306,8 +349,16 @@ int main(int argc, char **argv) {
     load_sram();
     apply_settings();
     machine_reset();
+    rewind_reset(settings.rewind ? (size_t)settings.rewind_mb << 20 : 0);
 
     if (headless_frames) {
+        /* --state-check A B: snapshot before frame A, run to B, load the snapshot, run
+         * A..B again with the same input; both runs must end in the same state.
+         * --rewind-check K: record every frame, then rewind K frames; the result must
+         * equal the snapshot taken K frames before the end. */
+        static uint8_t snap_a[STATE_MAX], snap_b[STATE_MAX], snap_ref[STATE_MAX];
+        size_t len_a = 0, len_b = 0, len_ref = 0;
+        rewind_reset(rewind_check ? (size_t)512 << 20 : 0);
         /* --wav: record the audio of the run (16-bit stereo, 48 kHz). */
         FILE *wf = wav ? fopen(wav, "wb") : NULL;
         uint32_t wav_frames = 0;
@@ -318,6 +369,10 @@ int main(int argc, char **argv) {
         for (int f = 0; f < headless_frames; f++) {
             if (profile_frames && f == headless_frames - profile_frames) pc_profile = calloc(ROM_SIZE / 2, 4);
             pad_state[0] = scripted_pad(f);
+            if (f == check_from) len_a = state_save(snap_a, sizeof snap_a);
+            if (f == check_to) len_b = state_save(snap_b, sizeof snap_b);
+            if (rewind_check && f == headless_frames - rewind_check) len_ref = state_save(snap_ref, sizeof snap_ref);
+            rewind_push(pad_state[0]);
             machine_run_frame(framebuffer, FB_W);
             if (watch_count) {
                 static uint8_t last[16];
@@ -345,6 +400,26 @@ int main(int argc, char **argv) {
             }
         }
         if (hf) fclose(hf);
+        if (len_a && len_b) {
+            static uint8_t again[STATE_MAX];
+            bool loaded = state_load(snap_a, len_a);
+            for (int f = check_from; f < check_to; f++) { pad_state[0] = scripted_pad(f); machine_run_frame(framebuffer, FB_W); }
+            size_t len = state_save(again, sizeof again);
+            printf("state check %d-%d: snapshot %zu bytes, %s\n", check_from, check_to, len_a,
+                   loaded && len == len_b && !memcmp(again, snap_b, len) ? "replay identical" : "REPLAY DIFFERS");
+        }
+        if (rewind_check)
+            printf("rewind buffer: %d frames in %.1f MB\n", rewind_frames(), rewind_bytes() / 1048576.0);
+        if (rewind_check && len_ref) {
+            static uint8_t now[STATE_MAX];
+            rewind_push(0);
+            uint16_t p;
+            int steps = 0;
+            while (steps < rewind_check && rewind_step(&p)) steps++;
+            size_t len = state_save(now, sizeof now);
+            printf("rewind check: %d frames back, %s\n", steps,
+                   steps == rewind_check && len == len_ref && !memcmp(now, snap_ref, len) ? "state identical" : "STATE DIFFERS");
+        }
         if (wf) {
             uint32_t data = wav_frames * 4, rate = (uint32_t)sound_out_rate, br = rate * 4;
             uint8_t h[44] = { 0x52,0x49,0x46,0x46, 0,0,0,0, 0x57,0x41,0x56,0x45, 0x66,0x6D,0x74,0x20,
@@ -390,6 +465,13 @@ int main(int argc, char **argv) {
     SDL_AudioDeviceID audio = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (audio) { sound_out_rate = have.freq; SDL_PauseAudioDevice(audio, 0); }
 
+    /* Short messages (save, load, slot) show in the window title for two seconds. */
+    char message[128] = "";
+    Uint64 message_until = 0;
+#define NOTIFY(...) do { snprintf(message, sizeof message, __VA_ARGS__); \
+                         message_until = SDL_GetPerformanceCounter() + SDL_GetPerformanceFrequency() * 2; } while (0)
+    char shown_title[160] = "";
+
     const double frame_s = 1.0 / 59.922743;     /* NTSC Genesis refresh rate */
     Uint64 freq = SDL_GetPerformanceFrequency(), next = SDL_GetPerformanceCounter();
     bool running = true;
@@ -404,12 +486,41 @@ int main(int argc, char **argv) {
             } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F5) {
                 settings.widescreen = !settings.widescreen;
                 apply_settings();
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F2 && !e.key.repeat) {
+                if (save_state_slot(settings.state_slot)) NOTIFY("Saved to slot %d", settings.state_slot);
+                else NOTIFY("Could not save slot %d", settings.state_slot);
+            } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_F4 && !e.key.repeat) {
+                if (load_state_slot(settings.state_slot)) NOTIFY("Loaded slot %d", settings.state_slot);
+                else NOTIFY("Slot %d is empty or from another version", settings.state_slot);
+            } else if (e.type == SDL_KEYDOWN && (e.key.keysym.sym == SDLK_F6 || e.key.keysym.sym == SDLK_F7)) {
+                settings.state_slot = (settings.state_slot + (e.key.keysym.sym == SDLK_F7 ? 1 : 7)) % 9 + 1;
+                NOTIFY("Slot %d", settings.state_slot);
             }
         }
-        pad_state[0] = key_bits(SDL_GetKeyboardState(NULL)) | controller_bits(pad);
-
-        machine_run_frame(framebuffer, FB_W);
+        const Uint8 *keys = SDL_GetKeyboardState(NULL);
+        bool rewinding = settings.rewind && (keys[SDL_SCANCODE_BACKSPACE] ||
+                         (pad && SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)));
+        uint16_t old_pad;
+        if (rewinding && rewind_step(&old_pad)) {
+            /* Redraw the frame we stepped back to, then return to the state before it. */
+            pad_state[0] = old_pad;
+            machine_run_frame(framebuffer, FB_W);
+            rewind_restore_head();
+            sound_out_count = 0;            /* silent while rewinding */
+        } else if (!rewinding) {
+            pad_state[0] = key_bits(keys) | controller_bits(pad);
+            rewind_push(pad_state[0]);
+            machine_run_frame(framebuffer, FB_W);
+        } else {
+            sound_out_count = 0;            /* at the start of the buffer: hold the picture */
+        }
         save_sram();
+
+        char title[160];
+        if (rewinding) snprintf(title, sizeof title, "Beyond Oasis - Rewinding (%.1f s left)", rewind_frames() / 60.0);
+        else if (SDL_GetPerformanceCounter() < message_until) snprintf(title, sizeof title, "Beyond Oasis - %s", message);
+        else snprintf(title, sizeof title, "Beyond Oasis");
+        if (strcmp(title, shown_title)) { SDL_SetWindowTitle(win, title); strcpy(shown_title, title); }
         if (audio) {
             /* Keep about 3 frames queued: drop audio if we fall far behind. */
             if (SDL_GetQueuedAudioSize(audio) < (Uint32)sound_out_rate * 4 / 10)

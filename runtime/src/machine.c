@@ -182,6 +182,12 @@ void machine_reset(void) {
     recomp_init();
 }
 
+/* Scheduler counters (snapshots are taken between frames, so the per-line ones are idle). */
+void machine_state(StateIO *s) {
+    state_io(s, &cpu_clock, sizeof cpu_clock);
+    state_io(s, &overrun, sizeof overrun);
+}
+
 /* Runs the 68000 for about `cycles` clocks. Native blocks and the interpreter
  * take turns: native code runs while there is a block for REG_PC; otherwise the
  * interpreter executes single instructions until native code is available again.

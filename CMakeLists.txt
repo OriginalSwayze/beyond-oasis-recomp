@@ -67,6 +67,8 @@ add_executable(BeyondOasis
   runtime/src/main.c
   runtime/src/machine.c
   runtime/src/widescreen.c
+  runtime/src/state.c
+  runtime/src/rewind.c
   runtime/src/bus.c
   runtime/src/vdp.c
   runtime/src/io.c

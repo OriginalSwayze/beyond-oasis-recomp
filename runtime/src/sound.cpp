@@ -3,6 +3,7 @@
 // at the YM2612's native rate and resampled into sound_out.
 #include "ymfm_opn.h"
 #include <cstring>
+#include <vector>
 
 extern "C" {
 #include "genesis.h"
@@ -143,6 +144,33 @@ void sound_advance(int m68k_cycles) {
         prev_l = l;
         prev_r = r;
     }
+}
+
+void sound_state(StateIO *s) {
+    // ymfm serializes itself into a byte vector; store its length first.
+    std::vector<uint8_t> chip;
+    uint32_t n = 0;
+    if (s->saving) {
+        ymfm::ymfm_saved_state st(chip, true);
+        ym.chip.save_restore(st);
+        n = uint32_t(chip.size());
+    }
+    state_io(s, &n, sizeof n);
+    if (!s->saving) {
+        if (n > 4096) { s->ok = false; return; }
+        chip.resize(n);
+    }
+    state_io(s, chip.data(), n);
+    if (!s->saving && s->ok) {
+        ymfm::ymfm_saved_state st(chip, false);
+        ym.chip.save_restore(st);
+    }
+    state_io(s, ym.timer_left, sizeof ym.timer_left);
+    state_io(s, &psg, sizeof psg);
+    state_io(s, &ym_pending, sizeof ym_pending);
+    state_io(s, &resample_pos, sizeof resample_pos);
+    state_io(s, &prev_l, sizeof prev_l);
+    state_io(s, &prev_r, sizeof prev_r);
 }
 
 } // extern "C"

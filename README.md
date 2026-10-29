@@ -14,6 +14,7 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | Z80 + YM2612 + PSG sound | done |
 | 68000 → C recompiler (`tools/recomp.mjs`, built automatically by CMake) | done: 99.98% of 68000 time runs as native C |
 | Widescreen game patches (`runtime/src/widescreen.c`, `config/patches.json`) | done: gameplay at 16:9, other screens pillarboxed |
+| Save states and rewind (`runtime/src/state.c`, `rewind.c`) | done |
 | Cheats, launcher, in-game menu | next |
 
 ## Testing
@@ -39,7 +40,19 @@ Other headless options:
 * `--trace-vram LO HI`: log CPU writes and DMAs into a VRAM range, with the 68000 PC
 * `--dump F`: save RAM, VRAM, CRAM, VSRAM and VDP registers
 * `--hide-layers MASK`: hide plane A (1), plane B (2) or sprites (4)
+* `--state-check A B`: snapshot before frame A, run to B, reload and replay; both runs must end identical
+* `--rewind-check K`: record every frame, rewind K frames; must equal the snapshot taken then
 * `--wav F.wav`, `--pc-profile N` (hottest interpreted code)
+
+## Save states and rewind
+
+A snapshot holds the whole machine between frames: both CPUs, all RAM, the VDP, I/O,
+the sound chips and the scheduler (about 157 KB). Save states write one to
+`states/slotN.state`; they load only into a build with the same state layout.
+
+Rewind records a snapshot every frame as the change from the previous one (about 1 KB
+per frame in play), up to `rewind_mb` in `settings.ini` (default 64). Holding the rewind
+key steps back one frame per frame, redrawing each with the input it was played with.
 
 ## Widescreen
 
@@ -77,6 +90,8 @@ build/cmake/BeyondOasis.exe "<path to ROM>"
 ```
 
 Keys: arrows, Z/X/C = A/B/C, Enter = Start, F5 = widescreen on/off, F11 = fullscreen.
+Save states: F2 save, F4 load, F6/F7 previous/next slot (1-9, files in `states/`).
+Rewind: hold Backspace (or the left shoulder button on a controller).
 Settings live in `settings.ini` next to the executable.
 
 ## Third-party code
