@@ -261,9 +261,12 @@ static void draw_window(uint8_t *out, int w, int extra, int line) {
         int col = (e & 0x0800) ? 7 - (px & 7) : (px & 7);
         uint8_t b = vdp.vram[((e & 0x7FF) * 32 + row * 4 + (col >> 1)) & 0xFFFF];
         int c = (col & 1) ? (b & 0xF) : (b >> 4);
-        out[i] = (uint8_t)((c ? ((e >> 9) & 0x30) | c : 0) | ((e & 0x8000) ? PRI : 0));
+        out[i] = (uint8_t)((c ? ((e >> 9) & 0x30) | c : 0) | ((e & 0x8000) ? PRI : 0) |
+                           (vdp_opts.hd_capture ? HD_WINDOW : 0));
     }
 }
+
+static inline uint32_t layer_px(uint8_t v);
 
 static void draw_sprites(uint8_t *out, int w, int extra, int line) {
     bool h40 = vdp_screen_width() == 320;
@@ -275,6 +278,7 @@ static void draw_sprites(uint8_t *out, int w, int extra, int line) {
     bool any_nonzero_x = false;
 
     for (int n = 0; n < max_total; n++) {
+        int link_now = link;
         uint32_t s = sat + link * 8;
         int y = (vram16(s) & 0x3FF) - 128;
         int size = vram16(s + 2);
@@ -285,19 +289,31 @@ static void draw_sprites(uint8_t *out, int w, int extra, int line) {
             int x = (vram16(s + 6) & 0x1FF) - 128;
             if (++on_line > max_line) { vdp.status |= 0x40; break; }
             /* A sprite at X=0 hides every lower-priority sprite on this line. */
-            if (x == -128 && any_nonzero_x) break;
+            if (x == -128 && any_nonzero_x) { if (vdp_opts.hd_capture) hd_frame.sprite_mask = true; break; }
             if (x != -128) any_nonzero_x = true;
-            int sy = line - y;
+            int row = line - y;
+            int sy = row;
             if (attr & 0x1000) sy = vcells * 8 - 1 - sy;
+            HdSprite *cap = NULL;
+            if (vdp_opts.hd_capture && line < HD_MAX_H) {
+                cap = &hd_frame.sprites[link_now];
+                if (!cap->drawn) {
+                    cap->drawn = true;
+                    cap->rank = hd_frame.sprite_count++;
+                    cap->x = x; cap->y = y; cap->w = hcells * 8; cap->h = vcells * 8; cap->attr = attr;
+                    memset(cap->px, 0, sizeof cap->px);
+                }
+            }
             for (int sx = 0; sx < hcells * 8; sx++) {
                 if (px_used++ >= max_px) break;
                 int i = x + sx + extra;
-                if (i < 0 || i >= w) continue;
                 int cx = (attr & 0x0800) ? hcells * 8 - 1 - sx : sx;
                 int tile = ((attr & 0x7FF) + (cx >> 3) * vcells + (sy >> 3)) & 0x7FF;
                 uint8_t b = vdp.vram[(tile * 32 + (sy & 7) * 4 + ((cx & 7) >> 1)) & 0xFFFF];
                 int c = (cx & 1) ? (b & 0xF) : (b >> 4);
                 if (!c) continue;
+                if (cap) cap->px[row * 32 + sx] = layer_px((uint8_t)(((attr >> 9) & 0x30) | c | ((attr & 0x8000) ? PRI : 0)));
+                if (i < 0 || i >= w) continue;
                 if (out[i] & 0x0F) { vdp.status |= 0x20; continue; } /* earlier sprite wins */
                 out[i] = (uint8_t)(((attr >> 9) & 0x30) | c | ((attr & 0x8000) ? PRI : 0));
             }
@@ -314,7 +330,7 @@ static uint32_t rgb(uint16_t c, int mode) {
 /* A layer pixel: the CRAM colour in bits 0-15 and the layer byte in bits 16-23 (the
  * priority bit is kept on transparent pixels too: shadow/highlight looks at it). */
 static inline uint32_t layer_px(uint8_t v) {
-    return (v & 0x0F) ? (uint32_t)vdp.cram[v & 0x3F] | (uint32_t)v << 16 : (uint32_t)(v & PRI) << 16;
+    return (v & 0x0F) ? (uint32_t)vdp.cram[v & 0x3F] | (uint32_t)v << 16 : (uint32_t)(v & (PRI | HD_WINDOW)) << 16;
 }
 
 uint32_t vdp_compose(uint32_t a, uint32_t b, uint32_t s, uint16_t backdrop, bool sh) {
@@ -358,10 +374,22 @@ void vdp_render_line(int line, uint32_t *dst) {
     uint16_t backdrop = vdp.cram[vdp.reg[7] & 0x3F];
     bool capture = vdp_opts.hd_capture && line < HD_MAX_H;
     if (capture) {
-        if (line == 0) { hd_frame.w = w; hd_frame.extra = extra; hd_frame.mask_sides = vdp_opts.mask_sides; }
+        if (line == 0) {
+            hd_frame.w = w; hd_frame.extra = extra; hd_frame.mask_sides = vdp_opts.mask_sides;
+            hd_serial++;
+            for (int k = 0; k < 80; k++) hd_frame.sprites[k].drawn = false;
+            hd_frame.sprite_count = 0;
+            hd_frame.sprite_mask = false;
+        }
         hd_frame.h = line + 1;
         hd_frame.backdrop[line] = backdrop;
         hd_frame.flags[line] = 0;
+        uint32_t hs_base = (vdp.reg[13] & 0x3F) << 10;
+        int hs_line = (vdp.reg[11] & 3) == 2 ? line & ~7 : (vdp.reg[11] & 3) == 3 ? line : 0;
+        for (int p = 0; p < 2; p++) {
+            hd_frame.hscroll[p][line] = (int16_t)(vram16(hs_base + hs_line * 4 + p * 2) & 0x3FF);
+            hd_frame.vscroll[p][line] = (int16_t)(vdp.vsram[p] & 0x3FF);
+        }
     }
     if (!(vdp.reg[1] & 0x40)) {
         uint32_t c = rgb(backdrop, 1);
@@ -383,7 +411,7 @@ void vdp_render_line(int line, uint32_t *dst) {
 
     bool sh = vdp.reg[12] & 0x08;
     if (capture) {
-        hd_frame.flags[line] = HD_LINE_DISPLAY | (sh ? HD_LINE_SH : 0);
+        hd_frame.flags[line] = HD_LINE_DISPLAY | (sh ? HD_LINE_SH : 0) | ((vdp.reg[11] & 4) ? HD_LINE_COLUMN_VSCROLL : 0);
         for (int i = 0; i < w; i++) {
             uint32_t pa = layer_px(a[i]), pb = layer_px(b[i]), ps = layer_px(s[i]);
             hd_frame.a[line][i] = pa; hd_frame.b[line][i] = pb; hd_frame.s[line][i] = ps;

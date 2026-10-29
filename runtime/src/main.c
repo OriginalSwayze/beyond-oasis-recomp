@@ -128,7 +128,7 @@ static void apply_settings(void) {
     vdp_opts.extra_width = settings_extra_width();
     widescreen_patches(vdp_opts.extra_width);
     vdp_opts.no_sprite_limit = settings.no_sprite_limit;
-    vdp_opts.hd_capture = settings.internal_scale > 1;
+    vdp_opts.hd_capture = settings.internal_scale > 1 || settings.smooth_motion;
 }
 
 /* ---- Input -------------------------------------------------------------------- */
@@ -215,6 +215,7 @@ int main(int argc, char **argv) {
     int save_to = 0;
     int load_from = 0;
     const char *hd_shot = NULL;
+    const char *smooth_dir = NULL;      /* --smooth-check DIR SCALE */
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--headless") && i + 1 < argc) headless_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
@@ -243,6 +244,13 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--shots") && i + 2 < argc) { shot_every = atoi(argv[++i]); shot_dir = argv[++i]; }
         else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) settings.widescreen = atoi(argv[++i]) != 0;
         else if (!strcmp(argv[i], "--no-launcher")) no_launcher = true;
+        else if (!strcmp(argv[i], "--smooth-check") && i + 2 < argc) {
+            /* --smooth-check DIR SCALE: smooth motion over the last 8 frames at 120 Hz: prints
+             * where each picture is between the motion updates and saves it as DIR/NN.png. */
+            smooth_dir = argv[++i];
+            settings.internal_scale = atoi(argv[++i]);
+            settings.smooth_motion = true;
+        }
         else if (!strcmp(argv[i], "--hd-shot") && i + 2 < argc) {
             /* --hd-shot F.png SCALE: save the last frame at the internal resolution SCALE (2-4). */
             hd_shot = argv[++i];
@@ -327,6 +335,21 @@ int main(int argc, char **argv) {
             rewind_push(pad_state[0]);
             cheats_frame();
             machine_run_frame(framebuffer, FB_W);
+            if (vdp_opts.hd_capture) hd_frame_done();
+            if (smooth_dir && f >= headless_frames - 8) {
+                for (int k = 0; k < 2; k++) {
+                    char p[1200];
+                    float frac = k * .5f;
+                    Uint64 t0 = SDL_GetPerformanceCounter();
+                    hd_compose_at(settings.internal_scale, frac);
+                    double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency();
+                    int n = (f - (headless_frames - 8)) * 2 + k;
+                    printf("frame %d +%.1f: t=%.2f  plane B x scroll %d  %.2f ms\n", f, frac, hd_motion_t(frac),
+                           hd_frame.hscroll[1][100], ms);
+                    snprintf(p, sizeof p, "%s/%02d.png", smooth_dir, n);
+                    png_write(p, hd_px, hd_w, hd_h, hd_w);
+                }
+            }
             if (watch_count) {
                 static uint8_t last[16];
                 bool changed = f == 0;
@@ -430,6 +453,7 @@ int main(int argc, char **argv) {
     SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, FB_W, FB_H);
     SDL_Texture *hd_tex = NULL;         /* the frame at the internal resolution */
     int hd_tex_w = 0, hd_tex_h = 0;
+    bool vsync_on = false;
     SDL_GameController *pad = NULL;
     SDL_AudioSpec want = { .freq = 48000, .format = AUDIO_S16SYS, .channels = 2, .samples = 1024 }, have;
     SDL_AudioDeviceID audio = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
@@ -533,6 +557,7 @@ int main(int argc, char **argv) {
             /* Redraw the frame we stepped back to, then return to the state before it. */
             pad_state[0] = old_pad;
             machine_run_frame(framebuffer, FB_W);
+            if (vdp_opts.hd_capture) hd_frame_done();
             rewind_restore_head();
             sound_out_count = 0;            /* silent while rewinding */
         } else if (!rewinding) {
@@ -540,6 +565,7 @@ int main(int argc, char **argv) {
             rewind_push(pad_state[0]);
             cheats_frame();
             machine_run_frame(framebuffer, FB_W);
+            if (vdp_opts.hd_capture) hd_frame_done();
         } else {
             sound_out_count = 0;            /* at the start of the buffer: hold the picture */
         }
@@ -556,15 +582,30 @@ int main(int argc, char **argv) {
                 SDL_QueueAudio(audio, sound_out, (Uint32)sound_out_count * 4);
         }
 
+        /* On a display faster than 60 Hz with smooth motion, every refresh until the next
+         * frame shows the moment it is (vsync paces it); otherwise one picture per frame. */
+        SDL_DisplayMode mode;
+        int refresh = SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(win), &mode) == 0 ? mode.refresh_rate : 60;
+        bool high_refresh = settings.smooth_motion && refresh > 65;
+        if (high_refresh != vsync_on) { SDL_RenderSetVSync(ren, high_refresh); vsync_on = high_refresh; }
+        next += (Uint64)(frame_s * freq);
+        Uint64 frame_ticks = (Uint64)(frame_s * freq);
+        for (;;) {
+        Uint64 now = SDL_GetPerformanceCounter();
+        float frac = now >= next ? 1 : 1 - (float)(next - now) / frame_ticks;
+        if (frac < 0) frac = 0;
         SDL_Rect dst = display_rect(ww, wh);
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
-        if (settings.internal_scale > 1 && hd_frame.h == vdp_screen_height()) {
-            hd_compose(settings.internal_scale);
+        bool hd = (settings.internal_scale > 1 || settings.smooth_motion) && hd_frame.h == vdp_screen_height();
+        if (hd) {
+            if (settings.smooth_motion) hd_compose_at(settings.internal_scale, high_refresh ? frac : 0);
+            else hd_compose(settings.internal_scale);
             if (!hd_tex || hd_tex_w != hd_w || hd_tex_h != hd_h) {
                 if (hd_tex) SDL_DestroyTexture(hd_tex);
                 hd_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, hd_w, hd_h);
-                SDL_SetTextureScaleMode(hd_tex, SDL_ScaleModeLinear);   /* the last, non-integer step to the window */
+                /* the last, non-integer step to the window; native pixels stay sharp */
+                SDL_SetTextureScaleMode(hd_tex, settings.internal_scale > 1 ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
                 hd_tex_w = hd_w; hd_tex_h = hd_h;
             }
             SDL_UpdateTexture(hd_tex, NULL, hd_px, hd_w * 4);
@@ -574,9 +615,15 @@ int main(int argc, char **argv) {
             SDL_Rect src = { 0, 0, frame_width(), vdp_screen_height() };
             SDL_RenderCopy(ren, tex, &src, &dst);
         }
+        Uint64 before_present = SDL_GetPerformanceCounter();
         SDL_RenderPresent(ren);
+        if (!high_refresh) break;
+        Uint64 after = SDL_GetPerformanceCounter();
+        if (after - before_present < freq / 1000) SDL_Delay(1);   /* vsync not honoured: don't spin */
+        /* Stop when the next refresh would land past the next frame. */
+        if (after + freq / (Uint64)refresh / 2 >= next) break;
+        }
 
-        next += (Uint64)(frame_s * freq);
         Uint64 now = SDL_GetPerformanceCounter();
         if (now < next) SDL_Delay((Uint32)((next - now) * 1000 / freq));
         else if (now - next > freq / 4) next = now; /* fell far behind: don't try to catch up */

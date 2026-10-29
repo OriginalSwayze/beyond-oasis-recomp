@@ -12,6 +12,7 @@ Settings settings = {
     .integer_scale = false,
     .no_sprite_limit = true,
     .internal_scale = 3,
+    .smooth_motion = true,
     .window_scale = 4,
     .rewind = true,
     .rewind_mb = 64,
@@ -38,6 +39,7 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "integer_scale")) settings.integer_scale = parse_bool(v);
         else if (!strcmp(k, "no_sprite_limit")) settings.no_sprite_limit = parse_bool(v);
         else if (!strcmp(k, "internal_scale")) settings.internal_scale = atoi(v);
+        else if (!strcmp(k, "smooth_motion")) settings.smooth_motion = parse_bool(v);
         else if (!strcmp(k, "window_scale")) settings.window_scale = atoi(v);
         else if (!strcmp(k, "rewind")) settings.rewind = parse_bool(v);
         else if (!strcmp(k, "rewind_mb")) settings.rewind_mb = atoi(v);
@@ -67,6 +69,7 @@ void settings_save(const char *path) {
     fprintf(f, "integer_scale=%d\n", settings.integer_scale);
     fprintf(f, "no_sprite_limit=%d\n", settings.no_sprite_limit);
     fprintf(f, "internal_scale=%d\n", settings.internal_scale);
+    fprintf(f, "smooth_motion=%d\n", settings.smooth_motion);
     fprintf(f, "window_scale=%d\n", settings.window_scale);
     fprintf(f, "rewind=%d\n", settings.rewind);
     fprintf(f, "rewind_mb=%d\n", settings.rewind_mb);
@@ -116,6 +119,11 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_INTEGER:    snprintf(out, n, "%s", settings.integer_scale ? "On" : "Off"); break;
     case OPT_WINDOW:     snprintf(out, n, "%d\xC3\x97", settings.window_scale); break;
     case OPT_FLICKER:    snprintf(out, n, "%s", settings.no_sprite_limit ? "On" : "Off"); break;
+    case OPT_SMOOTH:     snprintf(out, n, "%s", settings.smooth_motion ? "On" : "Off"); break;
+    case OPT_REWIND_ALL:
+        if (!settings.rewind) snprintf(out, n, "Off");
+        else snprintf(out, n, "%d MB", settings.rewind_mb);
+        break;
     case OPT_INTERNAL:
         if (settings.internal_scale <= 1) snprintf(out, n, "Native");
         else snprintf(out, n, "%d\xC3\x97", settings.internal_scale);
@@ -150,6 +158,16 @@ void settings_option_change(int id, int dir) {
     case OPT_INTEGER:    settings.integer_scale = !settings.integer_scale; break;
     case OPT_WINDOW:     settings.window_scale = settings_cycle(settings.window_scale - 2, 5, dir) + 2; break;
     case OPT_FLICKER:    settings.no_sprite_limit = !settings.no_sprite_limit; break;
+    case OPT_SMOOTH:     settings.smooth_motion = !settings.smooth_motion; break;
+    case OPT_REWIND_ALL: {
+        int cur = 0;                    /* 0 = off, 1.. = rewind_sizes */
+        if (settings.rewind) for (int i = 0; i < 5; i++) if (rewind_sizes[i] == settings.rewind_mb) cur = i + 1;
+        if (settings.rewind && !cur) cur = 2;
+        cur = settings_cycle(cur, 6, dir);
+        settings.rewind = cur > 0;
+        if (cur) settings.rewind_mb = rewind_sizes[cur - 1];
+        break;
+    }
     case OPT_INTERNAL:   settings.internal_scale = settings_cycle(settings.internal_scale - 1, 4, dir) + 1; break;
     case OPT_REWIND:     settings.rewind = !settings.rewind; break;
     case OPT_REWIND_MB: {

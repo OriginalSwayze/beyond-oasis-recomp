@@ -18,6 +18,7 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | Launcher (`runtime/src/launcher.c`) | done: settings, ROM picker, foil steelbook |
 | In-game menu (`runtime/src/menu.c`) | done: save/load slots with thumbnails, options, reset, quit |
 | Internal resolution 2-4x (`runtime/src/hd.c`) | done: per-layer Scale2x/Scale3x |
+| Smooth motion, 60-144 Hz+ (`runtime/src/hd.c`) | done: glides between the game's 30 Hz updates |
 | Cheats (`runtime/src/cheats.c`) | done: infinite health and spirit, unbreakable weapons, RAM codes |
 
 ## Testing
@@ -51,6 +52,7 @@ Other headless options:
 * `--save-to N`, `--slot N`, `--states-base PREFIX`: save a slot at the end, pick the menu's slot,
   and keep test slots in `PREFIXstates/` instead of the real ones
 * `--hd-shot F.png SCALE`: save the last frame at internal resolution SCALE (2-4), with the time it took
+* `--smooth-check DIR SCALE`: smooth motion over the last 8 frames at 120 Hz; prints how far each picture is between motion updates and saves them
 * `--load N`: load slot N (from the `--states-base` folder) before the first frame
 * `--cheat health|spirit|weapons`: turn a built-in cheat on for this run
 * `--poke FFxxxx:VV[VV],...`: hold RAM bytes or words every frame (applied after the built-in cheats)
@@ -94,6 +96,29 @@ gains no new detail: it is the original art, drawn smoother at the window's size
 At 3x a frame takes about 4 ms (6-8 ms at 4x with widescreen) on one core. "Native" turns
 it off and shows the original pixels. The native picture is unchanged, as are save-state
 thumbnails and screenshots.
+
+## Smooth motion
+
+The game moves its camera and characters every other frame: its logic runs at 30 Hz,
+in 2-pixel steps. "Smooth motion" (on by default, `smooth_motion` in `settings.ini`)
+glides from one motion update to the next instead of jumping:
+
+* The VDP also records each line's scroll values and every sprite: its position and all
+  of its pixels, including those hidden behind other sprites.
+* A frame where the scroll or a sprite moved is a motion update. Each picture is drawn
+  a fraction `t` of the way from the previous update to the latest: plane A and B are
+  shifted back by `(1 - t)` of their scroll change, and every sprite paired with the
+  same sprite at the previous update (same tiles, size, attributes, near) is placed
+  between its two positions. The window, the HUD and anything that did not move stay put;
+  new sprites and animation frames appear where they are.
+* At 60 Hz this turns the 30 Hz steps into 60 Hz motion. On a faster display (120, 144 Hz
+  and up) the window switches to vsync and draws a picture at every refresh.
+* Scene cuts (scroll jumps over 24 pixels), column scrolling and sprite masking are
+  drawn as they are, without gliding.
+
+Motion is shown one update (about 33 ms) late. Smooth motion works at any internal
+resolution; at Native it moves whole pixels. A picture takes about 3 ms at 3x (16:9) on
+several cores, 5 ms on frames that also scale new layers.
 
 ## Cheats
 
