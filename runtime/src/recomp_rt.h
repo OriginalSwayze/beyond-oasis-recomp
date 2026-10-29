@@ -22,6 +22,7 @@ typedef struct { uint32_t pc; RecompBlock fn; } RecompEntry;
 /* Patched instructions (config/patches.json); 0 keeps the original behavior. */
 extern uint32_t patch_cull_left, patch_cull_widen;
 extern int patch_cam_margin;
+extern int patch_no_damage;             /* infinite health cheat (cheats.c) */
 
 /* Replaces the code at pc with hand-written C (machine.c); NULL restores the generated code. */
 void machine_override(uint32_t pc, RecompBlock fn);

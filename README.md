@@ -17,7 +17,7 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | Save states and rewind (`runtime/src/state.c`, `rewind.c`) | done |
 | Launcher (`runtime/src/launcher.c`) | done: settings, ROM picker, foil steelbook |
 | In-game menu (`runtime/src/menu.c`) | done: save/load slots with thumbnails, options, reset, quit |
-| Cheats | next |
+| Cheats (`runtime/src/cheats.c`) | done: infinite health and spirit, unbreakable weapons, RAM codes |
 
 ## Testing
 
@@ -49,6 +49,9 @@ Other headless options:
 * `--menu-shot F.png W H`: open the in-game menu over the last frame and render it at W x H
 * `--save-to N`, `--slot N`, `--states-base PREFIX`: save a slot at the end, pick the menu's slot,
   and keep test slots in `PREFIXstates/` instead of the real ones
+* `--load N`: load slot N (from the `--states-base` folder) before the first frame
+* `--cheat health|spirit|weapons`: turn a built-in cheat on for this run
+* `--poke FFxxxx:VV[VV],...`: hold RAM bytes or words every frame (applied after the built-in cheats)
 * `--wav F.wav`, `--pc-profile N` (hottest interpreted code)
 
 ## Launcher
@@ -71,6 +74,27 @@ too. "Show launcher at startup" turns it off; `show_launcher=1` in `settings.ini
 Esc pauses the game over a blurred copy of the last frame. The menu saves and loads
 the nine slots (each with a thumbnail and the time it was saved), changes the display
 options and rewind on the spot, and resets or quits (both ask for a second press).
+
+## Cheats
+
+The pause menu has a toggle for each cheat; the launcher's "Cheats" row steps through
+Off, Health, Health + spirit and All.
+
+* **Infinite health.** The player's hit handler subtracts no damage (a recompiler patch
+  at `$005884`, `playerDamage` in `config/patches.json`), and the health is held full.
+* **Infinite spirit.** Spirit power is held full once Ali has a spirit.
+* **Unbreakable weapons.** Breakable weapons keep their uses (a weapon on its last use
+  gets two). Turning the cheat off leaves them with the count they had.
+
+Extra RAM codes go in `settings.ini` as `cheat_codes=FFxxxx:VV,FFxxxx:VVVV,...`: two hex
+digits write a byte, four write a word, every frame. Useful addresses:
+
+| Address | Meaning |
+|---|---|
+| `$FF1A70` / `$FF1A72` | max / current health (word) |
+| `$FF1A74` / `$FF1A76` | max / current spirit (word; max is 0 before the first spirit) |
+| `$FF0D80` + 2k | weapon slot k (0-7): id byte, uses byte (`$FF` = never breaks) |
+| `$FF0D90` + 2k | item slot k (0-15): id byte (0 = empty), then a second byte |
 
 ## Save states and rewind
 

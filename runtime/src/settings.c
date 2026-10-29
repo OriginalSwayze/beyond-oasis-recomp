@@ -41,6 +41,10 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "rewind_mb")) settings.rewind_mb = atoi(v);
         else if (!strcmp(k, "state_slot")) settings.state_slot = atoi(v);
         else if (!strcmp(k, "show_launcher")) settings.show_launcher = parse_bool(v);
+        else if (!strcmp(k, "cheat_health")) settings.cheat_health = parse_bool(v);
+        else if (!strcmp(k, "cheat_spirit")) settings.cheat_spirit = parse_bool(v);
+        else if (!strcmp(k, "cheat_weapons")) settings.cheat_weapons = parse_bool(v);
+        else if (!strcmp(k, "cheat_codes")) snprintf(settings.cheat_codes, sizeof settings.cheat_codes, "%s", v);
     }
     fclose(f);
     if (settings.aspect_w <= 0 || settings.aspect_h <= 0) { settings.aspect_w = 16; settings.aspect_h = 9; }
@@ -64,6 +68,11 @@ void settings_save(const char *path) {
     fprintf(f, "rewind_mb=%d\n", settings.rewind_mb);
     fprintf(f, "state_slot=%d\n", settings.state_slot);
     fprintf(f, "show_launcher=%d\n", settings.show_launcher);
+    fprintf(f, "cheat_health=%d\n", settings.cheat_health);
+    fprintf(f, "cheat_spirit=%d\n", settings.cheat_spirit);
+    fprintf(f, "cheat_weapons=%d\n", settings.cheat_weapons);
+    fprintf(f, "# Extra RAM codes held every frame: FFxxxx:VV (byte) or FFxxxx:VVVV (word), comma-separated\n");
+    fprintf(f, "cheat_codes=%s\n", settings.cheat_codes);
     fclose(f);
 }
 
@@ -83,6 +92,17 @@ int settings_extra_width(void) {
 /* ---- Options shown by the launcher and the in-game menu ---------------------------- */
 static const int aspects[][2] = { { 16, 10 }, { 16, 9 }, { 2, 1 } };
 static const int rewind_sizes[] = { 32, 64, 128, 256, 512 };
+static const char *cheat_presets[] = { "Off", "Health", "Health + spirit", "All" };
+
+/* Index of the cheat preset matching the current toggles, or -1 for another mix. */
+static int cheat_preset(void) {
+    int h = settings.cheat_health, s = settings.cheat_spirit, w = settings.cheat_weapons;
+    if (!h && !s && !w) return 0;
+    if (h && !s && !w) return 1;
+    if (h && s && !w) return 2;
+    if (h && s && w) return 3;
+    return -1;
+}
 
 void settings_option_text(int id, char *out, size_t n) {
     switch (id) {
@@ -95,6 +115,14 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_REWIND:     snprintf(out, n, "%s", settings.rewind ? "On" : "Off"); break;
     case OPT_REWIND_MB:  snprintf(out, n, "%d MB", settings.rewind_mb); break;
     case OPT_LAUNCHER:   snprintf(out, n, "%s", settings.show_launcher ? "On" : "Off"); break;
+    case OPT_CHEAT_HEALTH:  snprintf(out, n, "%s", settings.cheat_health ? "On" : "Off"); break;
+    case OPT_CHEAT_SPIRIT:  snprintf(out, n, "%s", settings.cheat_spirit ? "On" : "Off"); break;
+    case OPT_CHEAT_WEAPONS: snprintf(out, n, "%s", settings.cheat_weapons ? "On" : "Off"); break;
+    case OPT_CHEATS: {
+        int p = cheat_preset();
+        snprintf(out, n, "%s", p < 0 ? "Custom" : cheat_presets[p]);
+        break;
+    }
     }
 }
 
@@ -122,6 +150,17 @@ void settings_option_change(int id, int dir) {
         break;
     }
     case OPT_LAUNCHER: settings.show_launcher = !settings.show_launcher; break;
+    case OPT_CHEAT_HEALTH:  settings.cheat_health = !settings.cheat_health; break;
+    case OPT_CHEAT_SPIRIT:  settings.cheat_spirit = !settings.cheat_spirit; break;
+    case OPT_CHEAT_WEAPONS: settings.cheat_weapons = !settings.cheat_weapons; break;
+    case OPT_CHEATS: {
+        int p = cheat_preset();
+        p = p < 0 ? (dir > 0 ? 0 : 3) : settings_cycle(p, 4, dir);
+        settings.cheat_health = p >= 1;
+        settings.cheat_spirit = p >= 2;
+        settings.cheat_weapons = p >= 3;
+        break;
+    }
     }
 }
 

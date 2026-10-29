@@ -18,6 +18,8 @@ const REPLACED = new Map([
   [parseInt(CAM.minSet, 16), ['clr.w	d1', ['setw(&D(1), cam_margin()); logicw(D(1) & 0xFFFFu);']]],
   [parseInt(CAM.maxLoad, 16), ['move.w	($FF177A).l,d0',
     ['setw(&D(0), rd16(0xFF177A) - cam_margin()); logicw(D(0) & 0xFFFFu);']]],
+  [parseInt(PATCHES.playerDamage.pc, 16), ['sub.w	d0,d1',
+    ['setw(&D(1), subw(patch_no_damage ? 0u : (D(0) & 0xFFFFu), D(1) & 0xFFFFu));']]],
 ]);
 
 const hex = (v) => '0x' + (v >>> 0).toString(16).toUpperCase();

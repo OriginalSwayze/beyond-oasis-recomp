@@ -490,6 +490,7 @@ static const Row rows[] = {
     { ROW_OPTION, "Rewind buffer", OPT_REWIND_MB },
     { ROW_HEADER, "GAME", 0 },
     { ROW_ROM, "ROM", 0 },
+    { ROW_OPTION, "Cheats", OPT_CHEATS },
     { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER },
 };
 #define ROW_COUNT ((int)(sizeof rows / sizeof *rows))
@@ -498,8 +499,8 @@ static const Row rows[] = {
 #define PANEL_X 572
 #define PANEL_R 1196
 #define ROWS_Y  176
-#define ROW_H   32
-#define HEAD_H  30
+#define ROW_H   30
+#define HEAD_H  28
 
 /* Selectable items: the option/ROM rows, then PLAY and QUIT. */
 enum { ITEM_PLAY = 100, ITEM_QUIT = 101 };

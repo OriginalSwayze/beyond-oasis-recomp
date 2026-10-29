@@ -20,5 +20,9 @@
     "minTest": "00CFA0",
     "minSet": "00CFA6",
     "maxLoad": "00CFDA"
+  },
+  "playerDamage": {
+    "comment": "The player's hit handler subtracts the damage from the current HP ($8A of the player object at $FF19E8) here. With patch_no_damage set (the infinite health cheat) the damage is 0, so even a hit bigger than the whole health bar cannot kill.",
+    "pc": "005884"
   }
 }

@@ -6,6 +6,7 @@
 #include "settings.h"
 #include "png.h"
 #include "launcher.h"
+#include "cheats.h"
 #include "menu.h"
 #include "savestate.h"
 #include "ui.h"
@@ -210,6 +211,7 @@ int main(int argc, char **argv) {
     const char *menu_shot = NULL;
     int menu_w = 1920, menu_h = 1080;
     int save_to = 0;
+    int load_from = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--headless") && i + 1 < argc) headless_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
@@ -241,6 +243,15 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--save-to") && i + 1 < argc) save_to = atoi(argv[++i]);   /* save a slot at the end */
         else if (!strcmp(argv[i], "--states-base") && i + 1 < argc) savestate_init(argv[++i]);  /* e.g. "test_" -> test_states/ */
         else if (!strcmp(argv[i], "--slot") && i + 1 < argc) settings.state_slot = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--load") && i + 1 < argc) load_from = atoi(argv[++i]);   /* load a slot first */
+        else if (!strcmp(argv[i], "--poke") && i + 1 < argc) cheats_add_codes(argv[++i]);   /* FFxxxx:VV[VV],... */
+        else if (!strcmp(argv[i], "--cheat") && i + 1 < argc) {
+            /* --cheat health|spirit|weapons: turn a built-in cheat on for this run. */
+            const char *c = argv[++i];
+            if (!strcmp(c, "health")) settings.cheat_health = true;
+            else if (!strcmp(c, "spirit")) settings.cheat_spirit = true;
+            else if (!strcmp(c, "weapons")) settings.cheat_weapons = true;
+        }
         else if (!strcmp(argv[i], "--menu-shot") && i + 3 < argc) {
             /* --menu-shot F.png W H: open the in-game menu over the last frame and render it. */
             menu_shot = argv[++i];
@@ -291,6 +302,7 @@ int main(int argc, char **argv) {
         static uint8_t snap_a[STATE_MAX], snap_b[STATE_MAX], snap_ref[STATE_MAX];
         size_t len_a = 0, len_b = 0, len_ref = 0;
         rewind_reset(rewind_check ? (size_t)512 << 20 : 0);
+        if (load_from && !savestate_load(load_from)) fprintf(stderr, "could not load slot %d\n", load_from);
         /* --wav: record the audio of the run (16-bit stereo, 48 kHz). */
         FILE *wf = wav ? fopen(wav, "wb") : NULL;
         uint32_t wav_frames = 0;
@@ -305,6 +317,7 @@ int main(int argc, char **argv) {
             if (f == check_to) len_b = state_save(snap_b, sizeof snap_b);
             if (rewind_check && f == headless_frames - rewind_check) len_ref = state_save(snap_ref, sizeof snap_ref);
             rewind_push(pad_state[0]);
+            cheats_frame();
             machine_run_frame(framebuffer, FB_W);
             if (watch_count) {
                 static uint8_t last[16];
@@ -508,6 +521,7 @@ int main(int argc, char **argv) {
         } else if (!rewinding) {
             pad_state[0] = key_bits(keys) | controller_bits(pad);
             rewind_push(pad_state[0]);
+            cheats_frame();
             machine_run_frame(framebuffer, FB_W);
         } else {
             sound_out_count = 0;            /* at the start of the buffer: hold the picture */
