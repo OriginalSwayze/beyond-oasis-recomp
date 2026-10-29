@@ -32,7 +32,23 @@ static RecompBlock recomp_fn[ROM_SIZE / 2];
 MachineOptions machine_opts = { .recomp = true };
 static bool irq_taken;                  /* an interrupt started since the last check */
 
-void machine_override(uint32_t pc, RecompBlock fn) { recomp_fn[pc >> 1] = fn; }
+static void recomp_init(void);
+static uint8_t overridden[ROM_SIZE / 16];  /* one bit per even address replaced by machine_override() */
+
+static RecompBlock generated_fn(uint32_t pc) {
+    for (int t = 0; recomp_tables[t]; t++)
+        for (const RecompEntry *e = recomp_tables[t]; e->fn; e++) if (e->pc == pc) return e->fn;
+    return NULL;
+}
+
+/* Replaces the code at pc with hand-written C; NULL restores the generated code. */
+void machine_override(uint32_t pc, RecompBlock fn) {
+    recomp_init();
+    recomp_fn[pc >> 1] = fn ? fn : generated_fn(pc);
+    uint8_t bit = (uint8_t)(1u << ((pc >> 1) & 7));
+    if (fn) overridden[pc >> 4] |= bit;
+    else overridden[pc >> 4] &= (uint8_t)~bit;
+}
 
 static void recomp_init(void) {
     static bool done;
@@ -124,7 +140,7 @@ static void verify_hook(uint32_t pc) {
         else return;
     }
     RecompBlock fn = pc < ROM_SIZE ? recomp_fn[pc >> 1] : NULL;
-    if (!fn) return;
+    if (!fn || (overridden[pc >> 4] >> ((pc >> 1) & 7) & 1)) return; /* overrides change behavior on purpose */
     if (!snap_before) { snap_before = malloc(sizeof *snap_before); snap_native = malloc(sizeof *snap_native); }
     snap_take(snap_before);
     irq_taken = false;
@@ -230,6 +246,7 @@ static void run(int cycles) {
 
 void machine_run_frame(uint32_t *fb, int pitch) {
     sound_out_count = 0;
+    if (vdp_opts.extra_width) widescreen_frame();
     int height = vdp_screen_height();
     for (int line = 0; line < LINES_NTSC; line++) {
         vdp.line = line;

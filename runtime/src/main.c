@@ -1,6 +1,7 @@
 /* Beyond Oasis Recomp: window, input, frame pacing.
  *   BeyondOasis.exe [rom path]                 play
- *   BeyondOasis.exe --headless N --shot F.bmp  run N frames without a window, save the last frame */
+ *   BeyondOasis.exe --headless N --shot F.bmp  run N frames without a window, save the last frame
+ *   headless extras: --press "FRAME:BUTTONS[:FRAMES],..." --shots EVERY DIR --widescreen 0|1 */
 #include "genesis.h"
 #include "settings.h"
 #include <SDL.h>
@@ -25,6 +26,41 @@ static void print_pc_profile(void) {
         printf("  $%06X  %u\n", at * 2, best);
         pc_profile[at] = 0;
     }
+}
+
+/* ---- Scripted input for headless runs ------------------------------------------
+ * --press "FRAME:BUTTONS[:FRAMES],..." holds BUTTONS (letters U D L R A B C S) from
+ * FRAME for FRAMES frames (default 4). Several entries may overlap. */
+typedef struct { int frame, len; uint16_t bits; } Press;
+static Press presses[256];
+static int press_count;
+
+static void parse_presses(const char *spec) {
+    while (*spec && press_count < (int)(sizeof presses / sizeof *presses)) {
+        Press p = { atoi(spec), 4, 0 };
+        const char *c = strchr(spec, ':');
+        if (!c) break;
+        for (c++; *c && *c != ':' && *c != ','; c++) {
+            switch (*c) {
+            case 'U': p.bits |= PAD_UP; break;    case 'D': p.bits |= PAD_DOWN; break;
+            case 'L': p.bits |= PAD_LEFT; break;  case 'R': p.bits |= PAD_RIGHT; break;
+            case 'A': p.bits |= PAD_A; break;     case 'B': p.bits |= PAD_B; break;
+            case 'C': p.bits |= PAD_C; break;     case 'S': p.bits |= PAD_START; break;
+            }
+        }
+        if (*c == ':') p.len = atoi(++c);
+        presses[press_count++] = p;
+        const char *next = strchr(c, ',');
+        if (!next) break;
+        spec = next + 1;
+    }
+}
+
+static uint16_t scripted_pad(int frame) {
+    uint16_t bits = 0;
+    for (int i = 0; i < press_count; i++)
+        if (frame >= presses[i].frame && frame < presses[i].frame + presses[i].len) bits |= presses[i].bits;
+    return bits;
 }
 
 static char base_dir[1024];
@@ -73,8 +109,84 @@ static int save_bmp(const char *path) {
     return r;
 }
 
+/* Minimal PNG writer (stored deflate blocks), so screenshots open anywhere. */
+static uint32_t crc_table[256];
+static uint32_t png_crc(uint32_t c, const uint8_t *p, size_t n) {
+    if (!crc_table[1])
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t v = i;
+            for (int k = 0; k < 8; k++) v = v & 1 ? 0xEDB88320u ^ (v >> 1) : v >> 1;
+            crc_table[i] = v;
+        }
+    c = ~c;
+    while (n--) c = crc_table[(c ^ *p++) & 0xFF] ^ (c >> 8);
+    return ~c;
+}
+
+static void put32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
+
+static void png_chunk(FILE *f, const char *type, const uint8_t *data, uint32_t n) {
+    uint8_t h[8];
+    put32(h, n);
+    memcpy(h + 4, type, 4);
+    fwrite(h, 1, 8, f);
+    fwrite(data, 1, n, f);
+    uint32_t c = png_crc(png_crc(0, (const uint8_t *)type, 4), data, n);
+    put32(h, c);
+    fwrite(h, 1, 4, f);
+}
+
+static int save_png(const char *path) {
+    int w = frame_width(), h = vdp_screen_height();
+    size_t row = (size_t)w * 3 + 1, raw_n = row * (size_t)h;
+    uint8_t *raw = malloc(raw_n);
+    for (int y = 0; y < h; y++) {
+        uint8_t *r = raw + row * (size_t)y;
+        *r++ = 0;
+        for (int x = 0; x < w; x++) {
+            uint32_t p = framebuffer[y * FB_W + x];
+            *r++ = (uint8_t)(p >> 16); *r++ = (uint8_t)(p >> 8); *r++ = (uint8_t)p;
+        }
+    }
+    size_t blocks = (raw_n + 65534) / 65535;
+    uint8_t *z = malloc(raw_n + blocks * 5 + 6), *o = z;
+    *o++ = 0x78; *o++ = 0x01;
+    uint32_t a = 1, b = 0;
+    for (size_t i = 0; i < raw_n; i++) { a = (a + raw[i]) % 65521; b = (b + a) % 65521; }
+    for (size_t at = 0; at < raw_n; at += 65535) {
+        size_t n = raw_n - at < 65535 ? raw_n - at : 65535;
+        *o++ = at + n == raw_n;
+        *o++ = (uint8_t)n; *o++ = (uint8_t)(n >> 8); *o++ = (uint8_t)~n; *o++ = (uint8_t)(~n >> 8);
+        memcpy(o, raw + at, n);
+        o += n;
+    }
+    put32(o, b << 16 | a);
+    o += 4;
+    FILE *f = fopen(path, "wb");
+    if (f) {
+        static const uint8_t sig[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+        uint8_t ihdr[13];
+        put32(ihdr, (uint32_t)w); put32(ihdr + 4, (uint32_t)h);
+        ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = ihdr[11] = ihdr[12] = 0;
+        fwrite(sig, 1, 8, f);
+        png_chunk(f, "IHDR", ihdr, 13);
+        png_chunk(f, "IDAT", z, (uint32_t)(o - z));
+        png_chunk(f, "IEND", NULL, 0);
+        fclose(f);
+    }
+    free(raw); free(z);
+    return f ? 0 : -1;
+}
+
+/* Saves as PNG or BMP depending on the file extension. */
+static int save_shot(const char *path) {
+    size_t n = strlen(path);
+    return n > 4 && !strcmp(path + n - 4, ".png") ? save_png(path) : save_bmp(path);
+}
+
 static void apply_settings(void) {
     vdp_opts.extra_width = settings_extra_width();
+    widescreen_patches(vdp_opts.extra_width);
     vdp_opts.no_sprite_limit = settings.no_sprite_limit;
 }
 
@@ -145,6 +257,11 @@ int main(int argc, char **argv) {
     int profile_frames = 0;
     const char *wav = NULL;
     const char *hash_log = NULL;
+    const char *shot_dir = NULL;
+    int shot_every = 0;
+    const char *dump = NULL;
+    uint32_t watch[16];
+    int watch_count = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--headless") && i + 1 < argc) headless_frames = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
@@ -153,6 +270,23 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--interpret")) machine_opts.recomp = false;
         else if (!strcmp(argv[i], "--hash-log") && i + 1 < argc) hash_log = argv[++i];
         else if (!strcmp(argv[i], "--verify")) machine_opts.verify = true;
+        else if (!strcmp(argv[i], "--hide-layers") && i + 1 < argc) vdp_opts.hide_layers = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--trace-vram") && i + 2 < argc) {
+            extern uint32_t vdp_trace_lo, vdp_trace_hi;
+            vdp_trace_lo = (uint32_t)strtoul(argv[++i], NULL, 16);
+            vdp_trace_hi = (uint32_t)strtoul(argv[++i], NULL, 16);
+        }
+        else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dump = argv[++i];
+        else if (!strcmp(argv[i], "--watch") && i + 1 < argc) {
+            /* --watch ADDR,ADDR,...: print these RAM bytes whenever one changes. */
+            for (char *p = argv[++i]; *p && watch_count < 16; ) {
+                watch[watch_count++] = (uint32_t)strtoul(p, &p, 16) & 0xFFFF;
+                if (*p == ',') p++;
+            }
+        }
+        else if (!strcmp(argv[i], "--press") && i + 1 < argc) parse_presses(argv[++i]);
+        else if (!strcmp(argv[i], "--shots") && i + 2 < argc) { shot_every = atoi(argv[++i]); shot_dir = argv[++i]; }
+        else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) settings.widescreen = atoi(argv[++i]) != 0;
         else snprintf(settings.rom_path, sizeof settings.rom_path, "%s", argv[i]);
     }
 
@@ -168,7 +302,7 @@ int main(int argc, char **argv) {
         else SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Beyond Oasis Recomp", msg, NULL);
         return 1;
     }
-    settings_save(ini); /* remember a ROM path given on the command line */
+    if (!headless_frames) settings_save(ini); /* remember a ROM path given on the command line */
     load_sram();
     apply_settings();
     machine_reset();
@@ -183,7 +317,23 @@ int main(int argc, char **argv) {
         FILE *hf = hash_log ? fopen(hash_log, "w") : NULL;
         for (int f = 0; f < headless_frames; f++) {
             if (profile_frames && f == headless_frames - profile_frames) pc_profile = calloc(ROM_SIZE / 2, 4);
+            pad_state[0] = scripted_pad(f);
             machine_run_frame(framebuffer, FB_W);
+            if (watch_count) {
+                static uint8_t last[16];
+                bool changed = f == 0;
+                for (int k = 0; k < watch_count; k++) changed |= last[k] != bus.ram[watch[k]];
+                if (changed) {
+                    printf("%5d", f);
+                    for (int k = 0; k < watch_count; k++) printf(" %02X", last[k] = bus.ram[watch[k]]);
+                    printf("\n");
+                }
+            }
+            if (shot_every && f % shot_every == 0) {
+                char p[1200];
+                snprintf(p, sizeof p, "%s/%05d.png", shot_dir, f);
+                save_png(p);
+            }
             if (wf) { fwrite(sound_out, 4, (size_t)sound_out_count, wf); wav_frames += (uint32_t)sound_out_count; }
             if (hf) {
                 uint64_t h = 1469598103934665603ull;
@@ -204,7 +354,20 @@ int main(int argc, char **argv) {
             fseek(wf, 0, SEEK_SET); fwrite(h, 1, 44, wf); fclose(wf);
         }
         if (pc_profile) print_pc_profile();
-        if (shot && save_bmp(shot) != 0) fprintf(stderr, "could not save %s\n", shot);
+        if (dump) {
+            /* --dump: raw machine state for offline analysis:
+             * RAM 64K, VRAM 64K, CRAM 128, VSRAM 80, VDP registers 32. */
+            FILE *df = fopen(dump, "wb");
+            if (df) {
+                fwrite(bus.ram, 1, sizeof bus.ram, df);
+                fwrite(vdp.vram, 1, sizeof vdp.vram, df);
+                fwrite(vdp.cram, 1, sizeof vdp.cram, df);
+                fwrite(vdp.vsram, 1, sizeof vdp.vsram, df);
+                fwrite(vdp.reg, 1, sizeof vdp.reg, df);
+                fclose(df);
+            }
+        }
+        if (shot && save_shot(shot) != 0) fprintf(stderr, "could not save %s\n", shot);
         save_coverage();
         save_sram();
         printf("ran %d frames, screen %dx%d\n", headless_frames, frame_width(), vdp_screen_height());

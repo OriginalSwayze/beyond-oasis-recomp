@@ -54,7 +54,7 @@ file(GLOB RECOMP_TOOLS ${CMAKE_SOURCE_DIR}/tools/*.mjs ${CMAKE_SOURCE_DIR}/tools
 add_custom_command(
   OUTPUT ${RECOMP_SOURCES}
   COMMAND node ${CMAKE_SOURCE_DIR}/tools/recomp.mjs
-  DEPENDS ${RECOMP_TOOLS}
+  DEPENDS ${RECOMP_TOOLS} ${CMAKE_SOURCE_DIR}/config/patches.json
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   COMMENT "Recompiling the ROM to C")
 add_library(recomp STATIC ${RECOMP_SOURCES})
@@ -66,6 +66,7 @@ target_compile_options(recomp PRIVATE -O1 -w)
 add_executable(BeyondOasis
   runtime/src/main.c
   runtime/src/machine.c
+  runtime/src/widescreen.c
   runtime/src/bus.c
   runtime/src/vdp.c
   runtime/src/io.c

@@ -9,7 +9,8 @@
 #define SRAM_SIZE       0x4000          /* bytes on the odd addresses $200001-$203FFF */
 #define LINES_NTSC      262
 #define CYCLES_PER_LINE 488             /* 68000 clocks per scanline (53.693175 MHz / 7 / 15.7 kHz) */
-#define MAX_EXTRA_WIDTH 128             /* widescreen pixels added on each side, at most */
+#define MAX_EXTRA_WIDTH 80              /* widescreen pixels per side, at most: the game streams 41 of the
+                                           plane's 64 columns, leaving room for 11 more on each side */
 
 /* ---- Bus (bus.c) ---------------------------------------------------------- */
 typedef struct {
@@ -52,6 +53,8 @@ typedef struct {
 typedef struct {
     int  extra_width;                   /* widescreen pixels on each side (0 = original 320) */
     bool no_sprite_limit;               /* draw past the 20-per-line hardware limit (no flicker) */
+    bool mask_sides;                    /* draw the widescreen columns black (screens made for 320) */
+    int  hide_layers;                   /* debugging: bit 0 plane A, 1 plane B, 2 sprites, 3 window */
 } VdpOptions;
 
 extern Vdp vdp;
@@ -112,5 +115,9 @@ extern uint64_t stat_native_cycles, stat_interp_cycles;
 void machine_reset(void);
 void machine_run_frame(uint32_t *framebuffer, int pitch_pixels);
 int  machine_cycles_in_line(void);      /* cycles executed since the current line started */
+
+/* ---- Game patches ------------------------------------------------------------ */
+void widescreen_patches(int extra_width);   /* widescreen.c: 0 restores the original code */
+void widescreen_frame(void);                /* widescreen.c: per-frame decisions (side masking) */
 
 #endif

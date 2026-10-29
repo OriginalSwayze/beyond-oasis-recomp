@@ -19,6 +19,13 @@ extern unsigned char m68ki_cycles[][0x10000];
 typedef uint32_t (*RecompBlock)(uint32_t pc);
 typedef struct { uint32_t pc; RecompBlock fn; } RecompEntry;
 
+/* Patched instructions (config/patches.json); 0 keeps the original behavior. */
+extern uint32_t patch_cull_left, patch_cull_widen;
+extern int patch_cam_margin;
+
+/* Replaces the code at pc with hand-written C (machine.c); NULL restores the generated code. */
+void machine_override(uint32_t pc, RecompBlock fn);
+
 /* ---- Memory (work RAM fast path) ------------------------------------------ */
 static inline uint32_t rd8(uint32_t a) {
     a &= 0xFFFFFF;
@@ -44,6 +51,14 @@ static inline void wr32(uint32_t a, uint32_t v) { wr16(a, v >> 16); wr16(a + 2, 
 
 static inline uint32_t sx8(uint32_t v)  { return (uint32_t)(int32_t)(int8_t)v; }
 static inline uint32_t sx16(uint32_t v) { return (uint32_t)(int32_t)(int16_t)v; }
+
+/* Pixels the camera keeps from each map edge: the widescreen extra width, or less
+ * when the map is too narrow to keep that much on both sides. */
+static inline uint32_t cam_margin(void) {
+    int max = (int16_t)rd16(0xFF177A), m = patch_cam_margin;
+    if (m > max / 2) m = max > 0 ? max / 2 : 0;
+    return (uint32_t)m;
+}
 
 /* ---- Flag helpers, generated per operand size ---------------------------- */
 #define SIZED(N, MASK, SIGN)                                                              \

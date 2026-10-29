@@ -3,6 +3,18 @@
  * (vdp_opts.extra_width) for widescreen; the game still thinks it is 320 wide. */
 #include "genesis.h"
 #include <string.h>
+#include <stdio.h>
+#include "m68k.h"
+
+/* Debugging (--trace-vram LO HI): log CPU writes and DMAs that touch VRAM [lo, hi). */
+uint32_t vdp_trace_lo, vdp_trace_hi;
+static void trace_vram(const char *kind, uint32_t dst, uint32_t len, uint32_t src) {
+    if (vdp_trace_hi <= vdp_trace_lo || (vdp.code & 0x0F) != 1) return;
+    uint32_t end = dst + len * (vdp.reg[15] ? vdp.reg[15] : 1);
+    if (end <= vdp_trace_lo || dst >= vdp_trace_hi) return;
+    fprintf(stderr, "%s dst=%04X len=%u inc=%u src=%06X pc=%06X\n", kind, dst, len, vdp.reg[15], src,
+            m68k_get_reg(NULL, M68K_REG_PPC));
+}
 
 Vdp vdp;
 VdpOptions vdp_opts;
@@ -58,6 +70,7 @@ static uint32_t dma_length(void) {
 static void dma_68k(void) {
     uint32_t len = dma_length();
     uint32_t src = (uint32_t)(vdp.reg[23] & 0x7F) << 17 | vdp.reg[22] << 9 | vdp.reg[21] << 1;
+    trace_vram("dma", vdp.addr, len, src);
     for (uint32_t i = 0; i < len; i++) {
         write_target(bus_read16(src));
         /* The source address wraps inside a 128 KB window. */
@@ -163,7 +176,7 @@ void vdp_write16(uint32_t a, uint16_t v) {
     case 0x00:
         vdp.pending = false;
         if (vdp.fill_pending) { vdp.fill_pending = false; dma_fill(v); }
-        else write_target(v);
+        else { trace_vram("cpu", vdp.addr, 1, 0); write_target(v); }
         break;
     case 0x04: write_control(v); break;
     case 0x10: case 0x14: psg_write((uint8_t)v); break;
@@ -229,7 +242,9 @@ static bool window_covers(int x, int line) {
     if (down ? line >= wv : line < wv) return true;
     int wh = (vdp.reg[17] & 0x1F) * 16;
     bool right = vdp.reg[17] & 0x80;
-    return right ? x >= wh : x < wh;
+    /* A zero-width left window is no window: without the wh > 0 check, the widescreen
+     * columns left of x = 0 would count as inside it. */
+    return right ? x >= wh : (wh > 0 && x < wh);
 }
 
 static void draw_window(uint8_t *out, int w, int extra, int line) {
@@ -311,6 +326,11 @@ void vdp_render_line(int line, uint32_t *dst) {
     draw_plane(a, w, extra, line, (vdp.reg[2] & 0x38) << 10, 0);
     draw_window(a, w, extra, line);
     draw_sprites(s, w, extra, line);
+    if (vdp_opts.hide_layers) {
+        if (vdp_opts.hide_layers & 1) memset(a, 0, (size_t)w);
+        if (vdp_opts.hide_layers & 2) memset(b, 0, (size_t)w);
+        if (vdp_opts.hide_layers & 4) memset(s, 0, (size_t)w);
+    }
 
     bool sh = vdp.reg[12] & 0x08;
     for (int i = 0; i < w; i++) {
@@ -345,5 +365,9 @@ void vdp_render_line(int line, uint32_t *dst) {
             }
         }
         dst[i] = rgb(color, mode);
+    }
+    if (vdp_opts.mask_sides && extra) {
+        memset(dst, 0, (size_t)extra * sizeof *dst);
+        memset(dst + w - extra, 0, (size_t)extra * sizeof *dst);
     }
 }

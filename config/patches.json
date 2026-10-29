@@ -1,0 +1,24 @@
+{
+  "comment": "Instruction-level patches applied by the recompiler (tools/lib/codegen.mjs). Each one reads a runtime variable from runtime/src/recomp_rt.h; the variables default to values that reproduce the original instruction exactly.",
+  "spriteCull": {
+    "comment": "Sprite pieces are dropped unless (X - $60) <= $160 unsigned, i.e. screen x in [-32, 320]. These compares add patch_cull_left to the register value and patch_cull_widen to the limit, so widescreen keeps pieces in the side areas. The register itself is not changed.",
+    "pcs": [
+      "00A986",
+      "00AC0A",
+      "00ACD4",
+      "00AF64",
+      "00AFEE",
+      "00B138",
+      "00B234",
+      "00B32C",
+      "00B718",
+      "00B782"
+    ]
+  },
+  "cameraClamp": {
+    "comment": "Horizontal camera limits (sub at $00CF..): the camera x is clamped to [0, ($FF177A)]. These three instructions use cam_margin() instead, a runtime value that is 0 without widescreen, so the wider screen stops at the map edges too.",
+    "minTest": "00CFA0",
+    "minSet": "00CFA6",
+    "maxLoad": "00CFDA"
+  }
+}

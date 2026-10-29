@@ -3,7 +3,22 @@
 // Instructions the generator does not handle are left to the interpreter: the
 // block is split there, or (for a rare runtime case such as division by zero)
 // returns that instruction's PC with the BAIL bit set.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { COND, format } from './m68k.mjs';
+import { ROOT } from './rom.mjs';
+
+// Instruction-level patches (config/patches.json): compares whose operands come from runtime variables.
+const PATCHES = JSON.parse(readFileSync(join(ROOT, 'config', 'patches.json'), 'utf8'));
+const CULL_PCS = new Set(PATCHES.spriteCull.pcs.map((p) => parseInt(p, 16)));
+const CAM = PATCHES.cameraClamp;
+// Whole-instruction replacements: pc -> [expected text, C lines].
+const REPLACED = new Map([
+  [parseInt(CAM.minTest, 16), ['tst.w	d1', ['cmpw(cam_margin(), D(1) & 0xFFFFu);']]],               // bpl: d1 >= margin
+  [parseInt(CAM.minSet, 16), ['clr.w	d1', ['setw(&D(1), cam_margin()); logicw(D(1) & 0xFFFFu);']]],
+  [parseInt(CAM.maxLoad, 16), ['move.w	($FF177A).l,d0',
+    ['setw(&D(0), rd16(0xFF177A) - cam_margin()); logicw(D(0) & 0xFFFFu);']]],
+]);
 
 const hex = (v) => '0x' + (v >>> 0).toString(16).toUpperCase();
 const SFX = { 1: 'b', 2: 'w', 4: 'l' };
@@ -110,6 +125,13 @@ class Emitter {
 // Emits one instruction. Returns 'cont' to fall through, or 'end' when the
 // instruction already returned (branches, jumps, bails).
 function genInst(e, i) {
+  const rep = REPLACED.get(i.pc);
+  if (rep) {
+    if (!format(i).startsWith(rep[0])) throw new Error(`patch at ${hex(i.pc)} expects "${rep[0]}", found "${format(i)}"`);
+    e.emit(`CYC(${hex(e.rom.readUInt16BE(i.pc))});`);
+    for (const line of rep[1]) e.emit(line);
+    return 'cont';
+  }
   const next = hex(i.pc + i.len);
   const sz = i.size;
   const s = SFX[sz];
@@ -206,6 +228,11 @@ function genInst(e, i) {
       return 'cont';
     }
     case 'cmp': case 'cmpi': {
+      if (CULL_PCS.has(i.pc)) {
+        if (i.op !== 'cmpi' || sz !== 2 || i.dst.mode !== 'dn') throw new Error(`spriteCull patch at ${hex(i.pc)} is not cmpi.w #,Dn`);
+        e.emit(`cmpw(${hex(i.src.value & 0xffff)}u + patch_cull_widen, (D(${i.dst.reg}) + patch_cull_left) & 0xFFFFu);`);
+        return 'cont';
+      }
       const src = e.loc(i.src, sz); const sv = e.readTmp(src, sz);
       const dst = e.loc(i.dst, sz);
       e.emit(`cmp${s}(${sv}, ${e.read(dst, sz)});`);
