@@ -250,6 +250,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--shots") && i + 2 < argc) { shot_every = atoi(argv[++i]); shot_dir = argv[++i]; }
         else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) { settings.widescreen = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--overclock") && i + 1 < argc) { settings.overclock = atoi(argv[++i]); test_overrides = true; }   /* percent */
+        else if (!strcmp(argv[i], "--volume") && i + 1 < argc) { settings.volume = atoi(argv[++i]); test_overrides = true; }   /* 0-100 */
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) { settings.filter = atoi(argv[++i]) % FILTER_COUNT; test_overrides = true; }   /* 0 off, 1 scanlines, 2 CRT, 3 LCD */
         else if (!strcmp(argv[i], "--no-launcher")) no_launcher = true;
         else if (!strcmp(argv[i], "--launcher-music-check") && i + 1 < argc) {
@@ -335,7 +336,10 @@ int main(int argc, char **argv) {
         settings_save(ini);
         settings = run;
     }
-    load_sram();
+    /* Headless runs start from blank save RAM, so scripted routes play the same whatever
+     * the player has saved (and they never write it back, see below). */
+    if (headless_frames) memset(bus.sram, 0xFF, SRAM_SIZE);
+    else load_sram();
     apply_settings();
     machine_reset();
     rewind_reset(settings.rewind ? (size_t)settings.rewind_mb << 20 : 0);
@@ -374,8 +378,8 @@ int main(int argc, char **argv) {
                     hd_compose_at(settings.internal_scale, frac);
                     double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency();
                     int n = (f - (headless_frames - 8)) * 2 + k;
-                    printf("frame %d +%.1f: t=%.2f  plane B x scroll %d  %.2f ms\n", f, frac, hd_motion_t(frac),
-                           hd_frame.hscroll[1][100], ms);
+                    printf("frame %d +%.1f: t=%.2f  split %d px  plane B x scroll %d  %.2f ms\n", f, frac,
+                           hd_motion_t(frac), hd_split, hd_frame.hscroll[1][100], ms);
                     snprintf(p, sizeof p, "%s/%02d.png", smooth_dir, n);
                     png_write(p, hd_px, hd_w, hd_h, hd_w);
                 }
@@ -495,7 +499,8 @@ int main(int argc, char **argv) {
             png_write(menu_shot, ui_px, ui_w, ui_h, ui_w);
         }
         save_coverage();
-        save_sram();
+        /* Headless runs are tests: they never write the player's save RAM (save.srm),
+         * whatever the scripted input or a loaded state did to it. */
         printf("ran %d frames, screen %dx%d\n", headless_frames, frame_width(), vdp_screen_height());
         if (stat_total_cycles)
             printf("68000 at %d%%: %.1f%% of its time spare, %u game ticks, %u late (slowdown)\n", machine_opts.overclock,
@@ -641,8 +646,13 @@ int main(int argc, char **argv) {
         if (strcmp(title, shown_title)) { SDL_SetWindowTitle(win, title); strcpy(shown_title, title); }
         if (audio) {
             /* Keep about 3 frames queued: drop audio if we fall far behind. */
-            if (SDL_GetQueuedAudioSize(audio) < (Uint32)sound_out_rate * 4 / 10)
+            if (SDL_GetQueuedAudioSize(audio) < (Uint32)sound_out_rate * 4 / 10) {
+                if (settings.volume < 100) {
+                    int v = settings.volume * 256 / 100;
+                    for (int i = 0; i < sound_out_count * 2; i++) sound_out[i] = (int16_t)(sound_out[i] * v / 256);
+                }
                 SDL_QueueAudio(audio, sound_out, (Uint32)sound_out_count * 4);
+            }
         }
 
         /* On a display faster than 60 Hz with smooth motion, every refresh until the next

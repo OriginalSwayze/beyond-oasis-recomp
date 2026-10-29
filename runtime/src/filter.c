@@ -102,15 +102,51 @@ static void draw_curved(SDL_Renderer *ren, SDL_Texture *tex, float u0, float v0,
     SDL_RenderGeometry(ren, tex, verts, (GRID_X + 1) * (GRID_Y + 1), idx, n);
 }
 
+/* Sharp bilinear: the picture is first enlarged by a whole number with hard pixel edges
+ * to just above dst's size, then smoothed only over the small remaining step. A plain
+ * smooth stretch from, say, 1272x672 to 1920x1080 blurs every edge. */
+static SDL_Texture *sharp_tex;
+static SDL_Renderer *sharp_ren;
+static int sharp_w, sharp_h;
+
+static SDL_Texture *sharpen(SDL_Renderer *ren, SDL_Texture *frame, SDL_Rect *s, SDL_Rect dst) {
+    int k = (dst.w + s->w - 1) / s->w, ky = (dst.h + s->h - 1) / s->h;
+    if (ky > k) k = ky;
+    if (k < 2 || (dst.w % s->w == 0 && dst.h % s->h == 0 && dst.w / s->w == dst.h / s->h)) return NULL;
+    int w = s->w * k, h = s->h * k;
+    if (w > 8192 || h > 8192) return NULL;
+    if (!sharp_tex || sharp_ren != ren || sharp_w != w || sharp_h != h) {
+        if (sharp_tex) SDL_DestroyTexture(sharp_tex);
+        sharp_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_TARGET, w, h);
+        if (!sharp_tex) return NULL;
+        SDL_SetTextureScaleMode(sharp_tex, SDL_ScaleModeLinear);
+        sharp_ren = ren; sharp_w = w; sharp_h = h;
+    }
+    SDL_ScaleMode old_mode;
+    SDL_GetTextureScaleMode(frame, &old_mode);
+    SDL_Texture *old_target = SDL_GetRenderTarget(ren);
+    SDL_SetRenderTarget(ren, sharp_tex);
+    SDL_SetTextureScaleMode(frame, SDL_ScaleModeNearest);
+    SDL_SetTextureBlendMode(frame, SDL_BLENDMODE_NONE);
+    SDL_RenderCopy(ren, frame, s, NULL);
+    SDL_SetTextureScaleMode(frame, old_mode);
+    SDL_SetRenderTarget(ren, old_target);
+    *s = (SDL_Rect){ 0, 0, w, h };
+    return sharp_tex;
+}
+
 void filter_draw(SDL_Renderer *ren, SDL_Texture *frame, const SDL_Rect *src, SDL_Rect dst,
                  int src_w, int src_h, int mode) {
-    if (mode <= FILTER_OFF || mode >= FILTER_COUNT || dst.w <= 0 || dst.h <= 0) {
-        SDL_RenderCopy(ren, frame, src, &dst);
-        return;
-    }
+    if (dst.w <= 0 || dst.h <= 0) return;
     int tw, th;
     SDL_QueryTexture(frame, NULL, NULL, &tw, &th);
     SDL_Rect s = src ? *src : (SDL_Rect){ 0, 0, tw, th };
+    SDL_Texture *sharp = sharpen(ren, frame, &s, dst);
+    if (sharp) { frame = sharp; tw = s.w; th = s.h; }
+    if (mode <= FILTER_OFF || mode >= FILTER_COUNT) {
+        SDL_RenderCopy(ren, frame, &s, &dst);
+        return;
+    }
     float u0 = (float)s.x / tw, v0 = (float)s.y / th, u1 = (float)(s.x + s.w) / tw, v1 = (float)(s.y + s.h) / th;
     bool crt = mode == FILTER_CRT;
     float k = crt ? .045f : 0;

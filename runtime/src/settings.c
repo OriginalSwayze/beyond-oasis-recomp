@@ -22,6 +22,7 @@ Settings settings = {
     .state_slot = 1,
     .show_launcher = true,
     .launcher_music = true,
+    .volume = 100,
 };
 
 static const char *filter_keys[FILTER_COUNT] = { "off", "scanlines", "crt", "lcd" };
@@ -57,6 +58,7 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "state_slot")) settings.state_slot = atoi(v);
         else if (!strcmp(k, "show_launcher")) settings.show_launcher = parse_bool(v);
         else if (!strcmp(k, "launcher_music")) settings.launcher_music = parse_bool(v);
+        else if (!strcmp(k, "volume")) settings.volume = atoi(v);
         else if (!strcmp(k, "cheat_health")) settings.cheat_health = parse_bool(v);
         else if (!strcmp(k, "cheat_spirit")) settings.cheat_spirit = parse_bool(v);
         else if (!strcmp(k, "cheat_weapons")) settings.cheat_weapons = parse_bool(v);
@@ -68,6 +70,7 @@ void settings_load(const char *path) {
     if (settings.internal_scale < 1 || settings.internal_scale > 4) settings.internal_scale = 3;
     if (settings.filter < 0 || settings.filter >= FILTER_COUNT) settings.filter = FILTER_OFF;
     if (settings.overclock < 100 || settings.overclock > 400) settings.overclock = 100;
+    if (settings.volume < 0 || settings.volume > 100) settings.volume = 100;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
     if (settings.state_slot < 1 || settings.state_slot > 9) settings.state_slot = 1;
 }
@@ -92,6 +95,7 @@ void settings_save(const char *path) {
     fprintf(f, "state_slot=%d\n", settings.state_slot);
     fprintf(f, "show_launcher=%d\n", settings.show_launcher);
     fprintf(f, "launcher_music=%d\n", settings.launcher_music);
+    fprintf(f, "volume=%d\n", settings.volume);
     fprintf(f, "cheat_health=%d\n", settings.cheat_health);
     fprintf(f, "cheat_spirit=%d\n", settings.cheat_spirit);
     fprintf(f, "cheat_weapons=%d\n", settings.cheat_weapons);
@@ -139,6 +143,7 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_FLICKER:    snprintf(out, n, "%s", settings.no_sprite_limit ? "On" : "Off"); break;
     case OPT_SMOOTH:     snprintf(out, n, "%s", settings.smooth_motion ? "On" : "Off"); break;
     case OPT_FILTER:     snprintf(out, n, "%s", filter_names[settings.filter]); break;
+    case OPT_VOLUME:     snprintf(out, n, "%d%%", settings.volume); break;
     case OPT_OVERCLOCK:
         if (settings.overclock <= 100) snprintf(out, n, "Off");
         else snprintf(out, n, "%d%% CPU", settings.overclock);
@@ -169,6 +174,11 @@ void settings_option_text(int id, char *out, size_t n) {
     }
 }
 
+void settings_set_volume_fraction(float v) {
+    int x = (int)(v * 20 + .5f) * 5;
+    settings.volume = x < 0 ? 0 : x > 100 ? 100 : x;
+}
+
 int settings_cycle(int v, int count, int dir) { return ((v + dir) % count + count) % count; }
 
 void settings_option_change(int id, int dir) {
@@ -187,6 +197,10 @@ void settings_option_change(int id, int dir) {
     case OPT_FLICKER:    settings.no_sprite_limit = !settings.no_sprite_limit; break;
     case OPT_SMOOTH:     settings.smooth_motion = !settings.smooth_motion; break;
     case OPT_FILTER:     settings.filter = settings_cycle(settings.filter, FILTER_COUNT, dir); break;
+    case OPT_VOLUME:                    /* stops at the ends instead of wrapping around */
+        settings.volume += dir * 10;
+        settings.volume = settings.volume < 0 ? 0 : settings.volume > 100 ? 100 : settings.volume;
+        break;
     case OPT_OVERCLOCK: {
         int cur = 0;
         for (int i = 0; i < 4; i++) if (overclocks[i] == settings.overclock) cur = i;

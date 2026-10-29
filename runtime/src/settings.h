@@ -22,6 +22,7 @@ typedef struct {
     int  state_slot;                    /* save state slot, 1-9 */
     bool show_launcher;                 /* show the launcher at startup (--no-launcher skips it once) */
     bool launcher_music;                /* the launcher plays the title theme (M toggles it) */
+    int  volume;                        /* 0-100: game sound and launcher music */
     bool cheat_health;                  /* infinite health: no damage, health held full */
     bool cheat_spirit;                  /* infinite spirit power */
     bool cheat_weapons;                 /* weapons never break */
@@ -38,7 +39,8 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_CHEATS, OPT_INTERNAL, OPT_SMOOTH,
        OPT_REWIND_ALL,                  /* rewind off or its buffer size, in one option */
        OPT_FILTER, OPT_WINDOW_ALL,      /* fullscreen or a window size, in one option */
-       OPT_OVERCLOCK };                    /* all three cheats as presets: Off, Health, Health + spirit, All */
+       OPT_OVERCLOCK, OPT_VOLUME };
+void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);
 void settings_option_change(int id, int dir);
 int  settings_cycle(int v, int count, int dir);     /* (v + dir) wrapped into 0..count-1 */

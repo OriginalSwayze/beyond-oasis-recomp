@@ -51,6 +51,28 @@ float ui_rrect_dist(float px, float py, float x, float y, float w, float h, floa
     return sqrtf(ox * ox + oy * oy) + fminf(fmaxf(qx, qy), 0) - r;
 }
 
+void ui_slider(float x, float y, float w, float value, bool focus) {
+    value = clampf(value, 0, 1);
+    const float th = 4, kr = focus ? 7 : 6;   /* track height, knob radius */
+    float fx = x + w * value;
+    int px0 = (int)ui_x(x - kr), px1 = (int)ui_x(x + w + kr) + 1;
+    int py0 = (int)ui_y(y - kr), py1 = (int)ui_y(y + kr) + 1;
+    Rgb track = rgb_hex(0x2A2F3B), fill = rgb_hex(0xD9B567), knob = focus ? rgb_hex(0xFBEBB8) : rgb_hex(0xE6E9EF);
+    for (int py = py0; py < py1; py++)
+        for (int px = px0; px < px1; px++) {
+            float lx = (px + .5f - ui_ox) / ui_s, ly = (py + .5f - ui_oy) / ui_s;
+            /* The track, rounded at both ends; gold up to the knob. */
+            float d = ui_rrect_dist(lx, ly, x, y - th / 2, w, th, th / 2);
+            float a = clampf(.5f - d * ui_s, 0, 1);
+            if (a > 0) ui_blend_px(px, py, lx <= fx ? fill : track, a * (lx <= fx ? .95f : .9f));
+            float dk = sqrtf((lx - fx) * (lx - fx) + (ly - y) * (ly - y)) - kr;
+            float ak = clampf(.5f - dk * ui_s, 0, 1);
+            if (ak > 0) ui_blend_px(px, py, knob, ak);
+        }
+}
+
+float ui_slider_value(float x, float w, float mouse_x) { return clampf((mouse_x - x) / w, 0, 1); }
+
 void ui_panel(float x, float y, float w, float h, float r, Rgb top, Rgb bottom, float alpha, Rgb border, float border_alpha) {
     int x0 = (int)ui_x(x) - 1, y0 = (int)ui_y(y) - 1, x1 = (int)ui_x(x + w) + 1, y1 = (int)ui_y(y + h) + 1;
     for (int py = y0; py < y1; py++)

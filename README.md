@@ -35,6 +35,9 @@ BeyondOasis.exe --headless 6000 --hash-log b.log --interpret <rom>
 ```
 
 Run both checks with `--widescreen 0`: the widescreen patches change the game on purpose.
+
+Headless runs start from blank save RAM and never write `save.srm`, so tests play the same
+whatever you have saved, and never touch your save.
 With widescreen off, every patch falls back to the original code, so the results must match exactly.
 
 Other headless options:
@@ -55,9 +58,10 @@ Other headless options:
 * `--save-to N`, `--slot N`, `--states-base PREFIX`: save a slot at the end, pick the menu's slot,
   and keep test slots in `PREFIXstates/` instead of the real ones
 * `--hd-shot F.png SCALE`: save the last frame at internal resolution SCALE (2-4), with the time it took
-* `--smooth-check DIR SCALE`: smooth motion over the last 8 frames at 120 Hz; prints how far each picture is between motion updates and saves them
+* `--smooth-check DIR SCALE`: smooth motion over the last 8 frames at 120 Hz; prints how far each picture is between motion updates and the largest movement difference between touching, neighbouring sprites, and saves the pictures
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--filter-shot F.png W H MODE`: draw the last frame at W x H with filter MODE on the GPU (hidden window) and save it
+* `--volume N`: volume 0-100 for this run
 * `--overclock PERCENT`: run the 68000 at this speed (also below 100, to simulate a heavy scene); headless runs print the spare time, game ticks and late ticks
 * `--load N`: load slot N (from the `--states-base` folder) before the first frame
 * `--cheat health|spirit|weapons`: turn a built-in cheat on for this run
@@ -88,6 +92,12 @@ your real save RAM.
 Keys: arrows select and change, Enter activates, M music, Esc quits; mouse and controller work
 too. "Show launcher at startup" turns it off; `show_launcher=1` in `settings.ini` brings it back.
 
+## Volume
+
+"Volume" (launcher and pause menu, `volume` in `settings.ini`) is a slider from 0 to 100%
+for the game's sound and the launcher music. Left/right move it in steps of 10%, and a
+click on the track sets it there (in steps of 5%).
+
 ## In-game menu
 
 Esc pauses the game over a blurred copy of the last frame. The menu saves and loads
@@ -112,6 +122,12 @@ At 3x a frame takes about 4 ms (6-8 ms at 4x with widescreen) on one core. "Nati
 it off and shows the original pixels. The native picture is unchanged, as are save-state
 thumbnails and screenshots.
 
+The last step to the window is "sharp bilinear" (`filter.c`): the picture is enlarged by
+a whole number with hard pixel edges to just above the window's size, and only that last
+small step is smoothed. A plain smooth stretch from 1272x672 to 1920x1080 softens every
+edge; this keeps about 20% more edge contrast. On a 1080p or larger screen, 4x is the
+sharpest choice, since it needs the smallest final step.
+
 ## Smooth motion
 
 The game moves its camera and characters every other frame: its logic runs at 30 Hz,
@@ -124,8 +140,12 @@ glides from one motion update to the next instead of jumping:
   a fraction `t` of the way from the previous update to the latest: plane A and B are
   shifted back by `(1 - t)` of their scroll change, and every sprite paired with the
   same sprite at the previous update (same tiles, size, attributes, near) is placed
-  between its two positions. The window, the HUD and anything that did not move stay put;
-  new sprites and animation frames appear where they are.
+  between its two positions. The window, the HUD and anything that did not move stay put.
+* A character is several sprites. When its animation frame changes, the pieces with new
+  tiles cannot be paired; they move with a touching paired piece next to them in the
+  sprite list (or the nearest one), so the character glides as one instead of coming
+  apart for a frame. Every picture is drawn this way, also when nothing moves, so
+  overlapping sprites never switch between two ways of drawing.
 * At 60 Hz this turns the 30 Hz steps into 60 Hz motion. On a faster display (120, 144 Hz
   and up) the window switches to vsync and draws a picture at every refresh.
 * Scene cuts (scroll jumps over 24 pixels), column scrolling and sprite masking are

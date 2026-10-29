@@ -60,6 +60,11 @@ void  ui_draw_text(const char *s, const char *face, float px, int weight, float 
                    float x, float y, Rgb top, Rgb bottom, float alpha);
 
 /* ---- Widgets ------------------------------------------------------------------- */
+/* A volume-style slider: a track from x to x + w centred on y, filled to value (0-1)
+ * in gold with a round knob. ui_slider_value() turns a layout x into a value. */
+void  ui_slider(float x, float y, float w, float value, bool focus);
+float ui_slider_value(float x, float w, float mouse_x);
+
 /* A button; `primary` ones are gold foil with a sheen that follows the light (lx, ly). */
 void  ui_button(float x, float y, float w, float h, const char *label, float text_px,
                 bool primary, bool focus, bool enabled, float lx, float ly, float t);

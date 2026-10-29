@@ -34,6 +34,7 @@ static const Item items[] = {
     { ITEM_OPTION, "Unbreakable weapons", OPT_CHEAT_WEAPONS },
     { ITEM_HEADER, "GAME", 0 },
     { ITEM_OPTION, "Rewind", OPT_REWIND },
+    { ITEM_OPTION, "Volume", OPT_VOLUME },
     { ITEM_ACTION, "Reset game", ACT_RESET },
     { ITEM_ACTION, "Quit game", ACT_QUIT },
 };
@@ -47,8 +48,10 @@ static const Item items[] = {
 #define LIST_X  (PANEL_X + 40)
 #define LIST_R  (PANEL_X + PANEL_W - 36)
 #define LIST_Y  (PANEL_Y + 90)
-#define ROW_H   25
-#define HEAD_H  23
+#define ROW_H   24
+#define HEAD_H  22
+#define VOLUME_W 140                    /* the volume slider's track, left of its value */
+#define VOLUME_X (LIST_R - 20 - 46 - 26 - VOLUME_W)
 #define CARD_X  662
 #define CARD_Y  166
 #define CARD_W  532
@@ -249,6 +252,11 @@ MenuAction menu_event(const SDL_Event *e) {
         int h = hit_test(mx, my);
         if (h < 0) return MENU_NONE;
         selected = h;
+        if (e->button.button == SDL_BUTTON_LEFT && items[h].kind == ITEM_OPTION && items[h].id == OPT_VOLUME &&
+            mx >= VOLUME_X - 8 && mx <= VOLUME_X + VOLUME_W + 8) {
+            settings_set_volume_fraction(ui_slider_value(VOLUME_X, VOLUME_W, mx));   /* click on the track */
+            return MENU_SETTINGS;
+        }
         if (e->button.button == SDL_BUTTON_RIGHT) dir = -1;
         else if (items[h].kind == ITEM_SLOT && mx > LIST_R - 150) dir = 1;   /* click the slot number to step it */
         else activate = true;
@@ -359,6 +367,10 @@ void menu_render(double time_s) {
             Rgb ac = focus ? rgb_hex(0xE8C77A) : rgb_hex(0x5B6274);
             float vw = ui_text_width(value, "Segoe UI Semibold", 17, 600, 0);
             float vx = LIST_R - 20 - vw;
+            if (it->kind == ITEM_OPTION && it->id == OPT_VOLUME) {
+                vx = LIST_R - 20 - ui_text_width("100%", "Segoe UI Semibold", 17, 600, 0);
+                ui_slider(VOLUME_X, y + ROW_H / 2.f, VOLUME_W, settings.volume / 100.f, focus);
+            }
             ui_draw_text("\xE2\x80\xB9", "Segoe UI Semibold", 18, 600, 0, vx - 18, y + 3, ac, ac, 1);
             ui_draw_text("\xE2\x80\xBA", "Segoe UI Semibold", 18, 600, 0, LIST_R - 10, y + 3, ac, ac, 1);
             ui_draw_text(value, "Segoe UI Semibold", 17, 600, 0, vx, y + 5, vc, vc, 1);

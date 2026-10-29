@@ -237,7 +237,7 @@ static bool music_to_title(void) {
 /* One frame of music, scaled by volume (0-1). Returns the stereo frames in sound_out. */
 static int music_frame(float volume) {
     machine_run_frame(NULL, 320);
-    int v = (int)(volume * 256);
+    int v = (int)(volume * settings.volume / 100.f * 256);
     for (int i = 0; i < sound_out_count * 2; i++) sound_out[i] = (int16_t)(sound_out[i] * v / 256);
     return sound_out_count;
 }
@@ -633,6 +633,10 @@ static void build_background(void) {
 typedef enum { ROW_HEADER, ROW_OPTION, ROW_ROM } RowKind;
 typedef struct { RowKind kind; const char *label; int id; } Row;
 
+/* The volume slider's track, left of its value. */
+#define VOLUME_W 150
+#define VOLUME_X (PANEL_R - 22 - 52 - 26 - VOLUME_W)
+
 static const Row rows[] = {
     { ROW_HEADER, "DISPLAY", 0 },
     { ROW_OPTION, "Widescreen", OPT_WIDESCREEN },
@@ -649,6 +653,7 @@ static const Row rows[] = {
     { ROW_HEADER, "GAME", 0 },
     { ROW_ROM, "ROM", 0 },
     { ROW_OPTION, "Cheats", OPT_CHEATS },
+    { ROW_OPTION, "Volume", OPT_VOLUME },
     { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER },
 };
 #define ROW_COUNT ((int)(sizeof rows / sizeof *rows))
@@ -657,8 +662,8 @@ static const Row rows[] = {
 #define PANEL_X 572
 #define PANEL_R 1196
 #define ROWS_Y  176
-#define ROW_H   27
-#define HEAD_H  24
+#define ROW_H   26
+#define HEAD_H  23
 
 /* Selectable items: the option/ROM rows, then PLAY and QUIT. */
 enum { ITEM_PLAY = 100, ITEM_QUIT = 101 };
@@ -671,7 +676,7 @@ static float row_y(int r) {
     return y;
 }
 
-#define BTN_Y 612
+#define BTN_Y 618
 #define BTN_H 54
 #define PLAY_X PANEL_X
 #define PLAY_W 300
@@ -747,8 +752,13 @@ static void draw_ui(float lx, float ly, float t) {
         }
         float vw = ui_text_width(value, "Segoe UI Semibold", 16.5f, 600, 0);
         float vx = PANEL_R - vw;
+        if (row->id == OPT_VOLUME && row->kind == ROW_OPTION) {
+            vw = ui_text_width("100%", "Segoe UI Semibold", 16.5f, 600, 0);   /* the track stays put */
+            vx = PANEL_R - 22 - vw;
+            ui_slider(VOLUME_X, y + ROW_H / 2.f, VOLUME_W, settings.volume / 100.f, focus);
+        }
         if (row->kind == ROW_OPTION) {
-            vx -= 22;
+            if (row->id != OPT_VOLUME) vx -= 22;
             Rgb ac = focus ? rgb_hex(0xE8C77A) : rgb_hex(0x5B6274);
             ui_draw_text("\xE2\x80\xB9", "Segoe UI Semibold", 18, 600, 0, vx - 18, y + 3, ac, ac, 1);
             ui_draw_text("\xE2\x80\xBA", "Segoe UI Semibold", 18, 600, 0, PANEL_R - 12, y + 3, ac, ac, 1);
@@ -874,7 +884,11 @@ int launcher_run(const char *ini_path) {
             case SDL_MOUSEBUTTONDOWN:
                 if (e.button.button == SDL_BUTTON_LEFT) {
                     int h = hit_test(e.button.x, e.button.y);
-                    if (h >= 0) { selected = h; activate = 1; }
+                    if (h >= 0 && h < ROW_COUNT && rows[h].id == OPT_VOLUME && rows[h].kind == ROW_OPTION &&
+                        e.button.x >= VOLUME_X - 8 && e.button.x <= VOLUME_X + VOLUME_W + 8) {
+                        selected = h;           /* click on the track: set the volume there */
+                        settings_set_volume_fraction(ui_slider_value(VOLUME_X, VOLUME_W, (float)e.button.x));
+                    } else if (h >= 0) { selected = h; activate = 1; }
                 } else if (e.button.button == SDL_BUTTON_RIGHT) {
                     int h = hit_test(e.button.x, e.button.y);
                     if (h >= 0 && h < ROW_COUNT) { selected = h; change = -1; }

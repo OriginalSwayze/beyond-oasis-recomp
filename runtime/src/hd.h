@@ -61,5 +61,6 @@ extern int hd_w, hd_h;
 void  hd_frame_done(void);
 void  hd_compose_at(int scale, float frac);
 float hd_motion_t(float frac);
+extern int hd_split;                    /* last in-between picture: largest movement difference of touching sprites */
 
 #endif
