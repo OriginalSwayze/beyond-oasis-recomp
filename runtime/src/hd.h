@@ -65,6 +65,7 @@ float hd_motion_t(float frac);
  * (for checking it against hd_compose()). */
 void  hd_compose_sprites(int scale);
 extern double hd_ms[4];                 /* last hd_compose_at: ms scaling layers, scaling sprites, sprite layer, compositing */
+extern int hd_unpaired;                 /* last in-between picture: character groups that could not be paired */
 extern int hd_split;                    /* last in-between picture: largest movement difference of touching sprites */
 
 #endif

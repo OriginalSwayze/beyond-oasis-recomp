@@ -18,7 +18,7 @@ HdFrame hd_frame;
 uint32_t *hd_px;
 int hd_w, hd_h;
 unsigned hd_serial = 1;
-int hd_split;
+int hd_split, hd_unpaired;
 double hd_ms[4];
 
 static uint32_t *scaled[3], *temp[3];
@@ -83,11 +83,13 @@ static void scale_any(const uint32_t *src, int pitch, int w, int h, int scale, u
  * The game moves things every other frame (its logic runs at 30 Hz). The in-between
  * frames glide from the previous motion update to the latest one over the time between
  * them, so motion is continuous at 60 Hz and above, one update (about 33 ms) late. */
+typedef struct { bool drawn; int x, y, w, h, rank; uint16_t attr; } MotionSprite;
+
 typedef struct {
     int w, h;
     uint8_t flags[HD_MAX_H];
     int16_t hscroll[2][HD_MAX_H], vscroll[2][HD_MAX_H];
-    struct { bool drawn; int x, y, w, h; uint16_t attr; } spr[80];
+    MotionSprite spr[80];
 } Motion;
 
 static Motion before, latest;           /* the previous and the latest motion update */
@@ -114,7 +116,7 @@ static void motion_of(Motion *m, const HdFrame *f) {
     for (int i = 0; i < 80; i++) {
         const HdSprite *s = &f->sprites[i];
         m->spr[i].drawn = s->drawn;
-        m->spr[i].x = s->x; m->spr[i].y = s->y; m->spr[i].w = s->w; m->spr[i].h = s->h; m->spr[i].attr = s->attr;
+        m->spr[i].x = s->x; m->spr[i].y = s->y; m->spr[i].w = s->w; m->spr[i].h = s->h; m->spr[i].attr = s->attr; m->spr[i].rank = s->rank;
     }
 }
 
@@ -357,39 +359,92 @@ static void draw_sprite_layer(int scale, float t) {
      * be paired with the previous update, or not at all if none could (when the whole
      * animation frame changed). So a character never comes apart between frames. */
     static int mx[80], my[80], group[80];
-    for (int i = 0; i < 80; i++) group[i] = i;
-    for (int i = 0; i < 80; i++)
-        for (int k = 0; k < 80; k++) {
-            const HdSprite *p = &hd_frame.sprites[i], *q = &hd_frame.sprites[k];
-            if (!p->drawn || !q->drawn || q->rank != p->rank + 1 || (p->attr & 0xE000) != (q->attr & 0xE000)) continue;
-            bool touch = p->x <= q->x + q->w && q->x <= p->x + p->w && p->y <= q->y + q->h && q->y <= p->y + p->h;
-            if (touch) group[group_root(group, i)] = group_root(group, k);
+    static bool unpaired[80];
+    /* The movement depends only on the frame, not on the moment t: worked out once per frame. */
+    static unsigned motion_gen;
+    if (motion_gen != hd_serial) {
+        hd_unpaired = 0;
+        for (int i = 0; i < 80; i++) group[i] = i;
+        for (int i = 0; i < 80; i++)
+            for (int k = 0; k < 80; k++) {
+                const HdSprite *p = &hd_frame.sprites[i], *q = &hd_frame.sprites[k];
+                if (!p->drawn || !q->drawn || q->rank != p->rank + 1 || (p->attr & 0xE000) != (q->attr & 0xE000)) continue;
+                bool touch = p->x <= q->x + q->w && q->x <= p->x + p->w && p->y <= q->y + q->h && q->y <= p->y + p->h;
+                if (touch) group[group_root(group, i)] = group_root(group, k);
+            }
+        for (int g = 0; g < 80; g++) {
+            if (group_root(group, g) != g) continue;
+            int best_x = 0, best_y = 0, best_votes = 0;
+            for (int i = 0; i < 80; i++) {
+                if (match[i] < 0 || group_root(group, i) != g) continue;
+                int dx = hd_frame.sprites[i].x - before.spr[match[i]].x, dy = hd_frame.sprites[i].y - before.spr[match[i]].y;
+                int votes = 0;
+                for (int k = 0; k < 80; k++)
+                    if (match[k] >= 0 && group_root(group, k) == g && hd_frame.sprites[k].x - before.spr[match[k]].x == dx &&
+                        hd_frame.sprites[k].y - before.spr[match[k]].y == dy) votes++;
+                if (votes > best_votes) { best_votes = votes; best_x = dx; best_y = dy; }
+            }
+            unpaired[g] = !best_votes;
+            for (int i = 0; i < 80; i++) if (group_root(group, i) == g) { mx[i] = best_x; my[i] = best_y; }
         }
-    for (int g = 0; g < 80; g++) {
-        if (group_root(group, g) != g) continue;
-        int best_x = 0, best_y = 0, best_votes = 0;
-        for (int i = 0; i < 80; i++) {
-            if (match[i] < 0 || group_root(group, i) != g) continue;
-            int dx = hd_frame.sprites[i].x - before.spr[match[i]].x, dy = hd_frame.sprites[i].y - before.spr[match[i]].y;
-            int votes = 0;
-            for (int k = 0; k < 80; k++)
-                if (match[k] >= 0 && group_root(group, k) == g && hd_frame.sprites[k].x - before.spr[match[k]].x == dx &&
-                    hd_frame.sprites[k].y - before.spr[match[k]].y == dy) votes++;
-            if (votes > best_votes) { best_votes = votes; best_x = dx; best_y = dy; }
+
+        /* A group whose whole animation frame changed has no piece to pair. It is found at the
+         * previous update as an object instead: the group there of the same palette and
+         * priority whose outline's bottom centre (where a character's feet are; it stays put
+         * between animation frames, unlike arms and weapons) is nearest, within 24 pixels and
+         * not already the previous position of a paired group. */
+        static int pgroup[80];
+        static bool claimed[80];
+        for (int i = 0; i < 80; i++) { pgroup[i] = i; claimed[i] = false; }
+        for (int i = 0; i < 80; i++)
+            for (int k = 0; k < 80; k++) {
+                const MotionSprite *p = &before.spr[i], *q = &before.spr[k];
+                if (!p->drawn || !q->drawn || q->rank != p->rank + 1 || (p->attr & 0xE000) != (q->attr & 0xE000)) continue;
+                bool touch = p->x <= q->x + q->w && q->x <= p->x + p->w && p->y <= q->y + q->h && q->y <= p->y + p->h;
+                if (touch) pgroup[group_root(pgroup, i)] = group_root(pgroup, k);
+            }
+        for (int i = 0; i < 80; i++) if (match[i] >= 0) claimed[group_root(pgroup, match[i])] = true;
+        for (int g = 0; g < 80; g++) {
+            if (group_root(group, g) != g || !hd_frame.sprites[g].drawn || !unpaired[g]) continue;
+            int x0 = 1 << 20, x1 = -(1 << 20), y1 = -(1 << 20);
+            for (int i = 0; i < 80; i++) {
+                const HdSprite *s = &hd_frame.sprites[i];
+                if (!s->drawn || group_root(group, i) != g) continue;
+                if (s->x < x0) x0 = s->x;
+                if (s->x + s->w > x1) x1 = s->x + s->w;
+                if (s->y + s->h > y1) y1 = s->y + s->h;
+            }
+            int best = -1, best_d = 24 * 24 + 1, bdx = 0, bdy = 0;
+            for (int pg = 0; pg < 80; pg++) {
+                if (group_root(pgroup, pg) != pg || !before.spr[pg].drawn || claimed[pg] ||
+                    (before.spr[pg].attr & 0xE000) != (hd_frame.sprites[g].attr & 0xE000)) continue;
+                int px0 = 1 << 20, px1 = -(1 << 20), py1 = -(1 << 20);
+                for (int i = 0; i < 80; i++) {
+                    if (!before.spr[i].drawn || group_root(pgroup, i) != pg) continue;
+                    if (before.spr[i].x < px0) px0 = before.spr[i].x;
+                    if (before.spr[i].x + before.spr[i].w > px1) px1 = before.spr[i].x + before.spr[i].w;
+                    if (before.spr[i].y + before.spr[i].h > py1) py1 = before.spr[i].y + before.spr[i].h;
+                }
+                int dx = (x0 + x1) / 2 - (px0 + px1) / 2, dy = y1 - py1, d = dx * dx + dy * dy;
+                if (d < best_d) { best_d = d; best = pg; bdx = dx; bdy = dy; }
+            }
+            if (best < 0) { hd_unpaired++; continue; }      /* for checks: still nothing to go by */
+            claimed[best] = true;
+            for (int i = 0; i < 80; i++) if (group_root(group, i) == g) { mx[i] = bdx; my[i] = bdy; }
         }
-        for (int i = 0; i < 80; i++) if (group_root(group, i) == g) { mx[i] = best_x; my[i] = best_y; }
+        /* For checks: the largest difference in movement between touching pieces next to each
+         * other in the sprite list (one character); above 0 it would come apart in between. */
+        hd_split = 0;
+        for (int i = 0; i < 80; i++)
+            for (int k = 0; k < 80; k++) {
+                const HdSprite *p = &hd_frame.sprites[i], *q = &hd_frame.sprites[k];
+                if (!p->drawn || !q->drawn || q->rank != p->rank + 1) continue;
+                bool touch = p->x <= q->x + q->w && q->x <= p->x + p->w && p->y <= q->y + q->h && q->y <= p->y + p->h;
+                int d = abs(mx[i] - mx[k]) + abs(my[i] - my[k]);
+                if (touch && d > hd_split) hd_split = d;
+            }
+    motion_gen = hd_serial;
     }
-    /* For checks: the largest difference in movement between touching pieces next to each
-     * other in the sprite list (one character); above 0 it would come apart in between. */
-    hd_split = 0;
-    for (int i = 0; i < 80; i++)
-        for (int k = 0; k < 80; k++) {
-            const HdSprite *p = &hd_frame.sprites[i], *q = &hd_frame.sprites[k];
-            if (!p->drawn || !q->drawn || q->rank != p->rank + 1) continue;
-            bool touch = p->x <= q->x + q->w && q->x <= p->x + p->w && p->y <= q->y + q->h && q->y <= p->y + p->h;
-            int d = abs(mx[i] - mx[k]) + abs(my[i] - my[k]);
-            if (touch && d > hd_split) hd_split = d;
-        }
     float back = 1 - t;
     for (int k = 0; k < n; k++) {
         int i = order[k];

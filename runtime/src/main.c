@@ -402,8 +402,8 @@ int main(int argc, char **argv) {
                     hd_compose_at(settings.internal_scale, frac);
                     double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency();
                     int n = (f - (headless_frames - 8)) * 2 + k;
-                    printf("frame %d +%.1f: t=%.2f  split %d px  %.2f ms (layers %.2f, sprites %.2f + %.2f, compose %.2f)\n",
-                           f, frac, hd_motion_t(frac), hd_split, ms, hd_ms[0], hd_ms[1], hd_ms[2], hd_ms[3]);
+                    printf("frame %d +%.1f: t=%.2f  split %d px  unpaired %d  %.2f ms (layers %.2f, sprites %.2f + %.2f, compose %.2f)\n",
+                           f, frac, hd_motion_t(frac), hd_split, hd_unpaired, ms, hd_ms[0], hd_ms[1], hd_ms[2], hd_ms[3]);
                     snprintf(p, sizeof p, "%s/%02d.png", smooth_dir, n);
                     png_write(p, hd_px, hd_w, hd_h, hd_w);
                 }

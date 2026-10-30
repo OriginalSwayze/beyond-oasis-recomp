@@ -147,8 +147,10 @@ glides from one motion update to the next instead of jumping:
 * A character is several sprites that touch, sit next to each other in the sprite list
   and share a palette and priority (so the HUD stays apart from a character behind it).
   Each such group moves as one, by the most common movement of its pieces that could be
-  paired, or not at all when its whole animation frame changed. A character never comes
-  apart between frames. Every picture is drawn this way, also when nothing moves, so
+  paired. When its whole animation frame changed (every few frames while walking), it is
+  found at the previous update as an object instead: the nearest group of the same palette
+  by the bottom centre of its outline, where its feet are. So characters keep gliding
+  through animation changes instead of snapping, and never come apart between frames. Every picture is drawn this way, also when nothing moves, so
   overlapping sprites never switch between two ways of drawing.
 * Sprites are stacked front to back by their position in the sprite list, exactly as
   the hardware does (`--sprite-check` compares this per-sprite drawing with the layer
