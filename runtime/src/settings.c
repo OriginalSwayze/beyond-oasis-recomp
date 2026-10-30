@@ -1,6 +1,7 @@
 #include "settings.h"
 #include "genesis.h"
 #include "filter.h"
+#include "input.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +32,7 @@ static const char *filter_names[FILTER_COUNT] = { "Off", "Scanlines", "CRT", "LC
 static bool parse_bool(const char *v) { return !strcmp(v, "1") || !strcmp(v, "true") || !strcmp(v, "on"); }
 
 void settings_load(const char *path) {
+    input_defaults();
     FILE *f = fopen(path, "r");
     if (!f) return;
     char line[1200];
@@ -59,6 +61,7 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "show_launcher")) settings.show_launcher = parse_bool(v);
         else if (!strcmp(k, "launcher_music")) settings.launcher_music = parse_bool(v);
         else if (!strcmp(k, "volume")) settings.volume = atoi(v);
+        else if (input_ini_load(k, v)) {}
         else if (!strcmp(k, "cheat_health")) settings.cheat_health = parse_bool(v);
         else if (!strcmp(k, "cheat_spirit")) settings.cheat_spirit = parse_bool(v);
         else if (!strcmp(k, "cheat_weapons")) settings.cheat_weapons = parse_bool(v);
@@ -101,6 +104,7 @@ void settings_save(const char *path) {
     fprintf(f, "cheat_weapons=%d\n", settings.cheat_weapons);
     fprintf(f, "# Extra RAM codes held every frame: FFxxxx:VV (byte) or FFxxxx:VVVV (word), comma-separated\n");
     fprintf(f, "cheat_codes=%s\n", settings.cheat_codes);
+    input_ini_save(f);
     fclose(f);
 }
 

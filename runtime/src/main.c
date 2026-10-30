@@ -9,6 +9,8 @@
 #include "cheats.h"
 #include "hd.h"
 #include "filter.h"
+#include "input.h"
+#include "controls.h"
 #include "menu.h"
 #include "savestate.h"
 #include "ui.h"
@@ -133,37 +135,6 @@ static void apply_settings(void) {
     machine_opts.overclock = settings.overclock;
 }
 
-/* ---- Input -------------------------------------------------------------------- */
-static uint16_t key_bits(const Uint8 *k) {
-    uint16_t p = 0;
-    if (k[SDL_SCANCODE_UP]) p |= PAD_UP;
-    if (k[SDL_SCANCODE_DOWN]) p |= PAD_DOWN;
-    if (k[SDL_SCANCODE_LEFT]) p |= PAD_LEFT;
-    if (k[SDL_SCANCODE_RIGHT]) p |= PAD_RIGHT;
-    if (k[SDL_SCANCODE_Z] || k[SDL_SCANCODE_A]) p |= PAD_A;
-    if (k[SDL_SCANCODE_X] || k[SDL_SCANCODE_S]) p |= PAD_B;
-    if (k[SDL_SCANCODE_C] || k[SDL_SCANCODE_D]) p |= PAD_C;
-    if (k[SDL_SCANCODE_RETURN]) p |= PAD_START;
-    return p;
-}
-
-static uint16_t controller_bits(SDL_GameController *c) {
-    if (!c) return 0;
-    uint16_t p = 0;
-    const int dead = 12000;
-    int lx = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX);
-    int ly = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY);
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_UP) || ly < -dead) p |= PAD_UP;
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_DOWN) || ly > dead) p |= PAD_DOWN;
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_LEFT) || lx < -dead) p |= PAD_LEFT;
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) || lx > dead) p |= PAD_RIGHT;
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_X)) p |= PAD_A;
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_A)) p |= PAD_B;
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_B)) p |= PAD_C;
-    if (SDL_GameControllerGetButton(c, SDL_CONTROLLER_BUTTON_START)) p |= PAD_START;
-    return p;
-}
-
 /* Largest rectangle with the game's display aspect that fits the window. */
 static SDL_Rect display_rect(int win_w, int win_h) {
     int fw = frame_width(), fh = vdp_screen_height();
@@ -214,6 +185,7 @@ int main(int argc, char **argv) {
     float shot_lx = 0, shot_ly = 0;
     const char *menu_shot = NULL;
     int menu_w = 1920, menu_h = 1080;
+    bool controls_shot = false;
     int save_to = 0;
     int load_from = 0;
     bool rom_from_args = false;         /* a ROM path was given on the command line */
@@ -307,6 +279,22 @@ int main(int argc, char **argv) {
             menu_shot = argv[++i];
             menu_w = atoi(argv[++i]);
             menu_h = atoi(argv[++i]);
+        }
+        else if (!strcmp(argv[i], "--controls-shot")) controls_shot = true;   /* with --menu-shot: the Controls page */
+        else if (!strcmp(argv[i], "--input-check") && i + 1 < argc) {
+            /* --input-check FILE: rebind a few keys and buttons, save to FILE, load it back,
+             * and print the bindings (never touches settings.ini). */
+            const char *file = argv[++i];
+            input_bind_key(IN_A, SDL_SCANCODE_J);
+            input_bind_key(IN_B, SDL_SCANCODE_J);           /* taken by A: A gets B's old key */
+            input_bind_button(IN_START, SDL_CONTROLLER_BUTTON_Y);
+            input_bind_button(IN_REWIND, SDL_CONTROLLER_BUTTON_START);   /* taken by Start: swaps */
+            settings_save(file);
+            input_defaults();
+            settings_load(file);
+            for (int k = 0; k < IN_COUNT; k++)
+                printf("  %-14s keyboard %-12s controller %s\n", input_labels[k], input_key_name(k), input_button_name(k));
+            return 0;
         }
         else if (!strcmp(argv[i], "--launcher-shot") && i + 4 < argc) {
             /* --launcher-shot F.png WIDTH LX LY: render the launcher (light direction LX, LY). */
@@ -531,6 +519,7 @@ int main(int argc, char **argv) {
         if (menu_shot) {
             SDL_Rect r = display_rect(menu_w, menu_h);
             menu_open(framebuffer, frame_width(), vdp_screen_height(), FB_W, r.x, r.y, r.w, r.h, menu_w, menu_h, 1);
+            if (controls_shot) controls_open();
             menu_render(1.0);
             png_write(menu_shot, ui_px, ui_w, ui_h, ui_w);
         }
@@ -581,9 +570,10 @@ int main(int argc, char **argv) {
         int ww, wh;
         SDL_GetRendererOutputSize(ren, &ww, &wh);
         while (SDL_PollEvent(&e)) {
-            bool open_menu = (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !e.key.repeat) ||
-                             (e.type == SDL_CONTROLLERBUTTONDOWN && (e.cbutton.button == SDL_CONTROLLER_BUTTON_BACK ||
-                                                                     e.cbutton.button == SDL_CONTROLLER_BUTTON_GUIDE));
+            /* The pause menu binding opens the menu; Esc and the Guide button always do too. */
+            bool open_menu = input_event_is(IN_MENU, &e) ||
+                             (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !e.key.repeat) ||
+                             (e.type == SDL_CONTROLLERBUTTONDOWN && e.cbutton.button == SDL_CONTROLLER_BUTTON_GUIDE);
             if (e.type == SDL_QUIT) running = false;
             else if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
             else if (menu_is_open()) {
@@ -661,8 +651,7 @@ int main(int argc, char **argv) {
         const Uint64 frame_ticks = (Uint64)(frame_s * freq);
         if (now >= next) {
             const Uint8 *keys = SDL_GetKeyboardState(NULL);
-            bool rewinding = settings.rewind && (keys[SDL_SCANCODE_BACKSPACE] ||
-                             (pad && SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)));
+            bool rewinding = settings.rewind && input_held(IN_REWIND, keys, pad);
             uint16_t old_pad;
             if (rewinding && rewind_step(&old_pad)) {
                 /* Redraw the frame we stepped back to, then return to the state before it. */
@@ -672,7 +661,7 @@ int main(int argc, char **argv) {
                 rewind_restore_head();
                 sound_out_count = 0;            /* silent while rewinding */
             } else if (!rewinding) {
-                pad_state[0] = key_bits(keys) | controller_bits(pad);
+                pad_state[0] = input_pad_bits(keys, pad);
                 rewind_push(pad_state[0]);
                 cheats_frame();
                 machine_run_frame(framebuffer, FB_W);

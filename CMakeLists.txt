@@ -78,6 +78,8 @@ add_executable(BeyondOasis
   runtime/src/cheats.c
   runtime/src/hd.c
   runtime/src/filter.c
+  runtime/src/input.c
+  runtime/src/controls.c
   runtime/src/bus.c
   runtime/src/vdp.c
   runtime/src/io.c

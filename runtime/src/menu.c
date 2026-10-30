@@ -2,6 +2,7 @@
  * save/load slots (each with a thumbnail of when it was saved), display options,
  * rewind, reset and quit. Drawn with the launcher's UI style. */
 #include "menu.h"
+#include "controls.h"
 #include "genesis.h"
 #include "savestate.h"
 #include "settings.h"
@@ -11,7 +12,7 @@
 #include <string.h>
 
 typedef enum { ITEM_HEADER, ITEM_ACTION, ITEM_SLOT, ITEM_OPTION } ItemKind;
-enum { ACT_RESUME, ACT_SAVE, ACT_LOAD, ACT_RESET, ACT_QUIT };
+enum { ACT_RESUME, ACT_SAVE, ACT_LOAD, ACT_RESET, ACT_QUIT, ACT_CONTROLS };
 typedef struct { ItemKind kind; const char *label; int id; } Item;
 
 static const Item items[] = {
@@ -35,6 +36,7 @@ static const Item items[] = {
     { ITEM_HEADER, "GAME", 0 },
     { ITEM_OPTION, "Rewind", OPT_REWIND },
     { ITEM_OPTION, "Volume", OPT_VOLUME },
+    { ITEM_ACTION, "Controls", ACT_CONTROLS },
     { ITEM_ACTION, "Reset game", ACT_RESET },
     { ITEM_ACTION, "Quit game", ACT_QUIT },
 };
@@ -44,11 +46,11 @@ static const Item items[] = {
 #define PANEL_X 86
 #define PANEL_Y 36
 #define PANEL_W 520
-#define PANEL_H 660
+#define PANEL_H 668
 #define LIST_X  (PANEL_X + 40)
 #define LIST_R  (PANEL_X + PANEL_W - 36)
 #define LIST_Y  (PANEL_Y + 90)
-#define ROW_H   24
+#define ROW_H   23
 #define HEAD_H  22
 #define VOLUME_W 140                    /* the volume slider's track, left of its value */
 #define VOLUME_X (LIST_R - 20 - 46 - 26 - VOLUME_W)
@@ -199,6 +201,7 @@ static MenuAction act(int dir, bool activate) {
     case ITEM_ACTION:
         if (!activate) return MENU_NONE;
         if (it->id == ACT_RESUME) return MENU_CLOSE;
+        if (it->id == ACT_CONTROLS) { controls_open(); return MENU_NONE; }
         /* Reset and quit lose progress: ask for a second press. */
         if (!confirm_pending || confirm_item != selected) {
             confirm_pending = true;
@@ -217,6 +220,14 @@ static MenuAction act(int dir, bool activate) {
 MenuAction menu_event(const SDL_Event *e) {
     int dir = 0;
     bool activate = false;
+    if (controls_is_open()) {           /* the controls page takes all input while it is up */
+        float mx = 0, my = 0;
+        if (e->type == SDL_MOUSEMOTION) { mx = e->motion.x; my = e->motion.y; }
+        if (e->type == SDL_MOUSEBUTTONDOWN) { mx = e->button.x; my = e->button.y; }
+        mx = (mx * mouse_scale - ui_ox) / ui_s;
+        my = (my * mouse_scale - ui_oy) / ui_s;
+        return controls_event(e, mx, my) ? MENU_SETTINGS : MENU_NONE;
+    }
     switch (e->type) {
     case SDL_KEYDOWN:
         switch (e->key.keysym.sym) {
@@ -388,4 +399,5 @@ void menu_render(double time_s) {
         ui_panel(x, y, w, 40, 20, rgb_hex(0x2A2416), rgb_hex(0x1A160D), .92f * a, rgb_hex(0xE8C77A), .6f * a);
         ui_draw_text(toast, "Segoe UI Semibold", 16, 600, 1, x + 24, y + 9, rgb_hex(0xF3DDA4), rgb_hex(0xF3DDA4), a);
     }
+    controls_render(time_s);
 }

@@ -55,6 +55,8 @@ Other headless options:
 * `--no-launcher`: start the game directly this time
 * `--launcher-music-check SECONDS`: run the launcher music without an audio device and print its level per second and each loop's fade
 * `--menu-shot F.png W H`: open the in-game menu over the last frame and render it at W x H
+* `--controls-shot`: with `--menu-shot`, render the Controls page over the menu
+* `--input-check FILE`: rebind a few keys and buttons (including clashes), save them to FILE, load them back and print every binding
 * `--save-to N`, `--slot N`, `--states-base PREFIX`: save a slot at the end, pick the menu's slot,
   and keep test slots in `PREFIXstates/` instead of the real ones
 * `--hd-shot F.png SCALE`: save the last frame at internal resolution SCALE (2-4), with the time it took
@@ -268,11 +270,30 @@ cmake --build build/cmake
 build/cmake/BeyondOasis.exe "<path to ROM>"
 ```
 
-Keys: arrows, Z/X/C = A/B/C, Enter = Start, F5 = widescreen on/off, F11 = fullscreen.
-Menu: Esc (or Back/Guide on a controller) pauses the game and opens the in-game menu.
-Save states: F2 save, F4 load, F6/F7 previous/next slot (1-9, files in `states/`).
-Rewind: hold Backspace (or the left shoulder button on a controller).
-Settings live in `settings.ini` next to the executable.
+Default controls (all remappable, see Controls below):
+
+| Action | Keyboard | Controller (Xbox layout) |
+|---|---|---|
+| Move | Arrows | D-pad (the left stick always works too) |
+| A / B / C | Z / X / C | X / A / B |
+| Start | Enter | Start |
+| Rewind (hold) | Backspace | LB |
+| Pause menu | Esc | Back (Guide and Esc always work too) |
+
+Fixed keys: F2 save state, F4 load, F6/F7 previous/next slot (1-9, files in `states/`),
+F5 widescreen on/off, F11 fullscreen. Settings live in `settings.ini` next to the executable.
+
+## Controls
+
+"Controls" in the pause menu and in the launcher opens a page with every action's key and
+controller button. Pick a row, press Enter (or A, or click) and then the new key or button:
+a key binds the keyboard column, a button the controller column. A key or button another
+action had is swapped onto that action's old one, so no two actions ever share. Esc
+cancels, and "Reset to defaults" puts everything back. The menus keep their own fixed
+keys (arrows / D-pad, Enter / A, Esc / B), and Esc and the Guide button always open the
+pause menu, so a binding can never lock you out. Bindings are saved in `settings.ini` as
+`key_<action>` and `pad_<action>` (SDL key and button names). Any controller SDL knows
+works: Xbox, PlayStation, Switch Pro and most others; the first one connected is used.
 
 ## Third-party code
 

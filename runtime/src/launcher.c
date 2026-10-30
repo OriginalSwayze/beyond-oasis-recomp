@@ -11,6 +11,7 @@
 #include "settings.h"
 #include "ui.h"
 #include "png.h"
+#include "controls.h"
 #include <SDL.h>
 #include <math.h>
 #include <stdio.h>
@@ -630,7 +631,7 @@ static void build_background(void) {
 }
 
 /* ---- Settings rows -------------------------------------------------------------- */
-typedef enum { ROW_HEADER, ROW_OPTION, ROW_ROM } RowKind;
+typedef enum { ROW_HEADER, ROW_OPTION, ROW_ROM, ROW_CONTROLS } RowKind;
 typedef struct { RowKind kind; const char *label; int id; } Row;
 
 /* The volume slider's track, left of its value. */
@@ -654,6 +655,7 @@ static const Row rows[] = {
     { ROW_ROM, "ROM", 0 },
     { ROW_OPTION, "Cheats", OPT_CHEATS },
     { ROW_OPTION, "Volume", OPT_VOLUME },
+    { ROW_CONTROLS, "Controls", 0 },
     { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER },
 };
 #define ROW_COUNT ((int)(sizeof rows / sizeof *rows))
@@ -661,9 +663,9 @@ static const Row rows[] = {
 /* ---- Layout --------------------------------------------------------------------- */
 #define PANEL_X 572
 #define PANEL_R 1196
-#define ROWS_Y  176
-#define ROW_H   26
-#define HEAD_H  23
+#define ROWS_Y  172
+#define ROW_H   25
+#define HEAD_H  22
 
 /* Selectable items: the option/ROM rows, then PLAY and QUIT. */
 enum { ITEM_PLAY = 100, ITEM_QUIT = 101 };
@@ -676,7 +678,7 @@ static float row_y(int r) {
     return y;
 }
 
-#define BTN_Y 618
+#define BTN_Y 622
 #define BTN_H 54
 #define PLAY_X PANEL_X
 #define PLAY_W 300
@@ -743,6 +745,14 @@ static void draw_ui(float lx, float ly, float t) {
             vc = rom_ok ? rgb_hex(0x8FD19E) : rgb_hex(0xE58A7A);
             if (focus) {
                 const char *hint = "Enter to choose\xE2\x80\xA6";
+                float hw = ui_text_width(hint, "Segoe UI", 13, 400, 0);
+                float vw = ui_text_width(value, "Segoe UI Semibold", 16.5f, 600, 0);
+                ui_draw_text(hint, "Segoe UI", 13, 400, 0, PANEL_R - vw - hw - 18, y + 8, rgb_hex(0x8C93A3), rgb_hex(0x8C93A3), 1);
+            }
+        } else if (row->kind == ROW_CONTROLS) {
+            snprintf(value, sizeof value, "Keyboard & controller");
+            if (focus) {
+                const char *hint = "Enter to change\xE2\x80\xA6";
                 float hw = ui_text_width(hint, "Segoe UI", 13, 400, 0);
                 float vw = ui_text_width(value, "Segoe UI Semibold", 16.5f, 600, 0);
                 ui_draw_text(hint, "Segoe UI", 13, 400, 0, PANEL_R - vw - hw - 18, y + 8, rgb_hex(0x8C93A3), rgb_hex(0x8C93A3), 1);
@@ -857,8 +867,8 @@ int launcher_run(const char *ini_path) {
     layout(ow);
     SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, ui_w, ui_h);
     SDL_GameController *pad = NULL;
-    if (!rom_ok) selected = 11;         /* the ROM row */
-    else selected = ITEM_PLAY;
+    selected = ITEM_PLAY;
+    if (!rom_ok) for (int r = 0; r < ROW_COUNT; r++) if (rows[r].kind == ROW_ROM) selected = r;
     music_start();
 
     float lx = 0, ly = 0, tx = 0, ty = 0;
@@ -869,6 +879,14 @@ int launcher_run(const char *ini_path) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             int activate = 0, change = 0;
+            if (controls_is_open() && e.type != SDL_QUIT) {
+                /* The controls page takes all input while it is up (mouse points match the layout). */
+                if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
+                float mx = e.type == SDL_MOUSEMOTION ? e.motion.x : e.type == SDL_MOUSEBUTTONDOWN ? e.button.x : 0;
+                float my = e.type == SDL_MOUSEMOTION ? e.motion.y : e.type == SDL_MOUSEBUTTONDOWN ? e.button.y : 0;
+                controls_event(&e, mx, my);
+                continue;
+            }
             switch (e.type) {
             case SDL_QUIT: result = 0; break;
             case SDL_CONTROLLERDEVICEADDED: if (!pad) pad = SDL_GameControllerOpen(e.cdevice.which); break;
@@ -924,6 +942,8 @@ int launcher_run(const char *ini_path) {
                 settings_option_change(rows[selected].id, change ? change : 1);
             else if (selected < ROW_COUNT && rows[selected].kind == ROW_ROM && activate)
                 choose_rom(win);
+            else if (selected < ROW_COUNT && rows[selected].kind == ROW_CONTROLS && activate)
+                controls_open();
             else if (activate && selected == ITEM_PLAY && play_enabled()) result = 1;
             else if (activate && selected == ITEM_QUIT) result = 0;
         }
@@ -936,6 +956,7 @@ int launcher_run(const char *ini_path) {
         lx += (gx - lx) * .12f; ly += (gy - ly) * .12f;
 
         render(lx, ly, t);
+        controls_render(t);
         SDL_UpdateTexture(tex, NULL, ui_px, ui_w * 4);
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, NULL, NULL);

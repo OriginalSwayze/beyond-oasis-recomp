@@ -23,6 +23,8 @@ typedef struct {
     bool show_launcher;                 /* show the launcher at startup (--no-launcher skips it once) */
     bool launcher_music;                /* the launcher plays the title theme (M toggles it) */
     int  volume;                        /* 0-100: game sound and launcher music */
+    int  bind_key[10];                  /* input.h IN_*: SDL scancode for each action */
+    int  bind_pad[10];                  /* input.h IN_*: SDL game controller button for each action */
     bool cheat_health;                  /* infinite health: no damage, health held full */
     bool cheat_spirit;                  /* infinite spirit power */
     bool cheat_weapons;                 /* weapons never break */
