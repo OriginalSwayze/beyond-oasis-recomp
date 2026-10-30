@@ -1,8 +1,8 @@
 /* High internal resolution (hd.c): the VDP keeps each line's layers, and hd_compose()
  * scales every layer on its own with an edge-directed pixel-art scaler and composites
  * them at that size, with the same priority and shadow/highlight rules as the VDP.
- * hd_compose_at() also draws the moments between the game's motion updates (smooth
- * motion at 60 Hz and above). */
+ * hd_compose_at() also draws the moments between the game's ticks (smooth motion at
+ * 60 Hz and above), moving each sprite by its own object's movement (motion.c). */
 #ifndef HD_H
 #define HD_H
 
@@ -57,7 +57,7 @@ extern int hd_w, hd_h;
 
 /* Smooth motion: call hd_frame_done() after running each frame; hd_compose_at() then
  * draws the picture `frac` frames (0-1) after the newest one, gliding between the
- * game's motion updates. hd_motion_t() is how far that moment is between the updates. */
+ * game's ticks. hd_motion_t() is how far that moment is between the sprites' ticks. */
 void  hd_frame_done(void);
 void  hd_compose_at(int scale, float frac);
 float hd_motion_t(float frac);
@@ -65,7 +65,6 @@ float hd_motion_t(float frac);
  * (for checking it against hd_compose()). */
 void  hd_compose_sprites(int scale);
 extern double hd_ms[4];                 /* last hd_compose_at: ms scaling layers, scaling sprites, sprite layer, compositing */
-extern int hd_unpaired;                 /* last in-between picture: character groups that could not be paired */
-extern int hd_split;                    /* last in-between picture: largest movement difference of touching sprites */
+extern int hd_owned;                    /* sprites of the newest frame that belong to a game object */
 
 #endif

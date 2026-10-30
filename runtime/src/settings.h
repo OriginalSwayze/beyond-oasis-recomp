@@ -13,7 +13,7 @@ typedef struct {
     bool integer_scale;
     bool no_sprite_limit;
     int  internal_scale;                /* 1 = native; 2-4 = layers redrawn at that scale (hd.c) */
-    bool smooth_motion;                 /* glide between the game's 30 Hz motion updates (hd.c) */
+    bool smooth_motion;                 /* draw between the game's 30 Hz ticks (hd.c, motion.c) */
     int  filter;                        /* FILTER_* (filter.h): off, scanlines, CRT, LCD */
     int  overclock;                     /* 68000 speed in percent (100 = original): removes slowdown */
     int  window_scale;

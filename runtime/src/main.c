@@ -8,6 +8,7 @@
 #include "launcher.h"
 #include "cheats.h"
 #include "hd.h"
+#include "motion.h"
 #include "filter.h"
 #include "input.h"
 #include "controls.h"
@@ -192,6 +193,7 @@ int main(int argc, char **argv) {
     bool test_overrides = false;        /* settings overridden on the command line: don't save them */
     const char *hd_shot = NULL;
     const char *smooth_dir = NULL;      /* --smooth-check DIR SCALE */
+    bool motion_check = false;
     const char *sprite_dir = NULL;      /* --sprite-check EVERY DIR SCALE */
     int sprite_every = 0;
     const char *filter_shot = NULL;     /* --filter-shot F.png W H MODE */
@@ -247,6 +249,12 @@ int main(int argc, char **argv) {
             sprite_every = atoi(argv[++i]);
             sprite_dir = argv[++i];
             settings.internal_scale = atoi(argv[++i]);
+            settings.smooth_motion = true;
+        }
+        else if (!strcmp(argv[i], "--motion-check")) {
+            /* --motion-check: from frame 300 on, check that the sprites shown are found in the
+             * sprite lists the game built and how many belong to objects (motion.c). */
+            motion_check = true;
             settings.smooth_motion = true;
         }
         else if (!strcmp(argv[i], "--smooth-check") && i + 2 < argc) {
@@ -394,6 +402,27 @@ int main(int argc, char **argv) {
                     snprintf(p, sizeof p, "%s/sprites.png", sprite_dir); png_write(p, worst_b, hd_w, hd_h, hd_w);
                 }
             }
+            if (motion_check && f >= 300 && vdp_opts.hd_capture) {
+                /* How well the sprites on screen are tied to the game's objects. */
+                static int frames, unmatched, moving, drawn_total, owned_total, biggest;
+                int dx[80], dy[80], owned;
+                unsigned tick = motion_sprite_moves(&hd_frame, dx, dy, &owned);
+                frames++;
+                if (hd_frame.sprite_count && !tick) unmatched++;
+                drawn_total += hd_frame.sprite_count;
+                owned_total += owned;
+                bool any = false;
+                for (int k = 0; k < 80; k++) {
+                    if (dx[k] || dy[k]) any = true;
+                    if (abs(dx[k]) > biggest) biggest = abs(dx[k]);
+                    if (abs(dy[k]) > biggest) biggest = abs(dy[k]);
+                }
+                moving += any;
+                if (f + 1 == headless_frames)
+                    printf("motion check: %d frames, %d with sprites not found in a tick, %d with moving objects; "
+                           "%.1f%% of sprites follow an object; largest move %d px\n",
+                           frames, unmatched, moving, drawn_total ? 100.0 * owned_total / drawn_total : 0, biggest);
+            }
             if (smooth_dir && f >= headless_frames - 8) {
                 for (int k = 0; k < 2; k++) {
                     char p[1200];
@@ -402,8 +431,8 @@ int main(int argc, char **argv) {
                     hd_compose_at(settings.internal_scale, frac);
                     double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency();
                     int n = (f - (headless_frames - 8)) * 2 + k;
-                    printf("frame %d +%.1f: t=%.2f  split %d px  unpaired %d  %.2f ms (layers %.2f, sprites %.2f + %.2f, compose %.2f)\n",
-                           f, frac, hd_motion_t(frac), hd_split, hd_unpaired, ms, hd_ms[0], hd_ms[1], hd_ms[2], hd_ms[3]);
+                    printf("frame %d +%.1f: t=%.2f  %d of %d sprites follow objects  %.2f ms (layers %.2f, sprites %.2f + %.2f, compose %.2f)\n",
+                           f, frac, hd_motion_t(frac), hd_owned, hd_frame.sprite_count, ms, hd_ms[0], hd_ms[1], hd_ms[2], hd_ms[3]);
                     snprintf(p, sizeof p, "%s/%02d.png", smooth_dir, n);
                     png_write(p, hd_px, hd_w, hd_h, hd_w);
                 }

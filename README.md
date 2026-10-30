@@ -18,7 +18,7 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | Launcher (`runtime/src/launcher.c`) | done: settings, ROM picker, foil steelbook |
 | In-game menu (`runtime/src/menu.c`) | done: save/load slots with thumbnails, options, reset, quit |
 | Internal resolution 2-4x (`runtime/src/hd.c`) | done: per-layer Scale2x/Scale3x |
-| Smooth motion, 60-144 Hz+ (`runtime/src/hd.c`) | done: glides between the game's 30 Hz updates |
+| Smooth motion, 60-144 Hz+ (`runtime/src/hd.c`, `motion.c`) | done: moves every sprite by its object's movement between the game's 30 Hz ticks |
 | Display filters (`runtime/src/filter.c`) | done: scanlines, CRT, LCD |
 | Slowdown fix (`runtime/src/machine.c`) | done: 68000 at 150-300% |
 | Cheats (`runtime/src/cheats.c`) | done: infinite health and spirit, unbreakable weapons, RAM codes |
@@ -61,7 +61,8 @@ Other headless options:
   and keep test slots in `PREFIXstates/` instead of the real ones
 * `--hd-shot F.png SCALE`: save the last frame at internal resolution SCALE (2-4), with the time it took
 * `--sprite-check EVERY DIR SCALE`: every EVERY frames, compare the frame drawn layer by layer with the same frame drawn sprite by sprite (as smooth motion draws it); prints how many differ by more than 0.5% and saves the worst pair
-* `--smooth-check DIR SCALE`: smooth motion over the last 8 frames at 120 Hz; prints how far each picture is between motion updates and the largest movement difference between touching, neighbouring sprites, and saves the pictures
+* `--smooth-check DIR SCALE`: smooth motion over the last 8 frames at 120 Hz; prints how far each picture is between ticks and how many sprites follow objects, and saves the pictures
+* `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--filter-shot F.png W H MODE`: draw the last frame at W x H with filter MODE on the GPU (hidden window) and save it
 * `--volume N`: volume 0-100 for this run
@@ -133,37 +134,42 @@ sharpest choice, since it needs the smallest final step.
 
 ## Smooth motion
 
-The game moves its camera and characters every other frame: its logic runs at 30 Hz,
-in 2-pixel steps. "Smooth motion" (on by default, `smooth_motion` in `settings.ini`)
-glides from one motion update to the next instead of jumping:
+The game moves its camera and characters once per tick, every other frame: its logic
+runs at 30 Hz, in 2-pixel steps. "Smooth motion" (on by default, `smooth_motion` in
+`settings.ini`) draws the moments between two ticks from the game's own data instead of
+guessing from the picture:
 
+* While the game builds its sprite list (`runtime/src/motion.c`), the runtime notes for
+  every sprite which object drew it and where the game placed that object on screen.
+  Objects draw through three routines that first work out the object's screen position
+  ($AB4A, $AECC, $B0C4) and small effects through one ($A98E); the V blank handler sends
+  the finished list to the VDP ($1FBE), which ends a tick. The HUD, menus and text are
+  drawn other ways, belong to no object and never move between ticks.
 * The VDP also records each line's scroll values and every sprite: its position and all
-  of its pixels, including those hidden behind other sprites.
-* A frame where the scroll or a sprite moved is a motion update. Each picture is drawn
-  a fraction `t` of the way from the previous update to the latest: plane A and B are
-  shifted back by `(1 - t)` of their scroll change, and every sprite paired with the
-  same sprite at the previous update (same tiles, size, attributes, near) is placed
-  between its two positions. The window, the HUD and anything that did not move stay put.
-* A character is several sprites that touch, sit next to each other in the sprite list
-  and share a palette and priority (so the HUD stays apart from a character behind it).
-  Each such group moves as one, by the most common movement of its pieces that could be
-  paired. When its whole animation frame changed (every few frames while walking), it is
-  found at the previous update as an object instead: the nearest group of the same palette
-  by the bottom centre of its outline, where its feet are. So characters keep gliding
-  through animation changes instead of snapping, and never come apart between frames. Every picture is drawn this way, also when nothing moves, so
-  overlapping sprites never switch between two ways of drawing.
+  of its pixels, including those hidden behind other sprites. The sprites shown are found
+  in the tick they came from by their entries in the sprite list.
+* Each picture is drawn a fraction `t` of the way from the previous tick to the latest:
+  plane A and B are shifted back by `(1 - t)` of their scroll change, and every sprite by
+  `(1 - t)` of its own object's movement. All the pieces of a character belong to the same
+  object, so they always move together, through animation changes too, and a character
+  can never disappear, double or come apart. An object that is new, whose slot now holds
+  a different kind of object, or that moved more than 48 pixels in one tick (a warp) is
+  drawn where it is.
 * Sprites are stacked front to back by their position in the sprite list, exactly as
   the hardware does (`--sprite-check` compares this per-sprite drawing with the layer
-  drawing; they match to within 0.07% of pixels, at overlapping edges).
+  drawing; they match to within 0.07% of pixels, at overlapping edges). Every picture is
+  drawn this way, also when nothing moves, so overlaps never switch between two ways of
+  drawing.
 * The main loop runs at the display's refresh with vsync: every refresh runs a game frame
   if one is due (60 a second on any display) and draws the moment it is now. So 30 Hz
   steps become 60 Hz motion on a 60 Hz display and 144 Hz motion on a 144 Hz one.
 * Scene cuts (scroll jumps over 24 pixels), column scrolling and sprite masking are
   drawn as they are, without gliding.
 
-Motion is shown one update (about 33 ms) late. Smooth motion works at any internal
+Motion is shown one tick (about 33 ms) late. Smooth motion works at any internal
 resolution; at Native it moves whole pixels. The game's own logic stays at 30 Hz: running
-it every frame would make the whole game run twice as fast.
+it every frame would make the whole game run twice as fast, and halving every speed,
+timer and animation in the game to make up for it is a far bigger change.
 
 A picture takes 1.5-3 ms at 4x (16:9), split across cores by a pool of worker threads
 started once. Measured live on a 144 Hz display: 144 pictures a second, 90% of them

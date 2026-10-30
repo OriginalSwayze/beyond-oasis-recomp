@@ -4,6 +4,7 @@
 #include "m68k.h"
 #include "m68kcpu.h"
 #include "recomp_rt.h"
+#include "motion.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,6 +51,7 @@ static bool is_wait(uint32_t pc) {
  * the end-of-tick wait after the countdown had already run out (slowdown). */
 static void note_block(uint32_t at, int cycles) {
     static uint32_t last;
+    motion_block(at);
     if (is_wait(at)) stat_wait_cycles += (uint64_t)cycles;
     /* A tick arrives from the code just before the wait (not back from an interrupt). */
     if (at == 0x8ACA && last >= 0x8AA6 && last <= 0x8AC4) {

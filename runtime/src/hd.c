@@ -7,6 +7,7 @@
  * rounded and diagonals smoothed, and layers stay separate. Mid-frame palette changes
  * and line scrolls are kept because every line was captured with its own colours. */
 #include "hd.h"
+#include "motion.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -18,7 +19,7 @@ HdFrame hd_frame;
 uint32_t *hd_px;
 int hd_w, hd_h;
 unsigned hd_serial = 1;
-int hd_split, hd_unpaired;
+int hd_owned;
 double hd_ms[4];
 
 static uint32_t *scaled[3], *temp[3];
@@ -80,22 +81,26 @@ static void scale_any(const uint32_t *src, int pitch, int w, int h, int scale, u
 }
 
 /* ---- Motion ----------------------------------------------------------------------- *
- * The game moves things every other frame (its logic runs at 30 Hz). The in-between
- * frames glide from the previous motion update to the latest one over the time between
- * them, so motion is continuous at 60 Hz and above, one update (about 33 ms) late. */
-typedef struct { bool drawn; int x, y, w, h, rank; uint16_t attr; } MotionSprite;
-
+ * The game moves things once per tick (every other frame: its logic runs at 30 Hz). The
+ * pictures between two ticks show each layer where it was at that moment: the planes from
+ * how their scroll changed, each sprite from how its own object moved (motion.c, read from
+ * the game's data as it builds its sprite list). Motion is continuous at any refresh rate,
+ * one tick (about 33 ms) late. */
 typedef struct {
     int w, h;
     uint8_t flags[HD_MAX_H];
     int16_t hscroll[2][HD_MAX_H], vscroll[2][HD_MAX_H];
-    MotionSprite spr[80];
-} Motion;
+} Scroll;
 
-static Motion before, latest;           /* the previous and the latest motion update */
+/* When the latest update of a layer came, and how many frames apart updates come. */
+typedef struct { long at; int period; } Timeline;
+
+static Scroll before, latest;           /* plane scroll at the previous and the latest update */
 static bool have_before, have_latest;
-static long frame_no, latest_at;        /* frames run, and when the latest update came */
-static int period = 2;                  /* frames between updates */
+static long frame_no;                   /* frames run */
+static Timeline planes = { 0, 2 }, sprites = { 0, 2 };
+static unsigned shown_tick;             /* the game tick whose sprites hd_frame shows */
+static int move_x[80], move_y[80];      /* how far each sprite's object moved in that tick */
 
 static unsigned scaled_gen, sprites_gen;
 static int scaled_scale, sprites_scale;
@@ -106,42 +111,48 @@ static uint32_t *sprite_layer;          /* sprites drawn at their in-between pos
 #define SPR_PAD_MAX ((32 + 2) * HD_MAX_SCALE)
 static uint32_t sprite_scaled[80][SPR_PAD_MAX * SPR_PAD_MAX];
 static uint32_t sprite_tmp[SPR_PAD_MAX * SPR_PAD_MAX];
-static int match[80];                   /* hd_frame sprite -> `before` sprite, or -1 */
 
-static void motion_of(Motion *m, const HdFrame *f) {
+static void scroll_of(Scroll *m, const HdFrame *f) {
     m->w = f->w; m->h = f->h;
     memcpy(m->flags, f->flags, sizeof m->flags);
     memcpy(m->hscroll, f->hscroll, sizeof m->hscroll);
     memcpy(m->vscroll, f->vscroll, sizeof m->vscroll);
-    for (int i = 0; i < 80; i++) {
-        const HdSprite *s = &f->sprites[i];
-        m->spr[i].drawn = s->drawn;
-        m->spr[i].x = s->x; m->spr[i].y = s->y; m->spr[i].w = s->w; m->spr[i].h = s->h; m->spr[i].attr = s->attr; m->spr[i].rank = s->rank;
-    }
 }
 
-static bool moved(const Motion *a, const Motion *b) {
-    if (a->w != b->w || a->h != b->h) return true;
-    if (memcmp(a->hscroll, b->hscroll, sizeof a->hscroll) || memcmp(a->vscroll, b->vscroll, sizeof a->vscroll)) return true;
-    for (int i = 0; i < 80; i++) {
-        if (a->spr[i].drawn != b->spr[i].drawn) return true;
-        if (a->spr[i].drawn && (a->spr[i].x != b->spr[i].x || a->spr[i].y != b->spr[i].y)) return true;
-    }
-    return false;
+static bool scrolled(const Scroll *a, const Scroll *b) {
+    return a->w != b->w || a->h != b->h || memcmp(a->hscroll, b->hscroll, sizeof a->hscroll) ||
+           memcmp(a->vscroll, b->vscroll, sizeof a->vscroll);
+}
+
+static void timeline_update(Timeline *tl, bool consecutive) {
+    long gap = frame_no - tl->at;
+    if (consecutive && gap >= 1 && gap <= 4) tl->period = (int)gap;
+    tl->at = frame_no;
+}
+
+static float timeline_t(const Timeline *tl, float frac) {
+    float t = (frame_no + frac - tl->at) / (float)tl->period;
+    return t < 0 ? 0 : t > 1 ? 1 : t;
 }
 
 void hd_frame_done(void) {
-    static Motion now;
+    static Scroll now;
     frame_no++;
-    motion_of(&now, &hd_frame);
-    if (!have_latest) { latest = now; have_latest = true; latest_at = frame_no; return; }
-    if (!moved(&now, &latest)) return;
-    long gap = frame_no - latest_at;
-    if (gap >= 1 && gap <= 4) period = (int)gap;
-    before = latest;
-    have_before = gap <= 8;             /* after a long still moment, start from here */
-    latest = now;
-    latest_at = frame_no;
+    scroll_of(&now, &hd_frame);
+    if (!have_latest) {
+        latest = now; have_latest = true; planes.at = frame_no;
+    } else if (scrolled(&now, &latest)) {
+        long gap = frame_no - planes.at;
+        timeline_update(&planes, true);
+        before = latest;
+        have_before = gap <= 8;         /* after a long still moment, start from here */
+        latest = now;
+    }
+    unsigned tick = motion_sprite_moves(&hd_frame, move_x, move_y, &hd_owned);
+    if (tick != shown_tick) {
+        timeline_update(&sprites, tick && tick == shown_tick + 1);
+        shown_tick = tick;
+    }
 }
 
 static bool ensure(int scale) {
@@ -300,27 +311,6 @@ void hd_compose(int scale) {
 /* Signed difference of two scroll values that wrap at 1024. */
 static int scroll_delta(int now, int was) { return ((now - was + 512) & 1023) - 512; }
 
-/* Pairs each sprite with the same sprite at the previous update: same tiles and size,
- * nearest, at most 32 pixels away. Unpaired sprites (new, gone, animation frame
- * changed) are drawn where they are now. */
-static void match_sprites(void) {
-    bool used[80] = { false };
-    for (int i = 0; i < 80; i++) {
-        match[i] = -1;
-        const HdSprite *c = &hd_frame.sprites[i];
-        if (!c->drawn) continue;
-        int best = -1, best_d = 33 * 33 * 2;
-        for (int k = 0; k < 80; k++) {
-            if (!before.spr[k].drawn || used[k] || before.spr[k].attr != c->attr ||
-                before.spr[k].w != c->w || before.spr[k].h != c->h) continue;
-            int dx = c->x - before.spr[k].x, dy = c->y - before.spr[k].y, d = dx * dx + dy * dy;
-            if (k == i) d -= 1;         /* prefer the same SAT entry when equally near */
-            if (d < best_d) { best_d = d; best = k; }
-        }
-        if (best >= 0 && best_d <= 32 * 32 * 2) { match[i] = best; used[best] = true; }
-    }
-}
-
 static void scale_sprites(int scale) {
     if (sprites_gen == hd_serial && sprites_scale == scale) return;
     static uint32_t padded[34 * 34];
@@ -332,14 +322,8 @@ static void scale_sprites(int scale) {
         for (int y = 0; y < c->h; y++) memcpy(padded + (y + 1) * pw + 1, c->px + y * 32, (size_t)c->w * 4);
         scale_any(padded, pw, pw, ph, scale, sprite_scaled[i], sprite_tmp);
     }
-    match_sprites();
     sprites_gen = hd_serial;
     sprites_scale = scale;
-}
-
-static int group_root(int *group, int v) {
-    while (group[v] != v) v = group[v] = group[group[v]];
-    return v;
 }
 
 /* Sprites at their positions for moment t, back to front so earlier sprites win. */
@@ -352,104 +336,11 @@ static void draw_sprite_layer(int scale, float t) {
         while (b > 0 && hd_frame.sprites[order[b - 1]].rank < hd_frame.sprites[v].rank) { order[b] = order[b - 1]; b--; }
         order[b] = v;
     }
-    /* How far each sprite moved since the previous update. A character is several
-     * sprites that touch, sit next to each other in the sprite list and share a palette
-     * and priority (which keeps the HUD apart from a character passing behind it). Each
-     * such group moves as one: by the most common movement among its pieces that could
-     * be paired with the previous update, or not at all if none could (when the whole
-     * animation frame changed). So a character never comes apart between frames. */
-    static int mx[80], my[80], group[80];
-    static bool unpaired[80];
-    /* The movement depends only on the frame, not on the moment t: worked out once per frame. */
-    static unsigned motion_gen;
-    if (motion_gen != hd_serial) {
-        hd_unpaired = 0;
-        for (int i = 0; i < 80; i++) group[i] = i;
-        for (int i = 0; i < 80; i++)
-            for (int k = 0; k < 80; k++) {
-                const HdSprite *p = &hd_frame.sprites[i], *q = &hd_frame.sprites[k];
-                if (!p->drawn || !q->drawn || q->rank != p->rank + 1 || (p->attr & 0xE000) != (q->attr & 0xE000)) continue;
-                bool touch = p->x <= q->x + q->w && q->x <= p->x + p->w && p->y <= q->y + q->h && q->y <= p->y + p->h;
-                if (touch) group[group_root(group, i)] = group_root(group, k);
-            }
-        for (int g = 0; g < 80; g++) {
-            if (group_root(group, g) != g) continue;
-            int best_x = 0, best_y = 0, best_votes = 0;
-            for (int i = 0; i < 80; i++) {
-                if (match[i] < 0 || group_root(group, i) != g) continue;
-                int dx = hd_frame.sprites[i].x - before.spr[match[i]].x, dy = hd_frame.sprites[i].y - before.spr[match[i]].y;
-                int votes = 0;
-                for (int k = 0; k < 80; k++)
-                    if (match[k] >= 0 && group_root(group, k) == g && hd_frame.sprites[k].x - before.spr[match[k]].x == dx &&
-                        hd_frame.sprites[k].y - before.spr[match[k]].y == dy) votes++;
-                if (votes > best_votes) { best_votes = votes; best_x = dx; best_y = dy; }
-            }
-            unpaired[g] = !best_votes;
-            for (int i = 0; i < 80; i++) if (group_root(group, i) == g) { mx[i] = best_x; my[i] = best_y; }
-        }
-
-        /* A group whose whole animation frame changed has no piece to pair. It is found at the
-         * previous update as an object instead: the group there of the same palette and
-         * priority whose outline's bottom centre (where a character's feet are; it stays put
-         * between animation frames, unlike arms and weapons) is nearest, within 24 pixels and
-         * not already the previous position of a paired group. */
-        static int pgroup[80];
-        static bool claimed[80];
-        for (int i = 0; i < 80; i++) { pgroup[i] = i; claimed[i] = false; }
-        for (int i = 0; i < 80; i++)
-            for (int k = 0; k < 80; k++) {
-                const MotionSprite *p = &before.spr[i], *q = &before.spr[k];
-                if (!p->drawn || !q->drawn || q->rank != p->rank + 1 || (p->attr & 0xE000) != (q->attr & 0xE000)) continue;
-                bool touch = p->x <= q->x + q->w && q->x <= p->x + p->w && p->y <= q->y + q->h && q->y <= p->y + p->h;
-                if (touch) pgroup[group_root(pgroup, i)] = group_root(pgroup, k);
-            }
-        for (int i = 0; i < 80; i++) if (match[i] >= 0) claimed[group_root(pgroup, match[i])] = true;
-        for (int g = 0; g < 80; g++) {
-            if (group_root(group, g) != g || !hd_frame.sprites[g].drawn || !unpaired[g]) continue;
-            int x0 = 1 << 20, x1 = -(1 << 20), y1 = -(1 << 20);
-            for (int i = 0; i < 80; i++) {
-                const HdSprite *s = &hd_frame.sprites[i];
-                if (!s->drawn || group_root(group, i) != g) continue;
-                if (s->x < x0) x0 = s->x;
-                if (s->x + s->w > x1) x1 = s->x + s->w;
-                if (s->y + s->h > y1) y1 = s->y + s->h;
-            }
-            int best = -1, best_d = 24 * 24 + 1, bdx = 0, bdy = 0;
-            for (int pg = 0; pg < 80; pg++) {
-                if (group_root(pgroup, pg) != pg || !before.spr[pg].drawn || claimed[pg] ||
-                    (before.spr[pg].attr & 0xE000) != (hd_frame.sprites[g].attr & 0xE000)) continue;
-                int px0 = 1 << 20, px1 = -(1 << 20), py1 = -(1 << 20);
-                for (int i = 0; i < 80; i++) {
-                    if (!before.spr[i].drawn || group_root(pgroup, i) != pg) continue;
-                    if (before.spr[i].x < px0) px0 = before.spr[i].x;
-                    if (before.spr[i].x + before.spr[i].w > px1) px1 = before.spr[i].x + before.spr[i].w;
-                    if (before.spr[i].y + before.spr[i].h > py1) py1 = before.spr[i].y + before.spr[i].h;
-                }
-                int dx = (x0 + x1) / 2 - (px0 + px1) / 2, dy = y1 - py1, d = dx * dx + dy * dy;
-                if (d < best_d) { best_d = d; best = pg; bdx = dx; bdy = dy; }
-            }
-            if (best < 0) { hd_unpaired++; continue; }      /* for checks: still nothing to go by */
-            claimed[best] = true;
-            for (int i = 0; i < 80; i++) if (group_root(group, i) == g) { mx[i] = bdx; my[i] = bdy; }
-        }
-        /* For checks: the largest difference in movement between touching pieces next to each
-         * other in the sprite list (one character); above 0 it would come apart in between. */
-        hd_split = 0;
-        for (int i = 0; i < 80; i++)
-            for (int k = 0; k < 80; k++) {
-                const HdSprite *p = &hd_frame.sprites[i], *q = &hd_frame.sprites[k];
-                if (!p->drawn || !q->drawn || q->rank != p->rank + 1) continue;
-                bool touch = p->x <= q->x + q->w && q->x <= p->x + p->w && p->y <= q->y + q->h && q->y <= p->y + p->h;
-                int d = abs(mx[i] - mx[k]) + abs(my[i] - my[k]);
-                if (touch && d > hd_split) hd_split = d;
-            }
-    motion_gen = hd_serial;
-    }
     float back = 1 - t;
     for (int k = 0; k < n; k++) {
         int i = order[k];
         const HdSprite *c = &hd_frame.sprites[i];
-        float x = c->x - mx[i] * back, y = c->y - my[i] * back;
+        float x = c->x - move_x[i] * back, y = c->y - move_y[i] * back;
         int sw = (c->w + 2) * scale, sh = (c->h + 2) * scale;
         int X0 = (int)lroundf((x + hd_frame.extra) * scale) - scale, Y0 = (int)lroundf(y * scale) - scale;
         const uint32_t *src = sprite_scaled[i];
@@ -467,8 +358,6 @@ static void draw_sprite_layer(int scale, float t) {
     }
 }
 
-/* Draws the moment t between the previous motion update (0) and the latest (1), with
- * the newest frame's content. */
 static double ms_since(Uint64 *t0) {
     Uint64 now = SDL_GetPerformanceCounter();
     double ms = (double)(now - *t0) * 1000 / SDL_GetPerformanceFrequency();
@@ -476,54 +365,52 @@ static double ms_since(Uint64 *t0) {
     return ms;
 }
 
-static void compose_between(int scale, float t) {
+/* Draws the newest frame's content with the planes at moment tp and the sprites at
+ * moment ts between the previous update (0) and the latest (1). */
+static void compose_between(int scale, float tp, float ts) {
     Uint64 t0 = SDL_GetPerformanceCounter();
     scale_planes(scale);
     hd_ms[0] = ms_since(&t0);
     static int ox[2][HD_MAX_H], oy[2][HD_MAX_H];
-    float back = 1 - t;
+    bool planes_move = have_before && before.w == hd_frame.w && before.h == hd_frame.h;
+    float back = 1 - tp;
     for (int line = 0; line < hd_frame.h; line++) {
-        bool still = (hd_frame.flags[line] & HD_LINE_COLUMN_VSCROLL) || !(before.flags[line] & HD_LINE_DISPLAY);
+        bool still = !planes_move || (hd_frame.flags[line] & HD_LINE_COLUMN_VSCROLL) || !(before.flags[line] & HD_LINE_DISPLAY);
         for (int p = 0; p < 2; p++) {
-            int dh = scroll_delta(hd_frame.hscroll[p][line], before.hscroll[p][line]);
-            int dv = scroll_delta(hd_frame.vscroll[p][line], before.vscroll[p][line]);
-            if (still || abs(dh) > 24 || abs(dv) > 24) dh = dv = 0;    /* a cut, not a scroll */
+            int dh = still ? 0 : scroll_delta(hd_frame.hscroll[p][line], before.hscroll[p][line]);
+            int dv = still ? 0 : scroll_delta(hd_frame.vscroll[p][line], before.vscroll[p][line]);
+            if (abs(dh) > 24 || abs(dv) > 24) dh = dv = 0;    /* a cut, not a scroll */
             ox[p][line] = (int)lroundf(back * dh * scale);
             oy[p][line] = (int)lroundf(-back * dv * scale);
         }
     }
-    const uint32_t *sprites = scaled[2];
+    const uint32_t *layer = scaled[2];
     hd_ms[1] = hd_ms[2] = 0;
     if (!hd_frame.sprite_mask) {
         ms_since(&t0);
         scale_sprites(scale);
         hd_ms[1] = ms_since(&t0);
-        draw_sprite_layer(scale, t);
+        draw_sprite_layer(scale, ts);
         hd_ms[2] = ms_since(&t0);
-        sprites = sprite_layer;
+        layer = sprite_layer;
     }
     ms_since(&t0);
-    compose_rows(scale, sprites, ox[0], oy[0], ox[1], oy[1]);
+    compose_rows(scale, layer, ox[0], oy[0], ox[1], oy[1]);
     hd_ms[3] = ms_since(&t0);
 }
 
-float hd_motion_t(float frac) {
-    if (!have_before) return 1;
-    float t = (frame_no + frac - latest_at) / (float)period;
-    return t < 0 ? 0 : t > 1 ? 1 : t;
-}
+float hd_motion_t(float frac) { return timeline_t(&sprites, frac); }
 
 void hd_compose_at(int scale, float frac) {
     scale = clamp_scale(scale);
     if (!ensure(scale)) return;
     /* Draw every picture the same way, also when nothing is moving (t = 1): switching
      * between whole-layer and per-sprite drawing would flicker where sprites overlap. */
-    if (!have_before || before.w != hd_frame.w || before.h != hd_frame.h) { hd_compose(scale); return; }
-    compose_between(scale, hd_motion_t(frac));
+    compose_between(scale, timeline_t(&planes, frac), timeline_t(&sprites, frac));
 }
 
 void hd_compose_sprites(int scale) {
     scale = clamp_scale(scale);
     if (!ensure(scale)) return;
-    compose_between(scale, 1);
+    compose_between(scale, 1, 1);
 }
