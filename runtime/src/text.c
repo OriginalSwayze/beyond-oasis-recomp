@@ -19,12 +19,21 @@ TextMask text_render(const char *utf8, const char *face, int px, int weight, int
     HFONT font = CreateFontW(-px, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS,
                              CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, wface);
     HGDIOBJ old_font = SelectObject(dc, font);
-    SetTextCharacterExtra(dc, tracking);
-    SIZE size;
-    GetTextExtentPoint32W(dc, wtext, n, &size);
+    /* Tracking: each character's advance plus the extra, given to ExtTextOut explicitly
+     * (SetTextCharacterExtra is not reliably honoured when drawing). */
+    int dx[512];
+    SIZE size = { 0, 0 };
+    for (int i = 0; i < n; i++) {
+        SIZE one;
+        GetTextExtentPoint32W(dc, wtext + i, 1, &one);
+        dx[i] = one.cx + tracking;
+        size.cx += dx[i];
+    }
     TEXTMETRICW tm;
     GetTextMetricsW(dc, &tm);
-    int w = size.cx + 4, h = tm.tmHeight + 2;
+    /* Drawn into a wider bitmap, then cropped to the ink: a character the font lacks is
+     * drawn from another font, which can be wider than it measures. */
+    int w = size.cx + 4 + px * 3, h = tm.tmHeight + 2;
 
     BITMAPINFO bi = { 0 };
     bi.bmiHeader.biSize = sizeof bi.bmiHeader;
@@ -39,12 +48,22 @@ TextMask text_render(const char *utf8, const char *face, int px, int weight, int
     memset(bits, 0, (size_t)w * h * 4);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, RGB(255, 255, 255));
-    TextOutW(dc, 2, 1, wtext, n);
+    /* One character at a time: GDI can stop partway through a string given explicit
+     * spacing when some characters come from another font. */
+    for (int i = 0, x = 2; i < n; x += dx[i++]) TextOutW(dc, x, 1, wtext + i, 1);
     GdiFlush();
 
-    m.w = w; m.h = h;
-    m.a = malloc((size_t)w * h);
-    for (int i = 0; i < w * h; i++) m.a[i] = ((const uint8_t *)bits)[i * 4 + 2];
+    const uint8_t *src = bits;
+    int last = 0;
+    for (int y = 0; y < h; y++)
+        for (int x = w - 1; x > last; x--)
+            if (src[((size_t)y * w + x) * 4 + 2]) { last = x; break; }
+    int cw = last + 3 > size.cx + 4 ? last + 3 : size.cx + 4;
+    if (cw > w) cw = w;
+    m.w = cw; m.h = h;
+    m.a = malloc((size_t)cw * h);
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < cw; x++) m.a[y * cw + x] = src[((size_t)y * w + x) * 4 + 2];
     m.baseline = tm.tmAscent + 1;
 
     SelectObject(dc, old_bmp);

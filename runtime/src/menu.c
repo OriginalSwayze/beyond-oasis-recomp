@@ -9,6 +9,7 @@
 #include "outfit.h"
 #include "preview.h"
 #include "launcher_scene.h"
+#include "foil.h"
 #include "genesis.h"
 #include "savestate.h"
 #include "settings.h"
@@ -123,6 +124,8 @@ static int changed_row = -1;
 static float hl_y;
 static bool confirm_pending;            /* reset/quit asked once, waiting for a second press */
 static int confirm_item;
+static float mouse_x, mouse_y, mouse_t = -1;   /* for the light on the steel (layout units) */
+static FoilSurface panel_surf, card_surf;
 
 bool menu_is_open(void) { return open_; }
 
@@ -187,8 +190,8 @@ void menu_open(const uint32_t *fb, int fb_w, int fb_h, int fb_pitch, int game_x,
     frame = malloc((size_t)fb_w * fb_h * 4);
     for (int y = 0; y < fb_h; y++) memcpy(frame + (size_t)y * fb_w, fb + (size_t)y * fb_pitch, (size_t)fb_w * 4);
 
-    /* Backdrop: the frame where the game shows it, blurred, darkened and warmed, with the
-     * stone tablet on the left. */
+    /* Backdrop: the frame where the game shows it, blurred, darkened into the night, with
+     * the shadows of the steel panel and the card. */
     free(backdrop);
     backdrop = calloc((size_t)out_w * out_h, 4);
     for (int y = 0; y < game_h; y++)
@@ -202,12 +205,13 @@ void menu_open(const uint32_t *fb, int fb_w, int fb_h, int fb_pitch, int game_x,
         for (int x = 0; x < out_w; x++) {
             float u = (x - ui_ox) / ui_s, v = (y - ui_oy) / ui_s;
             float vig = 1 - .35f * smooth(.3f, 1.1f, sqrtf((u - 640) * (u - 640) / (640.f * 640.f) + (v - 360) * (v - 360) / (360.f * 360.f)));
-            Rgb c = scale(unpack(backdrop[y * out_w + x]), .34f * vig);
-            c = add(c, rgb(.09f, .05f, .02f), .5f);                          /* the desert's warmth */
+            Rgb c = scale(unpack(backdrop[y * out_w + x]), .36f * vig);
+            c = mix(c, scale(rgb(.05f, .04f, .09f), vig), .35f);              /* the night's violet */
             c = add(c, rgb(1, 1, 1), (hashf((uint32_t)(y * out_w + x)) - .5f) * 2.5f / 255);   /* dither against banding */
             backdrop[y * out_w + x] = pack(c);
         }
-    scene_tablet(backdrop, TAB_X0, TAB_Y0, TAB_W0, TAB_H0, .94f);
+    foil_shadow_into(backdrop, TAB_X0 + 10, TAB_Y0 + 16, TAB_W0, TAB_H0, 20);
+    foil_shadow_into(backdrop, CARD_X + 10, CARD_Y + 16, CARD_W, CARD_H, 20);
 }
 
 void menu_select(int k, int row) {
@@ -363,6 +367,7 @@ MenuAction menu_event(const SDL_Event *e) {
         break;
     case SDL_MOUSEMOTION: {
         float mx = (e->motion.x * mouse_scale - ui_ox) / ui_s, my = (e->motion.y * mouse_scale - ui_oy) / ui_s;
+        mouse_x = mx; mouse_y = my; mouse_t = (float)now;
         int h = hit_test(mx, my);
         if (h >= 0 && h < HIT_TAB0) select_row(h);
         return MENU_NONE;
@@ -475,7 +480,14 @@ static float draw_wrapped(const char *text, float x, float y, float width, float
 /* The card on the right, for the selected row. */
 static void draw_card(float t, float alpha) {
     const Spirit *sp = &spirits[tab_spirit[tab]];
-    ui_panel(CARD_X, CARD_Y, CARD_W, CARD_H, 16, rgb_hex(0x1C1712), rgb_hex(0x0E0B09), .9f * alpha, rgb_hex(0xD9B567), .35f * alpha);
+    if (foil_begin(&card_surf, CARD_X, CARD_Y, CARD_W, CARD_H, 16, rgb(.86f, .88f, 1))) {
+        foil_frame(&card_surf, 8, 10);
+        foil_recess(&card_surf, CARD_X + 18, CARD_Y + 18, CARD_W - 36, CARD_H - 36, 8, .3f);
+        foil_finish(&card_surf);
+    }
+    float lx, ly;
+    foil_light(t, mouse_x, mouse_y, mouse_t, &lx, &ly);
+    foil_draw(&card_surf, lx, ly, t);
     const Item *it = item_at(selected);
     float x = CARD_X + 28, w = CARD_W - 56, y = CARD_Y + 24;
     if (!it) {                          /* on the tab bar: the tab's spirit */
@@ -521,16 +533,16 @@ static void draw_card(float t, float alpha) {
     }
 }
 
-/* Embers drifting up over the paused game. */
-static void draw_embers(float t) {
-    for (int i = 0; i < 34; i++) {
-        float life = 6 + 4 * hashf((uint32_t)i * 29u);
-        float age = fmodf(t + hashf((uint32_t)i * 31u) * life, life) / life;
-        float x = 660 + hashf((uint32_t)i * 37u) * 620 + sinf(t * .9f + i) * 14 * age;
-        float y = 740 - age * 760;
-        float k = sinf(age * 3.14159f) * (.18f + .25f * hashf((uint32_t)i * 41u));
-        scene_glow(x, y, 3.2f, rgb(1, .62f, .25f), k);
-    }
+/* The steel panel: the title stamped in gold, a holographic frame and rule, the rows'
+ * recess. */
+static void build_panel(void) {
+    if (!foil_begin(&panel_surf, TAB_X0, TAB_Y0, TAB_W0, TAB_H0, 18, rgb(.84f, .86f, 1))) return;
+    foil_frame(&panel_surf, 12, 10);
+    float tw = ui_text_width("PAUSED", "Palatino Linotype", 40, 700, 8);
+    foil_text(&panel_surf, "PAUSED", "Palatino Linotype", 40, 700, 8, LIST_X - 2 + tw / 2, TAB_Y0 + 56, -.9f, FOIL_GOLD);
+    foil_rule(&panel_surf, TAB_X0 + 36, TAB_X0 + TAB_W0 - 36, TABS_Y + TABS_H + 9, 1);
+    foil_recess(&panel_surf, LIST_X - 22, LIST_Y - 8, LIST_R - LIST_X + 36, TAB_Y0 + TAB_H0 - 64 - (LIST_Y - 8), 8, .35f);
+    foil_finish(&panel_surf);
 }
 
 void menu_render(double time_s) {
@@ -541,11 +553,15 @@ void menu_render(double time_s) {
     float in = ease_out((float)(now - opened_at) / .35f);
 
     memcpy(ui_px, backdrop, (size_t)ui_w * ui_h * 4);
-    draw_embers(t);
+    foil_atmosphere(t, .75f);
     const Spirit *sp = &spirits[tab_spirit[tab]];
 
-    /* Title, with the open tab's spirit beside it. */
-    ui_draw_text("PAUSED", "Palatino Linotype", 40, 700, 8, LIST_X - 2, TAB_Y0 + 30, rgb_hex(0xFBEBB8), rgb_hex(0xC08A2C), in);
+    /* The steel panel, the title stamped into it, with the open tab's spirit beside it. */
+    build_panel();
+    float lx, ly;
+    foil_light(t, mouse_x, mouse_y, mouse_t, &lx, &ly);
+    foil_draw(&panel_surf, lx, ly, t);
+    (void)in;
     scene_orb(tab_spirit[tab], LIST_R - 16, TAB_Y0 + 54, 16, t, .9f);
 
     /* The tabs. */

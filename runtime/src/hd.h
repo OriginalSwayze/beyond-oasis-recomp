@@ -101,6 +101,10 @@ typedef struct {
  * valid until the next call. */
 const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPost *p);
 
+/* Runs rows(ctx, y0, y1) over rows 0..h in small bands on the renderer's worker threads
+ * (all cores), returning when all are done. Also used by the launcher's and menu's foil. */
+void hd_rows(void (*rows)(void *ctx, int y0, int y1), void *ctx, int h);
+
 /* Sharpening (level 1-3: light, medium, strong) of a w x h picture with row pitch
  * `pitch`, contrast-adaptive: each pixel is pushed away from its four neighbours by an
  * amount that shrinks where the contrast is already high, so soft edges (scaled layers,

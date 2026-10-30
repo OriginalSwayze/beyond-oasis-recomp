@@ -10,6 +10,7 @@
 #include "launcher.h"
 #include "ost.h"
 #include "launcher_scene.h"
+#include "foil.h"
 #include "recomp_rt.h"
 #include "genesis.h"
 #include "settings.h"
@@ -610,6 +611,10 @@ static const Row tab_rows[TABS][9] = {
 static const int tab_count[TABS] = { 9, 4, 8, 5, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
+#define CASE_X 84                       /* the steelbook */
+#define CASE_Y 40
+#define CASE_W 408
+#define CASE_H 620
 #define PANEL_X (TABLET_X + 40)
 #define PANEL_R (TABLET_X + TABLET_W - 44)
 #define TAB_Y   (TABLET_Y + 26)
@@ -645,7 +650,8 @@ static struct {
     int changed_item;
     float flash;                        /* the spirits' flare on a choice, fading */
     float t;
-} ui;
+    float mouse_x, mouse_y, mouse_t;    /* the mouse (layout units) and when it last moved, for the light */
+} ui = { .mouse_t = -1 };
 
 static bool play_enabled(void) { return rom_ok; }
 static char rom_status[96];
@@ -886,7 +892,8 @@ static void draw_ui(float t) {
                      rgb_hex(0xB8AC92), rgb_hex(0xB8AC92), alpha);
     }
 
-    float lx = .5f * sinf(t * .45f), ly = .3f * cosf(t * .33f);
+    float lx, ly;
+    foil_light(t, ui.mouse_x, ui.mouse_y, ui.mouse_t, &lx, &ly);
     ui_button(PLAY_X, BTN_Y, PLAY_W, BTN_H, "PLAY", 20, true, ui.selected == ITEM_PLAY, play_enabled(), lx, ly, t);
     ui_button(QUIT_X, BTN_Y, QUIT_W, BTN_H, "QUIT", 20, false, ui.selected == ITEM_QUIT, true, lx, ly, t);
     const char *keys = "\xE2\x86\x91\xE2\x86\x93 select    \xE2\x86\x90\xE2\x86\x92 change    Q E  tabs    [ ]  track    M  music    Esc  quit";
@@ -897,8 +904,17 @@ static void draw_ui(float t) {
         preview_ready()) {
         float a = ease_out((t - ui.selected_t0) / .3f);
         float px = 40, py = 226, pw = 556, ph = pw * 9 / 16.f;
-        ui_fill_rect(0, 0, TABLET_X - 20, UI_BASE_H, rgb(0, 0, 0), .45f * a);
-        ui_panel(px - 14, py - 46, pw + 28, ph + 66, 14, rgb_hex(0x1C1712), rgb_hex(0x0E0B09), .92f * a, rgb_hex(0xD9B567), .45f * a);
+        ui_fill_rect(0, 0, TABLET_X - 20, UI_BASE_H, rgb(0, 0, 0), .55f * a);
+        static FoilSurface card;
+        if (foil_begin(&card, px - 18, py - 50, pw + 36, ph + 74, 14, rgb(.9f, .92f, 1))) {
+            foil_frame(&card, 6, 10);
+            foil_recess(&card, px - 2, py - 2, pw + 4, ph + 4, 4, .4f);
+            foil_finish(&card);
+        }
+        float lx, ly;
+        foil_light(t, ui.mouse_x, ui.mouse_y, ui.mouse_t, &lx, &ly);
+        if (a > .99f) foil_draw(&card, lx, ly, t);
+        else ui_panel(px - 18, py - 50, pw + 36, ph + 74, 14, rgb_hex(0x14131A), rgb_hex(0x0A090D), .92f * a, rgb_hex(0xD9B567), .45f * a);
         ui_draw_text("PREVIEW  \xC2\xB7  YOUR LAST GAME FRAME", "Segoe UI Semibold", 12, 600, 3, px, py - 30,
                      spirits[ui.tab].light, spirits[ui.tab].light, a);
         if (a > .05f) preview_draw(tab_rows[ui.tab][ui.selected].id, px, py, pw, ph, t);
@@ -911,14 +927,13 @@ static void draw_ui(float t) {
         song_name(pv.song, name, sizeof name);
         snprintf(line, sizeof line, "\xE2\x99\xAA  %s", name);
         float w = ui_text_width(line, "Segoe UI Semibold", 14, 600, 1);
-        ui_draw_text(line, "Segoe UI Semibold", 14, 600, 1, 318 - w / 2, 662, rgb_hex(0xF6DFA6), rgb_hex(0xC99B4E), .85f);
+        ui_draw_text(line, "Segoe UI Semibold", 14, 600, 1, CASE_X + CASE_W / 2.f - w / 2, CASE_Y + CASE_H + 16, rgb_hex(0xF6DFA6), rgb_hex(0xC99B4E), .85f);
     }
 }
 
 /* ---- Frame -------------------------------------------------------------------- */
 static void layout(int pixel_w) {
     ui_begin(pixel_w, (int)(BASE_H * (pixel_w / (float)BASE_W) + .5f));
-    scene_layout(&armlet, &logo);
 }
 
 /* Advances the animations by dt seconds. */
@@ -932,15 +947,55 @@ static void animate(float dt) {
     ui.flash *= expf(-dt * 3);
 }
 
+/* The steelbook on the left: the logo in gold and the Gold Armlet embossed in dark steel,
+ * the four spirits set in sockets below them; the tablet of settings in the same steel. */
+static FoilSurface case_surf, tablet_surf;
+static const float gem_dx[4] = { -114, -38, 38, 114 };   /* the spirits' sockets, in tab order */
+#define GEM_Y (CASE_Y + CASE_H - 104)
+
+static void build_case(void) {
+    if (!foil_begin(&case_surf, CASE_X, CASE_Y, CASE_W, CASE_H, 16, rgb(.86f, .90f, 1.0f))) return;
+    float cx = CASE_X + CASE_W / 2.f;
+    foil_frame(&case_surf, 18, 8);
+    float bottom = logo.w ? foil_art(&case_surf, &logo, cx, CASE_Y + 46, 320, FOIL_GOLD, 1.0f, .7f) : CASE_Y + 150;
+    if (!logo.w) foil_text(&case_surf, "BEYOND OASIS", "Palatino Linotype", 44, 700, 6, cx, CASE_Y + 110, -.9f, FOIL_GOLD);
+    float room = GEM_Y - 40 - (bottom + 26);              /* the armlet fills the space down to the sockets */
+    float width = armlet.w ? fminf(330, room * armlet.w / (float)armlet.h) : 0;
+    if (armlet.w) foil_art(&case_surf, &armlet, cx, bottom + 26 + (room - width * armlet.h / armlet.w) / 2, width, FOIL_ART, .9f, .6f);
+    for (int k = 0; k < 4; k++) foil_ring(&case_surf, cx + gem_dx[k], GEM_Y, 19, 2.2f);
+    foil_rule(&case_surf, CASE_X + 70, CASE_X + CASE_W - 70, GEM_Y - 38, 1.1f);
+    foil_text(&case_surf, "NATIVE PC EDITION", "Segoe UI Semibold", 13, 600, 5, cx, CASE_Y + CASE_H - 52, .7f, FOIL_HOLO);
+    foil_finish(&case_surf);
+}
+
+static void build_tablet(void) {
+    if (!foil_begin(&tablet_surf, TABLET_X, TABLET_Y, TABLET_W, TABLET_H, 18, rgb(.84f, .86f, 1.0f))) return;
+    foil_frame(&tablet_surf, 12, 10);
+    foil_rule(&tablet_surf, TABLET_X + 40, TABLET_X + TABLET_W - 40, TAB_Y + TAB_H + 9, 1);
+    foil_recess(&tablet_surf, PANEL_X - 20, ROWS_Y - 8, PANEL_R - PANEL_X + 34, BTN_Y - ROWS_Y - 2, 8, .35f);
+    foil_finish(&tablet_surf);
+}
+
 static void render(float t) {
     ui.t = t;
-    scene_draw(t, ui.focus, .6f + .4f * ui.flash);
-    draw_ui(t);
-    if (!logo.w) {
-        Rgb gold_top = rgb_hex(0xFBEBB8), gold_bot = rgb_hex(0xC08A2C);
-        float w = ui_text_width("BEYOND OASIS", "Palatino Linotype", 54, 700, 7);
-        ui_draw_text("BEYOND OASIS", "Palatino Linotype", 54, 700, 7, 318 - w / 2, 60, gold_top, gold_bot, 1);
+    float lx, ly;
+    foil_light(t, ui.mouse_x, ui.mouse_y, ui.mouse_t, &lx, &ly);
+    if (foil_backdrop(t)) {
+        foil_shadow(CASE_X + 10, CASE_Y + 18, CASE_W, CASE_H, 18);
+        foil_shadow(TABLET_X + 8, TABLET_Y + 14, TABLET_W, TABLET_H, 20);
     }
+    foil_atmosphere(t, .9f);
+    build_case();
+    build_tablet();
+    /* The case, then its spirits glowing in their sockets. */
+    foil_draw(&case_surf, lx, ly, t);
+    for (int k = 0; k < 4; k++) {
+        bool open = ui.tab == k;
+        float pulse = open ? .85f + .15f * sinf(t * 2.2f) + ui.flash * .4f : .35f;
+        scene_orb(k, CASE_X + CASE_W / 2.f + gem_dx[k], GEM_Y, open ? 15 : 13, t, pulse);
+    }
+    foil_draw(&tablet_surf, lx, ly, t);
+    draw_ui(t);
 }
 
 static void update_rom_status(void) {
@@ -976,6 +1031,7 @@ int launcher_screenshot(const char *png, int width, int tab, float t) {
     ui.selected = tab_count[ui.tab] > 1 ? 1 : 0;
     ui.hl_y = row_y(ui.selected);
     ui.tab_t0 = -10;
+    render(t);                          /* builds the surfaces and the backdrop: not timed */
     Uint64 t0 = SDL_GetPerformanceCounter();
     for (int i = 0; i < 10; i++) render(t);
     printf("launcher frame: %.1f ms at %dx%d\n", (SDL_GetPerformanceCounter() - t0) * 100.0 / SDL_GetPerformanceFrequency(), ui_w, ui_h);
@@ -1003,7 +1059,7 @@ static void choose_rom(SDL_Window *win) {
     music_stop();
     art_prepare();
     update_rom_status();
-    scene_layout(&armlet, &logo);
+    foil_free(&case_surf);              /* the new ROM's art: emboss the case again */
     music_start();
 #else
     (void)win;
@@ -1091,6 +1147,7 @@ int launcher_run(const char *ini_path) {
             case SDL_CONTROLLERDEVICEADDED: if (!pad) pad = SDL_GameControllerOpen(e.cdevice.which); break;
             case SDL_MOUSEMOTION: {
                 /* Mouse positions are in window points, which match the 1280x720 layout. */
+                ui.mouse_x = (float)e.motion.x; ui.mouse_y = (float)e.motion.y; ui.mouse_t = ui.t;
                 int h = hit_test(e.motion.x, e.motion.y);
                 if (h >= HIT_TAB0) { if (ui.tab == h - HIT_TAB0) select_item(ITEM_TABS); }
                 else if (h >= -1 && h < 200) select_item(h);

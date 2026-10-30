@@ -330,6 +330,8 @@ static void run_bands(void (*rows)(void *ctx, int y0, int y1), void *ctx, int h)
     run_jobs(jobs, n);
 }
 
+void hd_rows(void (*rows)(void *ctx, int y0, int y1), void *ctx, int h) { run_bands(rows, ctx, h); }
+
 static int workers(void) {
     static int n;
     if (!n) { n = SDL_GetCPUCount(); n = n < 1 ? 1 : n > MAX_WORKERS ? MAX_WORKERS : n; }

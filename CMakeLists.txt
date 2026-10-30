@@ -76,6 +76,7 @@ add_executable(BeyondOasis WIN32
   runtime/src/text.c
   runtime/src/launcher.c
   runtime/src/launcher_scene.c
+  runtime/src/foil.c
   runtime/src/ui.c
   runtime/src/menu.c
   runtime/src/savestate.c

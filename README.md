@@ -15,7 +15,7 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | 68000 → C recompiler (`tools/recomp.mjs`, built automatically by CMake) | done: 99.98% of 68000 time runs as native C |
 | Widescreen game patches (`runtime/src/widescreen.c`, `config/patches.json`) | done: gameplay at 16:9, other screens pillarboxed |
 | Save states and rewind (`runtime/src/state.c`, `rewind.c`) | done |
-| Launcher (`runtime/src/launcher.c`, `launcher_scene.c`) | done: settings, ROM picker, animated armlet and spirits, soundtrack player |
+| Launcher (`runtime/src/launcher.c`, `foil.c`, `launcher_scene.c`) | done: settings, ROM picker, foil steelbook, soundtrack player |
 | In-game menu (`runtime/src/menu.c`) | done: save/load slots with thumbnails, options, reset, quit |
 | Internal resolution 2-4x (`runtime/src/hd.c`) | done: per-layer Scale2x/Scale3x |
 | Smooth motion, 60-144 Hz+ (`runtime/src/hd.c`, `motion.c`) | done: moves every sprite by its object's movement between the game's 30 Hz ticks |
@@ -84,21 +84,28 @@ Other headless options:
 
 ## Launcher
 
-Before the game starts, a launcher shows the settings over a desert at dusk: the sun sets
-behind the dunes, stars twinkle, sand blows across and embers rise from the Gold Armlet,
-which floats in the middle with a sheen sweeping over it. The four spirits circle the
-armlet as glowing orbs with their emblems: Dytto (water), Efreet (fire), Bow (plant) and
-Shade (shadow).
+Before the game starts, a launcher presents the game like a collector's steelbook on a
+dark night over the dunes: stars twinkle, mist drifts low and embers rise. The case is dark
+brushed steel with the title logo in polished gold, the Gold Armlet embossed into it, and
+the four spirits set in sockets below as glowing orbs with their emblems: Dytto (water),
+Efreet (fire), Bow (plant) and Shade (shadow). A raised double frame of holographic foil
+runs round it. The light drifts slowly and leans towards the mouse, like tilting a real
+case: the foil's colours shift with it, a glint sweeps across, and sparkles flash at their
+own angles.
 
-The settings sit on a stone tablet with gold trim and one tab per spirit: DISPLAY,
-ENHANCE, GAME and MUSIC. Opening a tab turns its spirit to the front of the circle and
-slides its rows in; the highlight glides between rows, a changed value pulses, and the
-selected option's description shows under the rows.
+The settings sit on a tablet of the same steel, with a foil frame and one tab per spirit:
+DISPLAY, EFFECTS, GAME, MUSIC and CHEATS (the Gold Armlet's). The open tab's spirit glows
+in its socket on the case; its rows slide in, the highlight glides between rows, a changed
+value pulses, and the selected option's description shows under them.
+
+The surfaces (`runtime/src/foil.c`) are height fields with a material per pixel (steel,
+holographic foil, gold, embossed art, engraved recesses), built once per window size and
+shaded every frame for the light on the renderer's worker threads.
 
 The artwork comes from your ROM: on first start the launcher plays the intro silently
 (about two seconds), captures the armlet scene and the title screen, and caches them in
 `launcher_art.cache` next to the executable. The spirits' orbs and emblems are drawn from
-shapes. Everything is drawn in software every frame (about 5 ms at 720p, 15 ms at 1080p;
+shapes. Everything is drawn in software every frame (about 6 ms at 720p, 13 ms at 1080p;
 larger windows are drawn at 1080p and scaled up).
 
 ### Soundtrack player and sounds
@@ -117,7 +124,7 @@ emulated Z80, YM2612 and PSG; no audio is stored anywhere (`runtime/src/ost.c`):
   offset). The player plays them all in order, repeats one, or shuffles (`ost_mode`), and
   remembers the last song (`ost_track`).
 * The MUSIC tab shows the song, its time, a level meter and previous / play-stop / next
-  buttons; the song playing also shows under the armlet on every tab.
+  buttons; the song playing also shows under the case on every tab.
 * Every choice in the launcher makes the game's own menu sound: the cursor sound ($0256)
   when moving, the confirm sound ($0347) when changing or opening something, the cancel
   sound ($03AA) when closing the controls page, and the error sound ($0253) when Play is
@@ -137,19 +144,20 @@ click on the track sets it there (in steps of 5%).
 
 ## In-game menu
 
-Esc pauses the game over a blurred, warmed copy of the last frame with embers drifting
-over it. The menu sits on the launcher's stone tablet, with one tab per spirit: GAME
-(resume, save and load the nine slots, cheats, rewind, reset, quit), DISPLAY, EFFECTS and
-MORE (volume, audio, Controls, Ali's outfit). Q / E, Page Up / Down or LB / RB switch tabs;
+Esc pauses the game over a blurred, darkened copy of the last frame, with mist and embers
+drifting over it. The menu is a panel of the launcher's steel with "PAUSED" stamped into it
+in gold and a holographic frame, with one tab per spirit: GAME (resume, save and load the
+nine slots, rewind, reset, quit), DISPLAY, EFFECTS, CHEATS and MORE (volume, audio,
+Controls, Ali's outfit). Q / E, Page Up / Down or LB / RB switch tabs;
 the rows slide in, the highlight glides, and a changed value pulses.
 
-The card on the right follows the selected row: the save slot's thumbnail and when it was
+The card on the right, framed in holographic foil, follows the selected row: the save slot's thumbnail and when it was
 saved; for a picture option, a live before/after on the paused frame (`runtime/src/preview.c`):
 the renderer keeps every frame's layers, so the frame is drawn again without the option and
 with it (its value, or a typical one when it is off), joined by a dividing line that sweeps
 slowly across. Detail options (internal resolution, scaler, sharpening) show 1:1 pixels
 around the middle; scene-wide ones (lighting) show the whole frame. Every other
-row explains what it changes. The launcher shows the same previews over its scene, on the
+row explains what it changes. The launcher shows the same previews in a foil card over its case, on the
 frame the game saved last (`preview_frame.cache`, written when the menu opens and on quit).
 
 Every choice makes the game's own menu sound (cursor, confirm, cancel, error). The game
