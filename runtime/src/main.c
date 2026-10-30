@@ -15,6 +15,7 @@
 #include "outfit.h"
 #include "preview.h"
 #include "fx.h"
+#include "lights.h"
 #include "texpack.h"
 #include "menu.h"
 #include "savestate.h"
@@ -141,7 +142,7 @@ static void apply_settings(void) {
     outfit_apply();
     sound_quality = settings.audio;
     hd_scaler = settings.scaler;
-    hd_shadows = settings.shadows;
+    hd_items = settings.items;
     hd_water = settings.water;
     /* Texture packs: load a pack when it changes (it can be many images), dump on request. */
     static char loaded_pack[64] = "";
@@ -161,8 +162,8 @@ static void apply_settings(void) {
  * plane A layer struct at $FF1716 holds it (+00 x, +04 y) while a map layer is active. */
 static HdPost finishing(int scale, float t) {
     const uint8_t *layer = bus.ram + 0x1716;
-    HdPost p = { settings.sharpen, settings.lighting, settings.ambience, settings.lights, settings.cinematic,
-                 settings.weather, settings.elements, settings.footsteps, false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
+    HdPost p = { settings.sharpen, settings.lighting, settings.elements, settings.footsteps, settings.items,
+                 settings.dynlight, false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
     p.world = (layer[0x27] & 1) && !vdp_opts.mask_sides;
     p.cam_x = (float)(int16_t)(layer[0] << 8 | layer[1]);
     p.cam_y = (float)(int16_t)(layer[4] << 8 | layer[5]);
@@ -173,6 +174,7 @@ static HdPost finishing(int scale, float t) {
 static void fx_after_frame(void) {
     HdPost here = finishing(1, 0);
     fx_game_frame(&hd_frame, here.world, here.cam_x, here.cam_y);
+    lights_game_frame(&hd_frame, here.world, SDL_GetTicks() / 1000.f);
 }
 
 /* Ali's middle on screen (frame pixels), for the previews' close-ups; -1 if unknown. */
@@ -287,6 +289,7 @@ int main(int argc, char **argv) {
     bool test_overrides = false;        /* settings overridden on the command line: don't save them */
     const char *hd_shot = NULL;
     const char *outfit_shot = NULL;     /* --outfit-check F.png */
+    bool list_objects = false;          /* --objects */
     const char *smooth_dir = NULL;      /* --smooth-check DIR SCALE */
     bool motion_check = false;
     const char *sprite_dir = NULL;      /* --sprite-check EVERY DIR SCALE */
@@ -323,14 +326,18 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--overclock") && i + 1 < argc) { settings.overclock = atoi(argv[++i]); test_overrides = true; }   /* percent */
         else if (!strcmp(argv[i], "--sharpen") && i + 1 < argc) { settings.sharpen = atoi(argv[++i]) & 3; test_overrides = true; }   /* 0-3 */
         else if (!strcmp(argv[i], "--lighting") && i + 1 < argc) { settings.lighting = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
-        else if (!strcmp(argv[i], "--ambience") && i + 1 < argc) { settings.ambience = atoi(argv[++i]) != 0; test_overrides = true; }
-        else if (!strcmp(argv[i], "--lights") && i + 1 < argc) { settings.lights = atoi(argv[++i]) != 0; test_overrides = true; }
-        else if (!strcmp(argv[i], "--shadows") && i + 1 < argc) { settings.shadows = atoi(argv[++i]) != 0; test_overrides = true; }
-        else if (!strcmp(argv[i], "--cinematic") && i + 1 < argc) { settings.cinematic = atoi(argv[++i]) != 0; test_overrides = true; }
-        else if (!strcmp(argv[i], "--water") && i + 1 < argc) { settings.water = atoi(argv[++i]) != 0; test_overrides = true; }
-        else if (!strcmp(argv[i], "--weather") && i + 1 < argc) { settings.weather = atoi(argv[++i]) % WEATHER_COUNT; test_overrides = true; }
         else if (!strcmp(argv[i], "--elements") && i + 1 < argc) { settings.elements = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--footsteps") && i + 1 < argc) { settings.footsteps = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--items") && i + 1 < argc) { settings.items = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--water") && i + 1 < argc) { settings.water = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--dynlight") && i + 1 < argc) { settings.dynlight = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--test-light") && i + 1 < argc) {
+            /* --test-light X,Y,R,G,B,RADIUS: a light at X,Y frame pixels, colour 0-1, every frame. */
+            float v[6] = { 0, 0, 1, 1, 1, 0 };
+            char *p = argv[++i];
+            for (int k = 0; k < 6 && *p; k++) { v[k] = strtof(p, &p); if (*p == ',') p++; }
+            lights_test(v[0], v[1], v[2], v[3], v[4], v[5]);
+        }
         else if (!strcmp(argv[i], "--texture-pack") && i + 1 < argc) { snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", argv[++i]); test_overrides = true; }
         else if (!strcmp(argv[i], "--dump-tiles") && i + 1 < argc) { settings.dump_tiles = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--scaler") && i + 1 < argc) { settings.scaler = atoi(argv[++i]) != 0; test_overrides = true; }   /* 0 edge, 1 smooth */
@@ -389,11 +396,17 @@ int main(int argc, char **argv) {
             settings.smooth_motion = true;
         }
         else if (!strcmp(argv[i], "--outfit") && i + 1 < argc) {
-            /* --outfit a,b,c,d: Ali's outfit colours for this run (as outfit_colors in settings.ini). */
+            /* --outfit a,b,...: Ali's outfit colours for this run (as outfit_colors in settings.ini). */
             outfit_ini_load("outfit_colors", argv[++i]);
             settings.outfit = true;
             test_overrides = true;
         }
+        else if (!strcmp(argv[i], "--outfit-anims") && i + 1 < argc) {
+            /* --outfit-anims 0,1,...: their animations (as outfit_anims in settings.ini). */
+            outfit_ini_load("outfit_anims", argv[++i]);
+            test_overrides = true;
+        }
+        else if (!strcmp(argv[i], "--objects")) list_objects = true;   /* at the end: each sprite's object */
         else if (!strcmp(argv[i], "--outfit-check") && i + 1 < argc) {
             /* --outfit-check F.png: at the end, save the player's sprites 6x with their colours
              * and list the colour indices he uses. */
@@ -653,8 +666,10 @@ int main(int argc, char **argv) {
             uint32_t *pixels = malloc((size_t)filter_w * filter_h * 4);
             if (target && pixels) {
                 SDL_SetRenderTarget(sr, target);
-                bool hd = settings.internal_scale > 1;
-                if (hd) hd_compose(settings.internal_scale);
+                bool hd = settings.internal_scale > 1 || settings.items || settings.water || hd_texpack;   /* as the window draws it */
+                hd_time = 1.0f;
+                if (hd && settings.items) hd_compose_sprites(settings.internal_scale);
+                else if (hd) hd_compose(settings.internal_scale);
                 int tw = hd ? hd_w : frame_width(), th = hd ? hd_h : vdp_screen_height();
                 SDL_Texture *t = SDL_CreateTexture(sr, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STATIC, tw, th);
                 HdPost post = finishing(hd ? hd_w / frame_width() : 1, 1.0f);
@@ -680,6 +695,30 @@ int main(int argc, char **argv) {
             if (sr) SDL_DestroyRenderer(sr);
             if (hw) SDL_DestroyWindow(hw);
         }
+        if (list_objects) {
+            /* Each drawn sprite: position, size, attributes, and the object that drew it (its
+             * list and slot, its type word, and its first 16 words). */
+            for (int k = 0; k < 80; k++) {
+                const HdSprite *sp = &hd_frame.sprites[k];
+                if (!sp->drawn) continue;
+                uint32_t obj = 0;
+                uint16_t kind = 0;
+                bool owned = motion_entry_owner(k, &obj, &kind);
+                printf("sprite %2d at %4d,%4d %2dx%-2d attr %04X", k, sp->x, sp->y, sp->w, sp->h, sp->attr);
+                if (!owned) { printf("  (no object)\n"); continue; }
+                const char *list = "?";
+                int slot = -1;
+                uint32_t a = obj & 0xFFFF;
+                if (a >= 0x19E8 && a < 0x19E8 + 21 * 0xBC) { list = "19E8"; slot = (int)(a - 0x19E8) / 0xBC; }
+                else if (a >= 0x2954 && a < 0x2954 + 4 * 0x5A) { list = "2954"; slot = (int)(a - 0x2954) / 0x5A; }
+                else if (a >= 0x2ABC && a < 0x2ABC + 8 * 0x5A) { list = "2ABC"; slot = (int)(a - 0x2ABC) / 0x5A; }
+                else if (a >= 0x2D8C && a < 0x2D8C + 6 * 0x5A) { list = "2D8C"; slot = (int)(a - 0x2D8C) / 0x5A; }
+                else if (a >= 0x19C8 && a < 0x19C8 + 4 * 8) { list = "19C8"; slot = (int)(a - 0x19C8) / 8; }
+                printf("  object %06X list %s slot %2d kind %04X:", obj, list, slot, kind);
+                for (int wd = 0; wd < 16; wd++) printf(" %04X", bus.ram[(a + wd * 2) & 0xFFFF] << 8 | bus.ram[(a + wd * 2 + 1) & 0xFFFF]);
+                printf("\n");
+            }
+        }
         if (outfit_shot) {
             int w = vdp_player_w, h = vdp_player_h, count[64] = { 0 };
             printf("player: %dx%d pixels\n", w, h);
@@ -689,8 +728,10 @@ int main(int argc, char **argv) {
                     int v = vdp_player[y * PLAYER_IMG + x];
                     if (!v) continue;
                     count[v]++;
-                    uint16_t c = vdp_opts.outfit && vdp_outfit_pick[v] != OUTFIT_KEEP
-                                     ? vdp_outfit_shade(vdp_outfit_pick[v], vdp_player_cram[v], vdp_outfit_ref[v]) : vdp_player_cram[v];
+                    int above = h - 1 - y, band = outfit_band(above);
+                    uint16_t c = vdp_opts.outfit && vdp_outfit_pick[band][v] != OUTFIT_KEEP
+                                     ? vdp_outfit_color(vdp_outfit_pick[band][v], vdp_outfit_anim[band][v], vdp_player_cram[v], vdp_outfit_ref[v], above, 0)
+                                     : vdp_player_cram[v];
                     uint32_t rgbv = (uint32_t)(((c >> 1) & 7) * 36) << 16 | (uint32_t)(((c >> 5) & 7) * 36) << 8 | (uint32_t)(((c >> 9) & 7) * 36);
                     for (int k = 0; k < 36; k++) img[(size_t)(y * 6 + k / 6) * w * 6 + x * 6 + k % 6] = rgbv;
                 }
@@ -908,11 +949,14 @@ int main(int argc, char **argv) {
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
         /* Shadows are drawn while the layers are put together, so they need this path too. */
-        bool hd = (settings.internal_scale > 1 || settings.smooth_motion || settings.shadows || settings.water || hd_texpack) &&
+        /* Item animations move sprites by themselves, so they need the per-sprite path. */
+        bool hd = (settings.internal_scale > 1 || settings.smooth_motion || settings.items || settings.water || hd_texpack) &&
                   hd_frame.h == vdp_screen_height();
         hd_time = (float)(SDL_GetPerformanceCounter() - start) / freq;
         if (hd) {
+            hd_time = (float)(SDL_GetPerformanceCounter() - start) / freq;
             if (settings.smooth_motion) hd_compose_at(settings.internal_scale, frac);
+            else if (settings.items) hd_compose_sprites(settings.internal_scale);   /* sprites drawn one by one: items float */
             else hd_compose(settings.internal_scale);
             /* Two textures used in turn: uploading into the one the GPU just drew from
              * can make the upload wait for the GPU. */

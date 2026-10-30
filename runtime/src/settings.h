@@ -18,14 +18,11 @@ typedef struct {
     int  sharpen;                       /* sharpening: 0 off, 1 light, 2 medium, 3 strong (hd_sharpen) */
     int  scaler;                        /* layer scaler: 0 edge (Scale2x/3x), 1 smooth (xBR rules) */
     int  lighting;                      /* glow of bright pixels: 0 off, 1 soft, 2 bright (hd_post) */
-    bool ambience;                      /* dust in the air and a vignette (hd_post) */
-    bool lights;                        /* light sources light their surroundings (hd_post) */
-    bool shadows;                       /* characters cast soft shadows (hd_shadows) */
-    bool cinematic;                     /* film tone, grade, grain, lens fringing (hd_post) */
-    bool water;                         /* water shimmers, sparkles and reflects (hd_water) */
-    int  weather;                       /* WEATHER_* (fx.c) */
     bool elements;                      /* particles from spirits and magic (fx.c) */
     bool footsteps;                     /* dust, grass and splashes where Ali walks (fx.c) */
+    bool items;                         /* dropped items bob, glow and sparkle (fx.c) */
+    bool water;                         /* water shimmers, foams, glints and reflects (hd_water) */
+    bool dynlight;                      /* dynamic lights with ray-traced soft shadows (lights.c) */
     char texture_pack[64];              /* folder in texture_packs/, empty for none (texpack.h) */
     bool dump_tiles;                    /* write every tile shown to texture_packs/dump/ */
     int  audio;                         /* sound output: 0 original, 1 clean, 2 rich (sound_quality) */
@@ -46,7 +43,8 @@ typedef struct {
     bool cheat_weapons;                 /* weapons never break */
     char cheat_codes[512];              /* extra RAM codes, "FFxxxx:VV[VV],..." (settings.ini only) */
     bool outfit;                        /* Ali wears outfit_color (outfit.c) */
-    int  outfit_color[4];               /* CRAM colour for each part of his clothing, -1 = his own */
+    int  outfit_color[8];               /* CRAM colour for each part (OUTFIT_PARTS, outfit.c), -1 = his own */
+    int  outfit_anim[8];                /* its animation: OUTFIT_ANIM_* (genesis.h) */
 } Settings;
 
 extern Settings settings;
@@ -61,10 +59,8 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_FILTER, OPT_WINDOW_ALL,      /* fullscreen or a window size, in one option */
        OPT_OVERCLOCK, OPT_VOLUME,
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
-       OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AMBIENCE, OPT_AUDIO,
-       OPT_LIGHTS, OPT_SHADOWS, OPT_CINEMATIC, OPT_WATER, OPT_WEATHER, OPT_ELEMENTS, OPT_FOOTSTEPS,
+       OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AUDIO, OPT_ELEMENTS, OPT_FOOTSTEPS, OPT_ITEMS, OPT_WATER, OPT_DYNLIGHT,
        OPT_TEXPACK, OPT_DUMP };
-enum { WEATHER_OFF, WEATHER_BREEZE, WEATHER_SAND, WEATHER_RAIN, WEATHER_MIST, WEATHER_COUNT };
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);

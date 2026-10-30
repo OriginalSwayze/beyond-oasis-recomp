@@ -29,8 +29,6 @@ Settings settings = {
     .volume = 100,
 };
 
-static const char *weather_keys[WEATHER_COUNT] = { "off", "breeze", "sand", "rain", "mist" };
-static const char *weather_names[WEATHER_COUNT] = { "Off", "Breeze", "Sandstorm", "Rain", "Mist" };
 static const char *filter_keys[FILTER_COUNT] = { "off", "scanlines", "crt", "lcd" };
 static const char *filter_names[FILTER_COUNT] = { "Off", "Scanlines", "CRT", "LCD" };
 
@@ -74,14 +72,11 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "sharpen")) settings.sharpen = atoi(v);
         else if (!strcmp(k, "scaler")) settings.scaler = !strcmp(v, "smooth");
         else if (!strcmp(k, "lighting")) settings.lighting = atoi(v);
-        else if (!strcmp(k, "ambience")) settings.ambience = parse_bool(v);
-        else if (!strcmp(k, "lights")) settings.lights = parse_bool(v);
-        else if (!strcmp(k, "shadows")) settings.shadows = parse_bool(v);
-        else if (!strcmp(k, "cinematic")) settings.cinematic = parse_bool(v);
-        else if (!strcmp(k, "water")) settings.water = parse_bool(v);
-        else if (!strcmp(k, "weather")) { for (int i = 0; i < WEATHER_COUNT; i++) if (!strcmp(v, weather_keys[i])) settings.weather = i; }
         else if (!strcmp(k, "elements")) settings.elements = parse_bool(v);
         else if (!strcmp(k, "footsteps")) settings.footsteps = parse_bool(v);
+        else if (!strcmp(k, "items")) settings.items = parse_bool(v);
+        else if (!strcmp(k, "water")) settings.water = parse_bool(v);
+        else if (!strcmp(k, "dynamic_lights")) settings.dynlight = parse_bool(v);
         else if (!strcmp(k, "texture_pack")) snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", v);
         else if (!strcmp(k, "dump_tiles")) settings.dump_tiles = parse_bool(v);
         else if (!strcmp(k, "audio")) settings.audio = atoi(v);
@@ -103,7 +98,6 @@ void settings_load(const char *path) {
     if (settings.ost_mode < 0 || settings.ost_mode >= OST_MODE_COUNT) settings.ost_mode = OST_MODE_ALL;
     if (settings.sharpen < 0 || settings.sharpen > 3) settings.sharpen = 0;
     if (settings.lighting < 0 || settings.lighting > 2) settings.lighting = 0;
-    if (settings.weather < 0 || settings.weather >= WEATHER_COUNT) settings.weather = 0;
     if (settings.audio < 0 || settings.audio > 2) settings.audio = 0;
     if (settings.ost_track < -1 || settings.ost_track > 0xFF) settings.ost_track = -1;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
@@ -135,14 +129,11 @@ void settings_save(const char *path) {
     fprintf(f, "sharpen=%d\n", settings.sharpen);
     fprintf(f, "scaler=%s\n", settings.scaler ? "smooth" : "edge");
     fprintf(f, "lighting=%d\n", settings.lighting);
-    fprintf(f, "ambience=%d\n", settings.ambience);
-    fprintf(f, "lights=%d\n", settings.lights);
-    fprintf(f, "shadows=%d\n", settings.shadows);
-    fprintf(f, "cinematic=%d\n", settings.cinematic);
-    fprintf(f, "water=%d\n", settings.water);
-    fprintf(f, "weather=%s\n", weather_keys[settings.weather]);
     fprintf(f, "elements=%d\n", settings.elements);
     fprintf(f, "footsteps=%d\n", settings.footsteps);
+    fprintf(f, "items=%d\n", settings.items);
+    fprintf(f, "water=%d\n", settings.water);
+    fprintf(f, "dynamic_lights=%d\n", settings.dynlight);
     fprintf(f, "texture_pack=%s\n", settings.texture_pack);
     fprintf(f, "dump_tiles=%d\n", settings.dump_tiles);
     fprintf(f, "audio=%d\n", settings.audio);
@@ -204,14 +195,11 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_SHARPEN:    snprintf(out, n, "%s", sharpen_names[settings.sharpen]); break;
     case OPT_SCALER:     snprintf(out, n, "%s", settings.scaler ? "Smooth (xBR)" : "Edge"); break;
     case OPT_LIGHTING:   snprintf(out, n, "%s", settings.lighting == 2 ? "Bright" : settings.lighting ? "Soft" : "Off"); break;
-    case OPT_AMBIENCE:   snprintf(out, n, "%s", settings.ambience ? "On" : "Off"); break;
-    case OPT_LIGHTS:     snprintf(out, n, "%s", settings.lights ? "On" : "Off"); break;
-    case OPT_SHADOWS:    snprintf(out, n, "%s", settings.shadows ? "On" : "Off"); break;
-    case OPT_CINEMATIC:  snprintf(out, n, "%s", settings.cinematic ? "On" : "Off"); break;
-    case OPT_WATER:      snprintf(out, n, "%s", settings.water ? "On" : "Off"); break;
-    case OPT_WEATHER:    snprintf(out, n, "%s", weather_names[settings.weather]); break;
     case OPT_ELEMENTS:   snprintf(out, n, "%s", settings.elements ? "On" : "Off"); break;
     case OPT_FOOTSTEPS:  snprintf(out, n, "%s", settings.footsteps ? "On" : "Off"); break;
+    case OPT_ITEMS:      snprintf(out, n, "%s", settings.items ? "On" : "Off"); break;
+    case OPT_WATER:      snprintf(out, n, "%s", settings.water ? "On" : "Off"); break;
+    case OPT_DYNLIGHT:   snprintf(out, n, "%s", settings.dynlight ? "On" : "Off"); break;
     case OPT_TEXPACK:    snprintf(out, n, "%s", settings.texture_pack[0] ? settings.texture_pack : "None"); break;
     case OPT_DUMP:       snprintf(out, n, "%s", settings.dump_tiles ? "On" : "Off"); break;
     case OPT_AUDIO:      snprintf(out, n, "%s", settings.audio == 2 ? "Rich" : settings.audio ? "Clean" : "Original"); break;
@@ -316,14 +304,11 @@ void settings_option_change(int id, int dir) {
     case OPT_SHARPEN:  settings.sharpen = settings_cycle(settings.sharpen, 4, dir); break;
     case OPT_SCALER:   settings.scaler = !settings.scaler; break;
     case OPT_LIGHTING: settings.lighting = settings_cycle(settings.lighting, 3, dir); break;
-    case OPT_AMBIENCE: settings.ambience = !settings.ambience; break;
-    case OPT_LIGHTS:   settings.lights = !settings.lights; break;
-    case OPT_SHADOWS:  settings.shadows = !settings.shadows; break;
-    case OPT_CINEMATIC: settings.cinematic = !settings.cinematic; break;
-    case OPT_WATER:    settings.water = !settings.water; break;
-    case OPT_WEATHER:  settings.weather = settings_cycle(settings.weather, WEATHER_COUNT, dir); break;
     case OPT_ELEMENTS: settings.elements = !settings.elements; break;
     case OPT_FOOTSTEPS: settings.footsteps = !settings.footsteps; break;
+    case OPT_ITEMS:    settings.items = !settings.items; break;
+    case OPT_WATER:    settings.water = !settings.water; break;
+    case OPT_DYNLIGHT: settings.dynlight = !settings.dynlight; break;
     case OPT_DUMP:     settings.dump_tiles = !settings.dump_tiles; break;
     case OPT_TEXPACK: {                 /* None, then each folder in texture_packs/ */
         static char names[32][64];

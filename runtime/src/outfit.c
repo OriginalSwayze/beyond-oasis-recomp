@@ -3,9 +3,12 @@
  * Every sprite in the game uses palette line 0, so a colour cannot simply be changed in
  * CRAM: the townspeople would change with him. Instead the renderer recolours only the
  * sprites his object drew (vdp.c, with motion.c telling which those are). Each part of
- * his clothing is a ramp of colour indices, brightest first; one colour is picked per
- * part, and each index gets it scaled to the brightness the game gives that index, so
- * folds and shading stay and the game's fades still darken him.
+ * him is a ramp of colour indices, brightest first, on his head, body or feet (his hair
+ * and the Gold Armlet share their colours, as do his headband and boots, so height tells
+ * them apart); one colour is picked per part, and each index gets it scaled to the
+ * brightness the game gives that index, so folds and shading stay and the game's fades
+ * still darken him. A part can also be animated: a shimmer sweeping up him, a slow pulse,
+ * running rainbow hues or flickering flame (vdp_outfit_color).
  *
  * The page edits a copy of the settings: the preview shows it at once, and nothing in the
  * game changes until Apply. */
@@ -20,21 +23,32 @@
 
 /* The parts, from his sprites in the game: colour indices in palette 0, brightest first,
  * and that brightest colour (the picks stand for it). */
-typedef struct { const char *name, *about; int n; uint8_t idx[3]; uint16_t top; } Part;
+typedef struct { const char *name, *about; int n; uint8_t idx[3]; uint16_t top; uint8_t bands; } Part;
+#define HEAD (1 << OUTFIT_HEAD)
+#define BELOW (1 << OUTFIT_BODY | 1 << OUTFIT_FEET)
+#define EVERYWHERE (HEAD | BELOW)
 static const Part parts[OUTFIT_PARTS] = {
-    { "Trousers", "His baggy trousers and their folds.", 2, { 15, 13 }, 0x0EEE },
-    { "Sash", "The sash around his waist.", 2, { 2, 1 }, 0x000C },
-    { "Boots & bands", "His boots and wrist bands.", 3, { 7, 6, 5 }, 0x0EE4 },
-    { "Hair", "His hair. The Gold Armlet shares these colours and changes with it.", 2, { 4, 3 }, 0x02EE },
+    { "Trousers", "His baggy trousers and their folds.", 2, { 15, 13 }, 0x0EEE, EVERYWHERE },
+    { "Sash", "The sash around his waist (his sword's grip shares it).", 2, { 2, 1 }, 0x000C, EVERYWHERE },
+    { "Boots", "His boots.", 3, { 7, 6, 5 }, 0x0EE4, BELOW },
+    { "Hair", "His hair.", 2, { 4, 3 }, 0x02EE, HEAD },
+    { "Headband", "The band across his brow.", 3, { 7, 6, 5 }, 0x0EE4, HEAD },
+    { "Gold Armlet", "The Gold Armlet and the gold bands on his wrists and ankles.", 2, { 4, 3 }, 0x02EE, BELOW },
+    { "Skin", "His skin, from pale to deep.", 3, { 10, 9, 8 }, 0x068C, EVERYWHERE },
+    { "Jewel", "The small green jewel set in his sword's guard.", 1, { 12 }, 0x0284, EVERYWHERE },
 };
 
 typedef struct { const char *name; uint8_t r, g, b; } Preset;   /* 3-bit channels, as the Genesis has */
 static const Preset presets[] = {
-    { "White", 7, 7, 7 }, { "Sand", 7, 6, 4 }, { "Gold", 7, 5, 1 }, { "Orange", 7, 4, 0 },
-    { "Crimson", 6, 0, 0 }, { "Rose", 7, 3, 5 }, { "Violet", 5, 2, 7 }, { "Royal blue", 1, 2, 7 },
-    { "Sky", 3, 6, 7 }, { "Teal", 0, 5, 5 }, { "Emerald", 1, 6, 2 }, { "Olive", 4, 5, 1 },
-    { "Brown", 4, 2, 1 }, { "Silver", 5, 5, 6 }, { "Charcoal", 2, 2, 2 },
+    { "White", 7, 7, 7 }, { "Ivory", 7, 7, 5 }, { "Sand", 7, 6, 4 }, { "Gold", 7, 5, 1 }, { "Amber", 7, 4, 1 },
+    { "Orange", 7, 4, 0 }, { "Rust", 5, 2, 0 }, { "Crimson", 6, 0, 0 }, { "Scarlet", 7, 1, 1 }, { "Rose", 7, 3, 5 },
+    { "Pink", 7, 5, 6 }, { "Magenta", 7, 0, 6 }, { "Violet", 5, 2, 7 }, { "Purple", 4, 0, 5 }, { "Indigo", 2, 1, 5 },
+    { "Royal blue", 1, 2, 7 }, { "Navy", 0, 1, 4 }, { "Sky", 3, 6, 7 }, { "Cyan", 0, 7, 7 }, { "Teal", 0, 5, 5 },
+    { "Jade", 2, 6, 4 }, { "Emerald", 1, 6, 2 }, { "Lime", 5, 7, 1 }, { "Olive", 4, 5, 1 }, { "Khaki", 6, 6, 3 },
+    { "Brown", 4, 2, 1 }, { "Chocolate", 3, 1, 0 }, { "Silver", 5, 5, 6 }, { "Steel", 4, 5, 6 }, { "Slate", 3, 3, 4 },
+    { "Charcoal", 2, 2, 2 }, { "Onyx", 1, 1, 1 },
 };
+static const char *const anim_names[OUTFIT_ANIMS] = { "Still", "Shimmer", "Pulse", "Rainbow", "Flame" };
 #define PRESETS ((int)(sizeof presets / sizeof *presets))
 
 static uint16_t cram_of(int r, int g, int b) { return (uint16_t)(b << 9 | g << 5 | r << 1); }
@@ -43,48 +57,71 @@ static int lum_of(uint16_t c) { return ((c >> 1) & 7) + ((c >> 5) & 7) + ((c >> 
 /* ---- Settings ---------------------------------------------------------------------- */
 void outfit_defaults(void) {
     settings.outfit = false;
-    for (int k = 0; k < OUTFIT_PARTS; k++) settings.outfit_color[k] = -1;
+    for (int k = 0; k < OUTFIT_PARTS; k++) { settings.outfit_color[k] = -1; settings.outfit_anim[k] = 0; }
 }
 
 bool outfit_ini_load(const char *key, const char *value) {
     if (!strcmp(key, "outfit")) { settings.outfit = atoi(value) != 0; return true; }
+    if (!strcmp(key, "outfit_anims")) {
+        const char *p = value;
+        for (int k = 0; k < OUTFIT_PARTS && *p; k++) {
+            int a = atoi(p);
+            settings.outfit_anim[k] = a >= 0 && a < OUTFIT_ANIMS ? a : 0;
+            p = strchr(p, ',');
+            if (!p) break;
+            p++;
+        }
+        return true;
+    }
     if (strcmp(key, "outfit_colors")) return false;
     const char *p = value;
+    int n = 0;
     for (int k = 0; k < OUTFIT_PARTS && *p; k++) {
         char *end;
         long v = strtol(p, &end, 16);
         settings.outfit_color[k] = end != p && v >= 0 && v <= 0xEEE ? (int)(v & 0xEEE) : -1;
+        n = k + 1;
         p = strchr(p, ',');
         if (!p) break;
         p++;
     }
+    /* The older list had four parts: boots with the headband, hair with the armlet. */
+    if (n == 4) { settings.outfit_color[4] = settings.outfit_color[2]; settings.outfit_color[5] = settings.outfit_color[3]; }
     return true;
 }
 
 void outfit_ini_save(FILE *f) {
-    fprintf(f, "# Ali's outfit colours: trousers, sash, boots and bands, hair (Genesis CRAM colours, - = his own)\n");
+    fprintf(f, "# Ali's outfit: trousers, sash, boots, hair, headband, armlet, skin, jewel (Genesis CRAM colours, - = his own)\n");
     fprintf(f, "outfit=%d\noutfit_colors=", settings.outfit);
     for (int k = 0; k < OUTFIT_PARTS; k++) {
         if (settings.outfit_color[k] < 0) fprintf(f, "%s-", k ? "," : "");
         else fprintf(f, "%s%03X", k ? "," : "", settings.outfit_color[k]);
     }
+    fprintf(f, "\n# 0 still, 1 shimmer, 2 pulse, 3 rainbow, 4 flame\noutfit_anims=");
+    for (int k = 0; k < OUTFIT_PARTS; k++) fprintf(f, "%s%d", k ? "," : "", settings.outfit_anim[k]);
     fprintf(f, "\n");
 }
 
-static void tables_for(bool on, const int *colors, uint16_t pick[64], uint8_t ref[64]) {
-    for (int i = 0; i < 64; i++) { pick[i] = OUTFIT_KEEP; ref[i] = 21; }
+static void tables_for(bool on, const int *colors, const int *anims, uint16_t pick[OUTFIT_BANDS][64],
+                       uint8_t anim[OUTFIT_BANDS][64], uint8_t ref[64]) {
+    for (int i = 0; i < 64; i++) {
+        ref[i] = 21;
+        for (int b = 0; b < OUTFIT_BANDS; b++) { pick[b][i] = OUTFIT_KEEP; anim[b][i] = 0; }
+    }
     if (!on) return;
     for (int k = 0; k < OUTFIT_PARTS; k++) {
         if (colors[k] < 0) continue;
         for (int j = 0; j < parts[k].n; j++) {
-            pick[parts[k].idx[j]] = (uint16_t)colors[k];
-            ref[parts[k].idx[j]] = (uint8_t)lum_of(parts[k].top);
+            int i = parts[k].idx[j];
+            for (int b = 0; b < OUTFIT_BANDS; b++)
+                if (parts[k].bands & 1 << b) { pick[b][i] = (uint16_t)colors[k]; anim[b][i] = (uint8_t)anims[k]; }
+            ref[i] = (uint8_t)lum_of(parts[k].top);
         }
     }
 }
 
 void outfit_apply(void) {
-    tables_for(settings.outfit, settings.outfit_color, vdp_outfit_pick, vdp_outfit_ref);
+    tables_for(settings.outfit, settings.outfit_color, settings.outfit_anim, vdp_outfit_pick, vdp_outfit_anim, vdp_outfit_ref);
     bool any = false;
     for (int k = 0; k < OUTFIT_PARTS; k++) any |= settings.outfit_color[k] >= 0;
     vdp_opts.outfit = settings.outfit && any;
@@ -128,17 +165,18 @@ bool outfit_preview_load(const char *dir) {
 
 /* ---- The page ---------------------------------------------------------------------- */
 #define PANEL_X 160
-#define PANEL_Y 46
+#define PANEL_Y 30
 #define PANEL_W 960
-#define PANEL_H 628
+#define PANEL_H 660
 #define BOX_X   (PANEL_X + 36)
 #define BOX_Y   (PANEL_Y + 96)
 #define BOX_W   350
 #define BOX_H   412
 #define LIST_X  (PANEL_X + 430)
 #define LIST_R  (PANEL_X + PANEL_W - 44)
-#define LIST_Y  (PANEL_Y + 104)
-#define ROW_H   56
+#define LIST_Y  (PANEL_Y + 92)
+#define ROW_H   44
+#define SWATCH_X (LIST_X + 160)
 #define BTN_Y   (PANEL_Y + PANEL_H - 104)
 #define BTN_H   50
 
@@ -148,7 +186,7 @@ void (*outfit_sound)(int kind);
 static bool open_, mixing;
 static int selected, channel;           /* channel being mixed: 0 red, 1 green, 2 blue */
 static bool draft_on;
-static int draft[OUTFIT_PARTS];
+static int draft[OUTFIT_PARTS], draft_anim[OUTFIT_PARTS];
 static double now;
 static const uint8_t *src_img;
 static const uint16_t *src_cram;
@@ -162,6 +200,7 @@ void outfit_open(void) {
     selected = ROW_PART0;
     draft_on = settings.outfit;
     memcpy(draft, settings.outfit_color, sizeof draft);
+    memcpy(draft_anim, settings.outfit_anim, sizeof draft_anim);
     /* The game's latest picture of him, or the one it saved for the launcher. */
     if (vdp_player_w) { src_img = vdp_player; src_cram = vdp_player_cram; src_w = vdp_player_w; src_h = vdp_player_h; }
     else { src_img = cache_img; src_cram = cache_cram; src_w = cache_w; src_h = cache_h; }
@@ -197,6 +236,14 @@ static void cycle_part(int part, int dir) {
     if (draft[part] >= 0) draft_on = true;
 }
 
+/* Steps a part's animation; a part in his own colours takes its usual colour to animate. */
+static void cycle_anim(int part, int dir) {
+    draft_anim[part] = settings_cycle(draft_anim[part], OUTFIT_ANIMS, dir);
+    if (draft_anim[part] && draft[part] < 0) draft[part] = parts[part].top;
+    draft_on = true;
+    sound(1);
+}
+
 static void mix_part(int part, int dir) {
     int c = draft[part] < 0 ? parts[part].top : draft[part];
     int ch[3] = { (c >> 1) & 7, (c >> 5) & 7, (c >> 9) & 7 };
@@ -209,7 +256,7 @@ static bool activate(void) {
     if (selected == ROW_ON) { draft_on = !draft_on; sound(1); return false; }
     if (selected < ITEM_APPLY) { mixing = !mixing; channel = 0; sound(1); return false; }
     if (selected == ITEM_RESET) {
-        for (int k = 0; k < OUTFIT_PARTS; k++) draft[k] = -1;
+        for (int k = 0; k < OUTFIT_PARTS; k++) { draft[k] = -1; draft_anim[k] = 0; }
         draft_on = false;
         sound(1);
         return false;
@@ -219,6 +266,7 @@ static bool activate(void) {
     if (selected == ITEM_CANCEL) { sound(2); return false; }
     settings.outfit = draft_on;
     memcpy(settings.outfit_color, draft, sizeof draft);
+    memcpy(settings.outfit_anim, draft_anim, sizeof draft_anim);
     outfit_apply();
     sound(1);
     return true;
@@ -258,7 +306,10 @@ bool outfit_event(const SDL_Event *e, float mx, float my) {
         case SDLK_DOWN: case SDLK_TAB: move(1); break;
         case SDLK_LEFT: change(-1); break;
         case SDLK_RIGHT: change(1); break;
-        case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: return activate();
+        case SDLK_SPACE:
+            if (selected >= ROW_PART0 && selected < ITEM_APPLY && !mixing) { cycle_anim(selected - ROW_PART0, 1); break; }
+            return activate();
+        case SDLK_RETURN: case SDLK_KP_ENTER: return activate();
         }
         break;
     case SDL_CONTROLLERBUTTONDOWN:
@@ -271,6 +322,9 @@ bool outfit_event(const SDL_Event *e, float mx, float my) {
         case SDL_CONTROLLER_BUTTON_DPAD_DOWN: move(1); break;
         case SDL_CONTROLLER_BUTTON_DPAD_LEFT: change(-1); break;
         case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: change(1); break;
+        case SDL_CONTROLLER_BUTTON_X: case SDL_CONTROLLER_BUTTON_Y:
+            if (selected >= ROW_PART0 && selected < ITEM_APPLY && !mixing) cycle_anim(selected - ROW_PART0, 1);
+            break;
         case SDL_CONTROLLER_BUTTON_A: return activate();
         }
         break;
@@ -287,7 +341,8 @@ bool outfit_event(const SDL_Event *e, float mx, float my) {
         } else if (h >= 0) {
             if (h != selected) mixing = false;
             selected = h;
-            if (h >= ROW_PART0 && h < ITEM_APPLY && !mixing) change(1);
+            if (h >= ROW_PART0 && h < ITEM_APPLY && !mixing && mx >= SWATCH_X + 30 && mx < SWATCH_X + 150) cycle_anim(h - ROW_PART0, 1);
+            else if (h >= ROW_PART0 && h < ITEM_APPLY && !mixing) change(1);
             else return activate();
         }
         break;
@@ -300,19 +355,22 @@ bool outfit_event(const SDL_Event *e, float mx, float my) {
 static Rgb color_rgb(uint16_t c) { return unpack(vdp_color_rgb(c)); }
 
 /* Ali at `scale` with the given outfit, his feet centred at (cx, bottom). */
-static void draw_ali(float cx, float bottom, float scale, bool on, const int *colors, float alpha) {
+static void draw_ali(float cx, float bottom, float scale, bool on, const int *colors, const int *anims, float alpha) {
     if (!src_w) return;
-    uint16_t pick[64];
-    uint8_t ref[64];
-    tables_for(on, colors, pick, ref);
+    uint16_t pick[OUTFIT_BANDS][64];
+    uint8_t anim[OUTFIT_BANDS][64], ref[64];
+    tables_for(on, colors, anims, pick, anim, ref);
+    unsigned frame = (unsigned)(now * 60);
     float x0 = cx - src_w * scale / 2, y0 = bottom - src_h * scale;
-    for (int y = 0; y < src_h; y++)
+    for (int y = 0; y < src_h; y++) {
+        int above = src_h - 1 - y, band = outfit_band(above);
         for (int x = 0; x < src_w; x++) {
             int v = src_img[y * PLAYER_IMG + x];
             if (!v) continue;
-            uint16_t c = pick[v] != OUTFIT_KEEP ? vdp_outfit_shade(pick[v], src_cram[v], ref[v]) : src_cram[v];
+            uint16_t c = pick[band][v] != OUTFIT_KEEP ? vdp_outfit_color(pick[band][v], anim[band][v], src_cram[v], ref[v], above, frame) : src_cram[v];
             ui_fill_rect(x0 + x * scale, y0 + y * scale, scale, scale, color_rgb(c), alpha);
         }
+    }
 }
 
 static void draw_preview(void) {
@@ -333,11 +391,11 @@ static void draw_preview(void) {
     }
     float scale = floorf(fminf((BOX_W - 60) / (float)src_w, (BOX_H - 100) / (float)src_h));
     scale = clampf(scale, 2, 7);
-    draw_ali(cx, floor_y, scale, draft_on, draft, 1);
+    draw_ali(cx, floor_y, scale, draft_on, draft, draft_anim, 1);
     /* Below the box, as he is now, for comparison. */
     float small = fminf(1.5f, 70.f / src_h);
     ui_draw_text("NOW", "Segoe UI Semibold", 11.5f, 600, 3.5f, BOX_X + 4, BOX_Y + BOX_H + 26, rgb_hex(0x8F8673), rgb_hex(0x8F8673), 1);
-    draw_ali(BOX_X + 70 + src_w * small / 2, BOX_Y + BOX_H + 12 + src_h * small, small, settings.outfit, settings.outfit_color, 1);
+    draw_ali(BOX_X + 70 + src_w * small / 2, BOX_Y + BOX_H + 12 + src_h * small, small, settings.outfit, settings.outfit_color, settings.outfit_anim, 1);
 }
 
 static void draw_bars(float x, float y, int color) {
@@ -345,7 +403,7 @@ static void draw_bars(float x, float y, int color) {
     static const char *const names[3] = { "R", "G", "B" };
     static const uint32_t tints[3] = { 0xF06A5A, 0x6AD07A, 0x6A9AF0 };
     for (int k = 0; k < 3; k++) {
-        float bx = x + k * 96;
+        float bx = x + k * 90;
         bool on = channel == k;
         Rgb lc = on ? rgb_hex(0xFFFFFF) : rgb_hex(0x8F8673);
         ui_draw_text(names[k], "Segoe UI Semibold", 14, 600, 0, bx, y - 9, lc, lc, 1);
@@ -382,11 +440,15 @@ void outfit_render(double time_s) {
             ui_draw_text(parts[k].name, "Segoe UI", 17.5f, 400, 0, LIST_X, ty, lc, lc, 1);
             int c = draft[k] < 0 ? parts[k].top : draft[k];
             /* The swatch: the colour as the game shows it. */
-            float sx = LIST_X + 150;
-            ui_panel(sx, y + ROW_H / 2.f - 13, 26, 26, 5, color_rgb((uint16_t)c), color_rgb((uint16_t)c), 1, rgb_hex(0xF3DDA4), focus ? .8f : .35f);
+            float sx = SWATCH_X;
+            ui_panel(sx, y + ROW_H / 2.f - 12, 24, 24, 5, color_rgb((uint16_t)c), color_rgb((uint16_t)c), 1, rgb_hex(0xF3DDA4), focus ? .8f : .35f);
             if (focus && mixing) {
                 draw_bars(sx + 46, y + ROW_H / 2.f, c);
             } else {
+                if (draft_anim[k]) {    /* its animation, by the swatch */
+                    Rgb tc = focus ? rgb_hex(0xF3C46A) : rgb_hex(0xB08A4A);
+                    ui_draw_text(anim_names[draft_anim[k]], "Segoe UI Semibold", 13, 600, 1, sx + 36, y + ROW_H / 2.f - 8, tc, tc, 1);
+                }
                 int at = draft[k] < 0 ? -2 : preset_of(draft[k]);
                 const char *v = at == -2 ? "Original" : at >= 0 ? presets[at].name : "Custom";
                 float vw = ui_text_width(v, "Segoe UI Semibold", 17.5f, 600, 0);
@@ -415,13 +477,13 @@ void outfit_render(double time_s) {
                         selected == ITEM_RESET ? "Back to his own colours (Apply to keep it)." : "Leave without changing anything.";
     ui_draw_text(about, "Segoe UI", 14, 400, 0, LIST_X, row_y(ITEM_APPLY) + 6, rgb_hex(0xB8AC92), rgb_hex(0xB8AC92), 1);
     if (selected >= ROW_PART0 && selected < ITEM_APPLY && !mixing)
-        ui_draw_text("\xE2\x86\x90\xE2\x86\x92 colours    Enter  mix your own", "Segoe UI", 13, 400, 1, LIST_X, row_y(ITEM_APPLY) + 30,
+        ui_draw_text("\xE2\x86\x90\xE2\x86\x92 colours    Space  animation    Enter  mix your own", "Segoe UI", 13, 400, 1, LIST_X, row_y(ITEM_APPLY) + 28,
                      rgb_hex(0x7C7262), rgb_hex(0x7C7262), 1);
 
     float lx = .5f * sinf((float)now * .45f), ly = .3f * cosf((float)now * .33f);
     static const char *const labels[3] = { "APPLY", "RESET", "CANCEL" };
     for (int b = ITEM_APPLY; b < ITEMS; b++)
         ui_button(btn_x(b), BTN_Y, btn_w(b), BTN_H, labels[b - ITEM_APPLY], 17, b == ITEM_APPLY, selected == b, true, lx, ly, (float)now);
-    ui_draw_text("\xE2\x86\x91\xE2\x86\x93 select    \xE2\x86\x90\xE2\x86\x92 change    Enter  mix / choose    Esc  back", "Segoe UI", 12, 400, 1,
+    ui_draw_text("\xE2\x86\x91\xE2\x86\x93 select    \xE2\x86\x90\xE2\x86\x92 change    Space  animate    Enter  mix / choose    Esc  back", "Segoe UI", 12, 400, 1,
                  LIST_X, PANEL_Y + PANEL_H - 36, rgb_hex(0x6C7385), rgb_hex(0x6C7385), 1);
 }

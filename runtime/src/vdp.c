@@ -290,9 +290,13 @@ static uint32_t rgb(uint16_t c, int mode);
  * Sprite pixels set bit 7 of their byte when they are the player's and their colour
  * index has an outfit colour; sprite_px() then takes vdp_outfit's colour instead of CRAM's. */
 #define OUTFIT 0x80
-uint16_t vdp_outfit_pick[64];
+uint16_t vdp_outfit_pick[OUTFIT_BANDS][64];
+uint8_t  vdp_outfit_anim[OUTFIT_BANDS][64];
 uint8_t  vdp_outfit_ref[64];
-static uint16_t vdp_outfit[64];         /* this frame's colour for each index */
+static uint16_t vdp_outfit[64];         /* this line's colour for each index */
+static uint8_t outfit_used[64];         /* the indices that have a pick in some band */
+static int outfit_nused, player_bottom, outfit_line = -1;
+static unsigned outfit_frame;
 uint8_t  vdp_player[PLAYER_IMG * PLAYER_IMG];
 uint16_t vdp_player_cram[64];
 int      vdp_player_w, vdp_player_h, vdp_player_x, vdp_player_y;
@@ -311,7 +315,60 @@ uint16_t vdp_outfit_shade(uint16_t pick, uint16_t now, int ref) {
     return (uint16_t)(ch[2] << 9 | ch[1] << 5 | ch[0] << 1);
 }
 
+/* The animations change the pick, in the Genesis' 3-bit channels, before it is shaded. */
+uint16_t vdp_outfit_color(uint16_t pick, int anim, uint16_t now, int ref, int above_feet, unsigned frame) {
+    int ch[3] = { (pick >> 1) & 7, (pick >> 5) & 7, (pick >> 9) & 7 };
+    switch (anim) {
+    case OUTFIT_ANIM_SHIMMER: {         /* a bright band sweeping up him every two seconds */
+        int d = (int)(frame % 120) - 20 - above_feet;
+        d = d < 0 ? -d : d;
+        if (d < 6) for (int k = 0; k < 3; k++) ch[k] += (6 - d + 1) / 2;
+        break;
+    }
+    case OUTFIT_ANIM_PULSE: {           /* breathes between full and about half, every 1.6 s */
+        static const uint8_t wave[16] = { 8, 8, 7, 7, 6, 5, 5, 4, 4, 4, 5, 5, 6, 7, 7, 8 };
+        int f = wave[(frame / 6) % 16];
+        for (int k = 0; k < 3; k++) ch[k] = (ch[k] * f + 4) / 8;
+        break;
+    }
+    case OUTFIT_ANIM_RAINBOW: {         /* the hues run up him, at the pick's brightness */
+        static const uint8_t hues[12][3] = { { 7, 0, 0 }, { 7, 3, 0 }, { 7, 6, 0 }, { 5, 7, 0 }, { 1, 7, 0 }, { 0, 7, 3 },
+                                             { 0, 7, 7 }, { 0, 3, 7 }, { 1, 0, 7 }, { 4, 0, 7 }, { 7, 0, 6 }, { 7, 0, 3 } };
+        int m = ch[0] > ch[1] ? ch[0] : ch[1];
+        m = m > ch[2] ? m : ch[2];
+        if (m < 3) m = 3;
+        const uint8_t *h = hues[(frame / 5 + (unsigned)above_feet / 3) % 12];
+        for (int k = 0; k < 3; k++) ch[k] = (h[k] * m + 3) / 7;
+        break;
+    }
+    case OUTFIT_ANIM_FLAME: {           /* flickering fire: reds at his feet, yellows higher up, licking upwards */
+        static const uint8_t fire[5][3] = { { 5, 0, 0 }, { 7, 1, 0 }, { 7, 3, 0 }, { 7, 5, 1 }, { 7, 7, 3 } };
+        unsigned n = (unsigned)above_feet * 2654435761u ^ (frame / 4) * 40503u;
+        n ^= n >> 13;
+        int at = (int)((unsigned)(above_feet + frame / 2) % 7 + (n & 3)) / 2;
+        const uint8_t *h = fire[at > 4 ? 4 : at];
+        for (int k = 0; k < 3; k++) ch[k] = (ch[k] + h[k] * 3 + 2) / 4;
+        break;
+    }
+    }
+    for (int k = 0; k < 3; k++) ch[k] = ch[k] > 7 ? 7 : ch[k];
+    return vdp_outfit_shade((uint16_t)(ch[2] << 9 | ch[1] << 5 | ch[0] << 1), now, ref);
+}
+
 uint32_t vdp_color_rgb(uint16_t cram) { return rgb(cram, 1); }
+
+/* This line's outfit colours, from the band it is in on him. */
+static void outfit_for_line(int line) {
+    if (line == outfit_line) return;
+    outfit_line = line;
+    int above = player_bottom - 1 - line, band = outfit_band(above);
+    for (int u = 0; u < outfit_nused; u++) {
+        int k = outfit_used[u];
+        uint16_t pick = vdp_outfit_pick[band][k];
+        vdp_outfit[k] = pick == OUTFIT_KEEP ? OUTFIT_KEEP
+                        : vdp_outfit_color(pick, vdp_outfit_anim[band][k], vdp.cram[k], vdp_outfit_ref[k], above, outfit_frame);
+    }
+}
 
 /* At the first line: the last frame's picture of the player if he was on screen, his
  * entries and the box around them in this one, and this frame's outfit colours. */
@@ -324,9 +381,14 @@ static void player_frame_start(void) {
     }
     memset(player_now, 0, sizeof player_now);
     memcpy(player_cram, vdp.cram, sizeof player_cram);
-    if (vdp_opts.outfit)
-        for (int k = 0; k < 64; k++)
-            vdp_outfit[k] = vdp_outfit_pick[k] == OUTFIT_KEEP ? OUTFIT_KEEP : vdp_outfit_shade(vdp_outfit_pick[k], vdp.cram[k], vdp_outfit_ref[k]);
+    outfit_frame++;
+    outfit_line = -1;
+    outfit_nused = 0;
+    for (int k = 0; k < 64; k++) {
+        vdp_outfit[k] = OUTFIT_KEEP;
+        if (vdp_opts.outfit && (vdp_outfit_pick[0][k] != OUTFIT_KEEP || vdp_outfit_pick[1][k] != OUTFIT_KEEP || vdp_outfit_pick[2][k] != OUTFIT_KEEP))
+            outfit_used[outfit_nused++] = (uint8_t)k;
+    }
     bool h40 = vdp_screen_width() == 320;
     uint32_t sat = (vdp.reg[5] & (h40 ? 0x7E : 0x7F)) << 9;
     motion_player_entries(vdp.vram + sat, h40 ? 80 : 64, player_entry);
@@ -341,7 +403,7 @@ static void player_frame_start(void) {
         if (x + w > x1) x1 = x + w;
         if (y + h > y1) y1 = y + h;
     }
-    player_x0 = x0; player_y0 = y0;
+    player_x0 = x0; player_y0 = y0; player_bottom = y1;
     player_w = x1 > x0 ? (x1 - x0 > PLAYER_IMG ? PLAYER_IMG : x1 - x0) : 0;
     player_h = y1 > y0 ? (y1 - y0 > PLAYER_IMG ? PLAYER_IMG : y1 - y0) : 0;
 }
@@ -388,6 +450,7 @@ static void draw_sprites(uint8_t *out, int w, int extra, int line) {
                     hd_frame.sprite_count++;
                     cap->x = x; cap->y = y; cap->w = hcells * 8; cap->h = vcells * 8; cap->attr = attr;
                     cap->player = player_entry[link_now];
+                    cap->item = false;
                     memset(cap->px, 0, sizeof cap->px);
                 }
             }
@@ -404,7 +467,10 @@ static void draw_sprites(uint8_t *out, int w, int extra, int line) {
                     int px = x + sx - player_x0, py = line - player_y0;
                     if (px >= 0 && py >= 0 && px < player_w && py < player_h && !player_now[py * PLAYER_IMG + px])
                         player_now[py * PLAYER_IMG + px] = v & 0x3F;
-                    if (vdp_opts.outfit && vdp_outfit[v & 0x3F] != OUTFIT_KEEP) v |= OUTFIT;
+                    if (vdp_opts.outfit) {
+                        outfit_for_line(line);
+                        if (vdp_outfit[v & 0x3F] != OUTFIT_KEEP) v |= OUTFIT;
+                    }
                 }
                 uint32_t ref = vdp_opts.tile_refs ? texpack_ref(texpack_tile(tile, (attr >> 13) & 3), attr & 0x0800, attr & 0x1000, cx & 7, sy & 7) : 0;
                 if (cap) { cap->px[row * 32 + sx] = sprite_px(v); cap->ref[row * 32 + sx] = ref; }

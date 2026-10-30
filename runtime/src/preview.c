@@ -2,7 +2,7 @@
  * frame can be drawn again with any picture options: once without the focused option and
  * once with it (its current value, or a typical one when it is off). Options that change
  * detail (internal resolution, scaler, sharpening) are shown 1:1 around the middle of the
- * screen; options that change the whole scene (lighting, ambience) show the whole frame. */
+ * screen; options that change the whole scene (lighting) show the whole frame. */
 #include "preview.h"
 
 #include <stdio.h>
@@ -11,10 +11,11 @@
 
 #include "genesis.h"
 #include "hd.h"
+#include "lights.h"
 #include "settings.h"
 #include "ui.h"
 
-typedef struct { int scale, scaler, sharpen, lighting, weather; bool ambience, lights, shadows, cinematic, water, pack; } Look;
+typedef struct { int scale, scaler, sharpen, lighting; bool pack, water, dynlight; } Look;
 
 static struct { bool world; float cam_x, cam_y, focus_x, focus_y; } where;
 
@@ -59,8 +60,7 @@ bool preview_ready(void) { return hd_frame.h > 0 && hd_frame.w > 0; }
 
 /* ---- Which looks to compare ------------------------------------------------------------ */
 static Look look_now(void) {
-    return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, settings.weather, settings.ambience,
-                   settings.lights, settings.shadows, settings.cinematic, settings.water, hd_texpack };
+    return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, hd_texpack, settings.water, false };
 }
 
 /* The look without the option and with it, whether to show it 1:1, and the label of the
@@ -93,37 +93,19 @@ static bool looks_for(int option, Look *off, Look *on, bool *zoom, char *label, 
         on->lighting = settings.lighting ? settings.lighting : 2;
         settings.lighting = on->lighting;
         break;
-    case OPT_AMBIENCE:
-        off->ambience = false; on->ambience = true;
-        settings.ambience = true;
-        break;
-    case OPT_LIGHTS:
-        off->lights = false; on->lights = true;
-        settings.lights = true;
-        break;
-    case OPT_CINEMATIC:
-        off->cinematic = false; on->cinematic = true;
-        settings.cinematic = true;
-        break;
-    case OPT_SHADOWS:
-        off->shadows = false; on->shadows = true;
-        settings.shadows = true;
-        *zoom = true;
-        break;
     case OPT_WATER:
         off->water = false; on->water = true;
         settings.water = true;
+        break;
+    case OPT_DYNLIGHT:
+        off->dynlight = false; on->dynlight = true;
+        settings.dynlight = true;
         break;
     case OPT_TEXPACK:
         if (!hd_texpack) { settings = keep; return false; }     /* the frame has no tile references without a pack */
         off->pack = false; on->pack = true;
         if (on->scale < 2) on->scale = off->scale = 3;
         *zoom = true;
-        break;
-    case OPT_WEATHER:
-        off->weather = 0;
-        on->weather = settings.weather ? settings.weather : WEATHER_BREEZE;
-        settings.weather = on->weather;
         break;
     default:
         return false;
@@ -145,21 +127,23 @@ typedef struct { uint32_t *px; int w, h; } Picture;
 
 static void render_look(const Look *l, Picture *out) {
     int keep_scaler = hd_scaler;
-    bool keep_shadows = hd_shadows, keep_water = hd_water, keep_pack = hd_texpack;
+    bool keep_pack = hd_texpack, keep_water = hd_water;
     float keep_time = hd_time;
     hd_scaler = l->scaler;
-    hd_shadows = l->shadows;
-    hd_water = l->water;
     hd_texpack = l->pack;
+    hd_water = l->water;
     hd_time = 2.0f;
     hd_compose(l->scale);
     hd_scaler = keep_scaler;
-    hd_shadows = keep_shadows;
-    hd_water = keep_water;
     hd_texpack = keep_pack;
+    hd_water = keep_water;
     hd_time = keep_time;
     int scale = hd_w / (hd_frame.w > 0 ? hd_frame.w : 1);
-    HdPost post = { l->sharpen, l->lighting, l->ambience, l->lights, l->cinematic, l->weather, false, false, where.world, where.cam_x, where.cam_y, 2.0f, scale < 1 ? 1 : scale, hd_frame.extra };
+    if (l->dynlight) {                  /* a fire spirit's light up and to the right of Ali */
+        float x = where.focus_x >= 0 ? where.focus_x : hd_frame.w / 2.f, y = where.focus_y >= 0 ? where.focus_y : hd_frame.h / 2.f;
+        lights_preview(&hd_frame, x + 30, y - 14);
+    }
+    HdPost post = { l->sharpen, l->lighting, false, false, false, l->dynlight, where.world, where.cam_x, where.cam_y, 2.0f, scale < 1 ? 1 : scale, hd_frame.extra };
     const uint32_t *img = hd_post(hd_px, hd_w, hd_h, hd_w, &post);
     free(out->px);
     out->px = malloc((size_t)hd_w * hd_h * 4);

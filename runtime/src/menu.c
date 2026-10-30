@@ -34,16 +34,14 @@ static const Item tab_items[TABS][MAX_ROWS] = {
       { ITEM_OPTION, "Scaler", OPT_SCALER }, { ITEM_OPTION, "Filter", OPT_FILTER },
       { ITEM_OPTION, "Sharpening", OPT_SHARPEN }, { ITEM_OPTION, "Smooth motion", OPT_SMOOTH },
       { ITEM_OPTION, "Sprite flicker fix", OPT_FLICKER }, { ITEM_OPTION, "Slowdown fix", OPT_OVERCLOCK } },
-    { { ITEM_OPTION, "Lighting", OPT_LIGHTING }, { ITEM_OPTION, "Light sources", OPT_LIGHTS },
-      { ITEM_OPTION, "Shadows", OPT_SHADOWS }, { ITEM_OPTION, "Cinematic", OPT_CINEMATIC },
-      { ITEM_OPTION, "Ambience", OPT_AMBIENCE }, { ITEM_OPTION, "Water", OPT_WATER },
-      { ITEM_OPTION, "Weather", OPT_WEATHER }, { ITEM_OPTION, "Spirit effects", OPT_ELEMENTS },
-      { ITEM_OPTION, "Footsteps", OPT_FOOTSTEPS } },
+    { { ITEM_OPTION, "Lighting", OPT_LIGHTING }, { ITEM_OPTION, "Spirit effects", OPT_ELEMENTS },
+      { ITEM_OPTION, "Item animations", OPT_ITEMS }, { ITEM_OPTION, "Water", OPT_WATER },
+      { ITEM_OPTION, "Footsteps", OPT_FOOTSTEPS }, { ITEM_OPTION, "Dynamic lights", OPT_DYNLIGHT } },
     { { ITEM_OPTION, "Volume", OPT_VOLUME }, { ITEM_OPTION, "Audio", OPT_AUDIO },
       { ITEM_ACTION, "Controls", ACT_CONTROLS }, { ITEM_ACTION, "Ali's outfit", ACT_OUTFIT },
       { ITEM_OPTION, "Texture pack", OPT_TEXPACK }, { ITEM_OPTION, "Dump tiles", OPT_DUMP } },
 };
-static const int tab_count[TABS] = { 7, 10, 9, 6 };
+static const int tab_count[TABS] = { 7, 10, 6, 6 };
 
 /* What each option and action does, for the card on the right. */
 static const char *about(const Item *it) {
@@ -53,7 +51,7 @@ static const char *about(const Item *it) {
         case ACT_RESET: return "Starts the game over from the beginning. Unsaved progress is lost.";
         case ACT_QUIT: return "Closes the game. Unsaved progress is lost; the game's own saves stay.";
         case ACT_CONTROLS: return "The keyboard key and controller button for every action.";
-        case ACT_OUTFIT: return "Pick the colours of Ali's clothes, with a preview before you apply them.";
+        case ACT_OUTFIT: return "Pick colours for Ali's clothes, hair, skin and jewellery, and animate them if you like (shimmer, pulse, rainbow, flame), with a preview before you apply them.";
         }
     if (it->kind == ITEM_SLOT) return NULL;
     switch (it->id) {
@@ -68,16 +66,13 @@ static const char *about(const Item *it) {
     case OPT_FLICKER: return "Lifts the hardware's limit of sprites on one line, so crowded scenes no longer flicker.";
     case OPT_OVERCLOCK: return "Gives the console's processor more time each frame, so busy scenes no longer slow down. Music and speed stay the same.";
     case OPT_LIGHTING: return "Fire, magic, gems and bright metal glow softly into their surroundings. Daylight scenes are left as they are.";
-    case OPT_AMBIENCE: return "A soft vignette at the edges, and dust drifting in the air of the world that stays in place as the camera moves.";
-    case OPT_LIGHTS: return "Fire, magic and glowing things cast coloured light on the ground and walls around them. In dark places the rest dims a little so they stand out.";
-    case OPT_SHADOWS: return "Characters cast a soft shadow on the ground and walls behind them, as if lit from the top left. The HUD casts none.";
     case OPT_TEXPACK: return "High-resolution replacements for the game's tiles, from a folder in texture_packs next to the game. None is the original art.";
     case OPT_DUMP: return "Writes every tile shown on screen once to texture_packs/dump, named by its key: the starting point for making a pack.";
     case OPT_FOOTSTEPS: return "Ali kicks up what is under his feet as he walks: puffs of dust on sand and stone, bits of grass, splashes and rings in water.";
-    case OPT_WATER: return "The sea, rivers and pools shimmer with slow swells, sparkle in the light and reflect the people and things above them.";
-    case OPT_WEATHER: return "Weather in the world: a breeze with pollen and shafts of light, a sandstorm, rain with splashes, or drifting mist. Menus and story scenes stay clear.";
-    case OPT_ELEMENTS: return "The spirits, magic and fire give off particles: embers from fire, drops from water, wisps from shadow, leaves from plants. Ali and the HUD give none.";
-    case OPT_CINEMATIC: return "A film look: a gentle tone curve, cooler shadows and warmer highlights, fine grain and a hint of lens colour at the edges.";
+    case OPT_ELEMENTS: return "The spirits and their magic give off particles by element: embers from fire, drops from water, wisps from shadow, leaves from plants. Ali, the people of Oasis, enemies, items and the HUD give none.";
+    case OPT_WATER: return "The sea, rivers and pools roll with slow swells, foam where they meet the shore and anyone standing in them, glint along the crests and reflect the people and things above them.";
+    case OPT_DYNLIGHT: return "The spirits, their magic and, in caves and at night, torches and fires light up their surroundings in their own colours, and Ali, the people and creatures cast soft shadows away from them. Dark scenes dim a little so the lights stand out; daylight stays as it is.";
+    case OPT_ITEMS: return "Dropped items float gently above the ground on a soft glow, with a glint now and then, so they are easy to spot. The game itself is unchanged.";
     case OPT_CHEATS: return "Infinite health, spirit power, and weapons that never break.";
     case OPT_REWIND: return "Hold the rewind key to step back in time.";
     case OPT_VOLUME: return "The game's volume.";

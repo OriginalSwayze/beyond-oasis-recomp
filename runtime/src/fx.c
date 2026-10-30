@@ -1,16 +1,14 @@
-/* Weather and elemental particles.
+/* Elemental particles, footsteps and dropped items.
  *
- * Elements: each game frame the sprites are looked at pixel by pixel. Those of the player
- * character and the high-priority ones (the HUD) are left alone; in the others, bright
- * and vivid pixels of four colours give off particles: fire colours embers that rise and
- * fade, light blue and cyan drops that splash up and fall, violet wisps that drift, bright
- * green leaves that flutter down. That is what the spirits (Efreet, Dytto, Shade, Bow), the
- * magic and the flames in the game are drawn with. Particles live in world coordinates
- * (screen plus the game's camera), so they stay where they were made as the camera moves.
+ * Elements: each game frame the sprites of the spirits and their magic are looked at pixel
+ * by pixel (not Ali's, the people's, the items' or the HUD's: motion.c tells which object
+ * drew each sprite); bright and vivid pixels of four colours give off particles: fire
+ * colours embers that rise and fade, light blue and cyan drops that splash up and fall,
+ * violet wisps that drift, bright green leaves that flutter down. Particles live in world
+ * coordinates (screen plus the game's camera), so they stay where they were made.
  *
- * Weather, only in the game world: Breeze (pollen and slow shafts of light), Sandstorm
- * (streaks of sand and a warm haze), Rain (falling streaks, splashes on the ground, a
- * cooler and darker light), Mist (soft banks of fog drifting through the world). */
+ * Items: dropped items float a little above the ground, bobbing (hd.c draws their sprites
+ * higher), on a soft breathing glow, with a glint crossing them now and then. */
 #include "fx.h"
 
 #include <math.h>
@@ -18,6 +16,7 @@
 
 #include "settings.h"
 #include "genesis.h"
+#include "motion.h"
 
 enum { EMBER, DROP, WISP, LEAF, DUST, GRASS, RING };
 
@@ -32,7 +31,6 @@ static bool have_cam;
 
 static inline uint32_t next(void) { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; }
 static inline float frand(void) { return (next() & 0xFFFFFF) / 16777216.f; }
-static inline uint32_t hash(uint32_t x) { x ^= x >> 16; x *= 0x7FEB352Du; x ^= x >> 15; x *= 0x846CA68Bu; x ^= x >> 16; return x; }
 
 void fx_clear(void) { nparts = 0; have_cam = false; }
 
@@ -97,7 +95,85 @@ static void footsteps(const HdFrame *f, float cam_x, float cam_y) {
     if (kind == RING) for (int k = 0; k < 3; k++) spawn(DROP, wx + (frand() - .5f) * 6, wy);
 }
 
-void fx_game_frame(const HdFrame *f, bool world, float cam_x, float cam_y) {
+/* ---- Objects: who drew each sprite ------------------------------------------------------- *
+ * motion.c knows the object behind every sprite. Items are told apart from people by how
+ * they are drawn: an object of the main list (the characters, from $FF19E8; not Ali) that
+ * draws a single sprite of at most 16x16, is not one of the people or creatures (types $0032,
+ * $003C: villagers, birds, the lizard) and has stayed in place for a third of a second. */
+#define MAIN_LIST 0xFF19E8
+#define MAIN_END  (0xFF19E8 + 21 * 0xBC)
+
+typedef struct { uint32_t obj; float wx, wy; int still; bool seen; } Track;
+static Track tracks[24];
+typedef struct { float x, y, phase; } Item;     /* world position: the middle of its bottom */
+static Item items[16];
+static int nitems;
+
+static Track *track_of(uint32_t obj) {
+    Track *free_slot = NULL;
+    for (int k = 0; k < 24; k++) {
+        if (tracks[k].obj == obj) return &tracks[k];
+        if (!tracks[k].obj && !free_slot) free_slot = &tracks[k];
+    }
+    if (!free_slot) return NULL;
+    *free_slot = (Track){ obj, 0, 0, -1, false };
+    return free_slot;
+}
+
+/* Marks the dropped items among the sprites and lists them for drawing. */
+static void find_items(HdFrame *f, float cam_x, float cam_y) {
+    uint32_t objs[80];
+    int pieces[80];
+    for (int k = 0; k < 24; k++) tracks[k].seen = false;
+    nitems = 0;
+    for (int i = 0; i < 80; i++) {
+        objs[i] = 0;
+        uint16_t kind;
+        if (f->sprites[i].drawn) motion_entry_owner(i, &objs[i], &kind);
+    }
+    for (int i = 0; i < 80; i++) {
+        pieces[i] = 0;
+        if (!objs[i]) continue;
+        for (int k = 0; k < 80; k++) pieces[i] += objs[k] == objs[i];
+    }
+    for (int i = 0; i < 80; i++) {
+        HdSprite *s = &f->sprites[i];
+        uint32_t obj = objs[i];
+        if (!obj || s->player || obj < MAIN_LIST || obj >= MAIN_END || obj == MAIN_LIST) continue;
+        if (pieces[i] != 1 || s->w > 16 || s->h > 16) continue;
+        uint16_t kind = (uint16_t)(bus.ram[obj & 0xFFFF] << 8 | bus.ram[(obj + 1) & 0xFFFF]);
+        if (kind == 0x0032 || kind == 0x003C) continue;  /* people and creatures (a bird on the path), not items */
+        Track *t = track_of(obj);
+        if (!t) continue;
+        float wx = s->x + f->extra + s->w / 2.f + cam_x, wy = s->y + s->h + cam_y;
+        t->still = t->still >= 0 && fabsf(wx - t->wx) < .5f && fabsf(wy - t->wy) < .5f ? t->still + 1 : 0;
+        t->wx = wx; t->wy = wy; t->seen = true;
+        if (t->still < 20) continue;            /* a third of a second in place */
+        s->item = true;
+        if (nitems < 16) items[nitems++] = (Item){ wx, wy, (float)(obj & 0xFFF) * .37f };
+    }
+    for (int k = 0; k < 24; k++) if (!tracks[k].seen) tracks[k].obj = 0;   /* gone */
+}
+
+/* The sprites that may give off elemental particles: the spirits and their magic, not Ali,
+ * the people, items or the HUD. */
+bool fx_light_sprite(const HdFrame *f, int i) {
+    const HdSprite *s = &f->sprites[i];
+    if (!s->drawn || s->player || s->item || (s->attr & 0x8000)) return false;
+    uint32_t obj;
+    uint16_t kind;
+    if (!motion_entry_owner(i, &obj, &kind)) return false;
+    if (obj >= MAIN_LIST && obj < MAIN_END) {
+        if (kind == 0x0032 || kind == 0x003C) return false;     /* villagers and creatures */
+        /* Small, still things in the main list are items or props even before they count as items. */
+        Track *t = NULL;
+        for (int k = 0; k < 24; k++) if (tracks[k].obj == obj) t = &tracks[k];
+        if (t && t->still >= 4 && s->w <= 16 && s->h <= 16) return false;
+    }
+    return true;
+}
+
+void fx_game_frame(HdFrame *f, bool world, float cam_x, float cam_y) {
     /* A jump of the camera is a new scene: the old particles do not belong in it. */
     if (have_cam && (fabsf(cam_x - last_cam_x) > 64 || fabsf(cam_y - last_cam_y) > 64)) nparts = 0;
     last_cam_x = cam_x; last_cam_y = cam_y; have_cam = true;
@@ -120,10 +196,12 @@ void fx_game_frame(const HdFrame *f, bool world, float cam_x, float cam_y) {
     }
     nparts = n;
     if (settings.footsteps && world) footsteps(f, cam_x, cam_y);
+    if ((settings.items || settings.elements || settings.dynlight) && world) find_items(f, cam_x, cam_y);
+    else nitems = 0;
     if (!settings.elements || !world) return;
     for (int i = 0; i < 80; i++) {
         const HdSprite *s = &f->sprites[i];
-        if (!s->drawn || s->player || (s->attr & 0x8000)) continue;
+        if (!fx_light_sprite(f, i)) continue;
         /* Count each kind's pixels, keeping one at random of each to spawn from. */
         int count[4] = { 0, 0, 0, 0 }, px[4] = { 0 }, py[4] = { 0 };
         for (int y = 0; y < s->h; y++)
@@ -171,125 +249,6 @@ static void dot(uint32_t *px, int w, int h, float cx, float cy, float r, int cr,
         }
 }
 
-/* A short soft line, drawn as dots along it. */
-static void streak(uint32_t *px, int w, int h, float x0, float y0, float x1, float y1, float r, int cr, int cg, int cb, float alpha) {
-    float len = sqrtf((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
-    int n = (int)(len / (r > 1 ? r : 1)) + 1;
-    for (int i = 0; i <= n; i++) {
-        float t = (float)i / n;
-        dot(px, w, h, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, r, cr, cg, cb, alpha * (.4f + .6f * t), false);
-    }
-}
-
-/* Value noise that tiles every 256 world pixels, for mist. */
-static float noise2(float x, float y) {
-    int ix = (int)floorf(x), iy = (int)floorf(y);
-    float fx = x - ix, fy = y - iy;
-    fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
-    float a = (hash((uint32_t)(ix & 15) * 97u + (uint32_t)(iy & 15) * 7919u) & 255) / 255.f;
-    float b = (hash((uint32_t)((ix + 1) & 15) * 97u + (uint32_t)(iy & 15) * 7919u) & 255) / 255.f;
-    float c = (hash((uint32_t)(ix & 15) * 97u + (uint32_t)((iy + 1) & 15) * 7919u) & 255) / 255.f;
-    float d = (hash((uint32_t)((ix + 1) & 15) * 97u + (uint32_t)((iy + 1) & 15) * 7919u) & 255) / 255.f;
-    return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
-}
-
-static void tint(uint32_t *px, int w, int h, int r, int g, int b, int a, int dark) {   /* toward a colour, and darker */
-    for (size_t i = 0; i < (size_t)w * h; i++) {
-        uint32_t d = px[i];
-        int dr = (int)((d >> 16) & 255), dg = (int)((d >> 8) & 255), db = (int)(d & 255);
-        dr += (r - dr) * a >> 8; dg += (g - dg) * a >> 8; db += (b - db) * a >> 8;
-        dr = dr * (256 - dark) >> 8; dg = dg * (256 - dark) >> 8; db = db * (256 - dark) >> 8;
-        px[i] = (uint32_t)(dr << 16 | dg << 8 | db);
-    }
-}
-
-static void draw_weather(uint32_t *px, int w, int h, const HdPost *p) {
-    float s = (float)p->scale, t = p->t;
-    float gw = w / s, gh = h / s;             /* the picture in game pixels */
-    switch (p->weather) {
-    case WEATHER_BREEZE: {
-        /* Shafts of light leaning from the top left, drifting slowly. */
-        /* Worked out once per game pixel: the shafts change slowly across the picture. */
-        int S = p->scale;
-        for (int gy = 0; gy * S < h; gy++)
-            for (int gx = 0; gx * S < w; gx++) {
-                float u = (gx + p->cam_x * .3f + gy * .55f) * .02f + t * .03f;
-                float band = sinf(u) * sinf(u * .37f + 1.3f);
-                if (band <= .55f) continue;
-                int a = (int)((band - .55f) * 70);
-                for (int y = gy * S; y < gy * S + S && y < h; y++)
-                    for (int x = gx * S; x < gx * S + S && x < w; x++) glow(&px[(size_t)y * w + x], 255, 236, 190, a);
-            }
-        for (int i = 0; i < 90; i++) {
-            uint32_t hh = hash((uint32_t)i * 2654435761u);
-            float wx = (hh & 511) + t * (9 + (hh >> 9 & 7)) + 8 * sinf(t * .8f + i), wy = ((hh >> 12) & 511) + 6 * sinf(t * .6f + i);
-            float sx = fmodf(wx - p->cam_x, 512), sy = fmodf(wy - p->cam_y, 512);
-            if (sx < 0) sx += 512;
-            if (sy < 0) sy += 512;
-            for (float ox = sx - 64; ox < gw; ox += 512)
-                for (float oy = sy - 64; oy < gh; oy += 512)
-                    dot(px, w, h, ox * s, oy * s, s * 1.1f, 240, 240, 170, .55f, false);
-        }
-        break;
-    }
-    case WEATHER_SAND: {
-        tint(px, w, h, 226, 190, 130, 34, 0);
-        for (int i = 0; i < 260; i++) {
-            uint32_t hh = hash((uint32_t)i * 2246822519u);
-            float speed = 110 + (hh & 63);
-            float wx = fmodf((hh & 1023) + t * speed - p->cam_x, 640), wy = fmodf(((hh >> 10) & 1023) + t * 8 - p->cam_y, 400);
-            if (wx < 0) wx += 640;
-            if (wy < 0) wy += 400;
-            for (float ox = wx - 80; ox < gw; ox += 640)
-                for (float oy = wy - 40; oy < gh; oy += 400)
-                    streak(px, w, h, ox * s, oy * s, (ox + 7) * s, (oy + 1.2f) * s, s * .55f, 236, 206, 150, .45f);
-        }
-        break;
-    }
-    case WEATHER_RAIN: {
-        tint(px, w, h, 120, 140, 170, 30, 26);
-        for (int i = 0; i < 240; i++) {
-            uint32_t hh = hash((uint32_t)i * 3266489917u);
-            float speed = 260 + (hh & 127);
-            float sx = fmodf((hh & 1023) - t * speed * .25f - p->cam_x * .5f, 600), sy = fmodf(((hh >> 10) & 1023) + t * speed - p->cam_y * .5f, 400);
-            if (sx < 0) sx += 600;
-            if (sy < 0) sy += 400;
-            for (float ox = sx - 60; ox < gw + 20; ox += 600)
-                for (float oy = sy - 40; oy < gh; oy += 400)
-                    streak(px, w, h, ox * s, oy * s, (ox - 2.5f) * s, (oy + 10) * s, s * .4f, 200, 210, 235, .5f);
-        }
-        /* Splashes on the ground: small rings at places fixed in the world. */
-        for (int i = 0; i < 40; i++) {
-            uint32_t hh = hash((uint32_t)i * 668265263u + (uint32_t)(t * 6));
-            float wx = (float)(hh & 511), wy = (float)((hh >> 9) & 511);
-            float sx = fmodf(wx - p->cam_x, 512), sy = fmodf(wy - p->cam_y, 512);
-            if (sx < 0) sx += 512;
-            if (sy < 0) sy += 512;
-            float age = fmodf(t * 6, 1);
-            for (float ox = sx - 32; ox < gw; ox += 512)
-                for (float oy = sy - 32; oy < gh; oy += 512)
-                    dot(px, w, h, ox * s, oy * s, s * (1 + age * 2), 220, 230, 245, .35f * (1 - age), false);
-        }
-        break;
-    }
-    case WEATHER_MIST: {
-        int S = p->scale;
-        for (int gy = 0; gy * S < h; gy++) {
-            float wy = (gy + p->cam_y) / 48;
-            for (int gx = 0; gx * S < w; gx++) {
-                float wx = (gx + p->cam_x) / 64 + t * .04f;
-                float n = noise2(wx, wy + t * .01f) * .6f + noise2(wx * 2.1f + 7, wy * 2.1f) * .4f;
-                if (n <= .45f) continue;
-                int a = (int)((n - .45f) * 150);
-                for (int y = gy * S; y < gy * S + S && y < h; y++)
-                    for (int x = gx * S; x < gx * S + S && x < w; x++) blend(&px[(size_t)y * w + x], 226, 230, 236, a);
-            }
-        }
-        break;
-    }
-    }
-}
-
 static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
     float s = (float)p->scale;
     for (int i = 0; i < nparts; i++) {
@@ -314,8 +273,33 @@ static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
     }
 }
 
+/* Under each item a soft warm glow that breathes, and now and then a four-pointed glint
+ * crossing it. */
+static void draw_items(uint32_t *px, int w, int h, const HdPost *p) {
+    float s = (float)p->scale, t = p->t;
+    for (int k = 0; k < nitems; k++) {
+        const Item *it = &items[k];
+        float x = (it->x - p->cam_x) * s, y = (it->y - p->cam_y) * s;
+        float breathe = .5f + .5f * sinf(t * 2.6f + it->phase);
+        for (int ring = 0; ring < 3; ring++)
+            dot(px, w, h, x, y - s * .5f, s * (5 + ring * 3) * (.85f + .15f * breathe), 255, 214, 140, (.16f - ring * .04f) * (.6f + .4f * breathe), true);
+        /* A glint every few seconds, at its own moment for each item. */
+        float cycle = fmodf(t * .45f + it->phase, 1);
+        if (cycle < .14f) {
+            float a = sinf(cycle / .14f * 3.14159f);
+            float gx = x + s * 4, gy = y - s * 11;
+            for (int d = -6; d <= 6; d++) {
+                float fade = a * (1 - fabsf((float)d) / 7);
+                dot(px, w, h, gx + d * s * .55f, gy, s * .45f, 255, 250, 220, fade, true);
+                dot(px, w, h, gx, gy + d * s * .55f, s * .45f, 255, 250, 220, fade, true);
+            }
+            dot(px, w, h, gx, gy, s * 1.3f, 255, 255, 235, a * .9f, true);
+        }
+    }
+}
+
 void fx_draw(uint32_t *px, int w, int h, const HdPost *p) {
     if (!p->world) return;
-    if (p->weather) draw_weather(px, w, h, p);
+    if (p->items && nitems) draw_items(px, w, h, p);
     if (nparts) draw_particles(px, w, h, p);
 }

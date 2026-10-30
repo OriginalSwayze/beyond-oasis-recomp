@@ -66,13 +66,14 @@ Other headless options:
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
-* `--lighting N` (0-2), `--ambience 0|1`, `--lights 0|1`, `--shadows 0|1`, `--cinematic 0|1`, `--water 0|1`, `--weather N` (0-4), `--elements 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
-* `--outfit a,b,c,d`: Ali's outfit colours for this run (as `outfit_colors` in `settings.ini`)
+* `--lighting N` (0-2), `--elements 0|1`, `--items 0|1`, `--water 0|1`, `--dynlight 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
+* `--outfit a,b,...`, `--outfit-anims 0,1,...`: Ali's outfit colours and animations for this run (as `outfit_colors` and `outfit_anims` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
 * `--menu-tab TAB ROW`: with `--menu-shot`, open tab TAB (0 game, 1 display, 2 effects, 3 more) with row ROW selected (shows its preview card)
 * `--save-preview`: at the end, save the frame for the launcher's previews (`preview_frame.cache`)
 * `--png-check F.png`: read a PNG with the built-in reader and print its size and a checksum of its pixels
+* `--objects`: at the end, list every sprite on screen with the object that drew it (its list, slot, type and first words)
 * `--filter-shot F.png W H MODE`: draw the last frame at W x H with filter MODE on the GPU (hidden window) and save it
 * `--volume N`: volume 0-100 for this run
 * `--overclock PERCENT`: run the 68000 at this speed (also below 100, to simulate a heavy scene); headless runs print the spare time, game ticks and late ticks
@@ -147,7 +148,7 @@ saved; for a picture option, a live before/after on the paused frame (`runtime/s
 the renderer keeps every frame's layers, so the frame is drawn again without the option and
 with it (its value, or a typical one when it is off), joined by a dividing line that sweeps
 slowly across. Detail options (internal resolution, scaler, sharpening) show 1:1 pixels
-around the middle; scene-wide ones (lighting, ambience) show the whole frame. Every other
+around the middle; scene-wide ones (lighting) show the whole frame. Every other
 row explains what it changes. The launcher shows the same previews over its scene, on the
 frame the game saved last (`preview_frame.cache`, written when the menu opens and on quit).
 
@@ -265,7 +266,7 @@ At 100% the machine is unchanged (`--verify` and native/interpreter logs match).
 Moments that were CPU-bound, like area loading, also get shorter. Save states work at
 any speed, but replays are only identical at the speed they were recorded at.
 
-## Scaler, lighting and ambience
+## Scaler, lighting and effects
 
 "Scaler" (Edge, Smooth; `scaler=edge|smooth` in `settings.ini`) picks how the layers are
 scaled for the internal resolution. Edge is Scale2x / Scale3x. Smooth uses Hyllian's xBR
@@ -280,59 +281,59 @@ takes about 4 ms, like Edge.
 "Lighting" (Off, Soft, Bright; `lighting`) makes light glow: near-white and vivid, bright
 pixels (fire, magic, gems, the HUD's gold) are gathered into a picture an eighth the size,
 blurred at two sizes and laid over the picture with a screen blend. Sunlit ground is
-bright but neither, so daylight scenes do not wash out.
+bright but neither, so daylight scenes do not wash out. The glow is made once per game
+frame, not for every in-between picture.
 
-"Ambience" (`ambience`) adds a soft vignette, and in the game world dust motes drifting
-in the air; they are placed in the world (the camera position is read from the plane A
-layer struct at $FF1716), so they stay put as the camera moves. Menus and story scenes get
-the vignette only.
+"Spirit effects" (`elements`): after each game frame, the bright, vivid pixels of the
+sprites of the spirits and their magic give off particles by colour: fire colours embers
+that rise and fade, light blue drops that splash up and fall, violet wisps that drift,
+bright green leaves that flutter down. Which object drew each sprite comes from motion.c,
+so Ali, the people and creatures of Oasis (object types $0032 and $003C in the character
+list), dropped items and the HUD give none, whatever their colours. Particles are placed
+in the world from the game's camera; a camera jump (a new scene) or loading a state clears
+them (`runtime/src/fx.c`).
 
-"Light sources" (`lights`): vivid, bright pixels (fire, magic, glowing crystals) are
-gathered into a small light map, blurred wide, and the surfaces around them take their
-colour. A scene's average brightness decides the ambient: in a dark scene (a cave, a
-night) everything else dims to about 80% so the lights stand out; daylight stays as it is.
-
-"Shadows" (`shadows`): the low-priority sprites (characters and objects; the HUD is high
-priority) make a mask at the game's resolution, moved 2 pixels right and 3 down as if lit
-from the top left and blurred; plane pixels under it are darkened by up to 40%, sprites are
-not. It is drawn while the layers are put together, so it also works at native resolution.
-
-"Cinematic" (`cinematic`): an S-curve for a little more contrast in the midtones (black and
-white stay put), cooler shadows and warmer highlights by brightness, 18% more colour, fine
-film grain that changes every picture, and red and blue a pixel or two apart towards the
-edges, like a lens. It runs in integer arithmetic from lookup tables.
+"Item animations" (`items`): dropped items float a little above the ground, bobbing, on a
+soft warm glow that breathes, with a four-pointed glint crossing them every few seconds.
+An item is an object of the character list (not Ali, not one of the people or creatures)
+drawn as a single sprite of at most 16x16 that has stayed in place for a third of a second.
+Only the picture changes: the sprite is drawn higher where the layers are put together, so
+the game, its collisions and pick-ups are exactly as they were. With this on the sprites are
+always drawn one by one, as smooth motion draws them (it costs well under a millisecond).
 
 "Water" (`water`): water is found by colour at the game's resolution (the plane pixel on
 top clearly blue, in runs at least five pixels wide, so blue details on land are left
 out). Under no sprite, it rolls with soft horizontal swells, sparkles at points fixed in
-the world (from the plane's scroll), and reflects the sprites above it: mirrored at the
-water's edge, or at a character's feet when one stands in it, rippling, fading with the
-distance and tinted by the water. Like the shadows it is drawn while the layers are put
-together. The opening beach is the test scene.
-
-"Weather" (Off, Breeze, Sandstorm, Rain, Mist; `weather`), only in the game world:
-pollen and slow shafts of light; streaks of sand and a warm haze; falling streaks, splashes
-on the ground and a cooler, darker light; soft banks of fog drifting through the world.
-Everything is placed in world coordinates from the game's camera, so it stays put as the
-camera moves (`runtime/src/fx.c`).
-
-"Spirit effects" (`elements`): after each game frame, the bright, vivid pixels of the
-sprites that are neither the player character's nor the HUD's give off particles by colour:
-fire colours embers that rise and fade, light blue drops that splash up and fall, violet
-wisps that drift, bright green leaves that flutter down. That is how the spirits, the
-magic and the flames are drawn, so they come alive while Ali's own colours (his hair, his
-boots) and the HUD give none. A camera jump (a new scene) or loading a state clears them.
+the world (from the plane's scroll), glints that drift along the crests of the swells, and
+foams where it meets the shore or anything standing in it: a white edge whose width laps in
+and out at its own pace along the shore, breaking into froth at its rim (the distance to
+the nearest edge comes from a chamfer distance pass over the water). It reflects the
+sprites above it: mirrored at the water's edge, or at a character's feet, rippling, fading
+with the distance and tinted by the water. It is drawn while the layers are put together;
+the opening beach is the test scene, and a 4x frame takes about the same time with it.
 
 "Footsteps" (`footsteps`): while Ali walks (his sprites' box, from the renderer, moving in
 the world), every few frames the ground under his feet decides what he kicks up: water
 splashes (a widening ring and drops), grass gives bits of green that hop away, anything
 else a puff of dust in the ground's own colour.
 
+"Dynamic lights" (`dynamic_lights`): the spirits and their magic (the same sprites that give
+off elemental particles) become lights in the colour of their bright, vivid pixels, one per
+object, moving with it. In dark scenes, the background's fire colours (torches, braziers)
+become flickering lights too. They are not looked for in daylight, since the village's straw
+roofs are the same colours. The characters' sprites make an occluder map at half the game's
+resolution. From each light, 256 rays are marched outward across it, keeping how much light
+gets through; the rays are blurred into their neighbours for soft-edged shadows. The light
+map this builds once per game frame is laid over each picture with an ordered dither, so
+gentle gradients show no rings. A scene's mean brightness tells a cave or a night from
+daylight. Dark scenes keep about 70% of their own light, eased over a second; in daylight the
+lights show only a little, and the shadows they cast darken the ground slightly
+(`runtime/src/lights.c`). `--test-light X,Y,R,G,B,RADIUS` places a light by hand.
+
 These, and sharpening, run on the picture before it goes to the GPU (`hd_post`), so the
 display filters still apply on top. None of them change the game. The rows are split into
 small bands that the threads take as they come free (on CPUs with fast and slow cores,
-equal shares wait for the slow ones), and the light maps are made once per game frame, not
-for every in-between picture: with all of them on, a 4x picture takes about 4 ms more.
+equal shares wait for the slow ones).
 
 ## Audio
 
@@ -369,7 +370,7 @@ folder in `texture_packs/` next to the executable (`runtime/src/texpack.c`):
   sprite with its scaled copy, so they follow it in smooth motion), and while the layers
   are put together a replacement can make its layer's pixel transparent or opaque; when
   that layer is on top, the pixel takes the replacement's colour. Priorities, the window,
-  shadows, water and the other effects work as before.
+  lighting and the other effects work as before.
 * PNGs are read by a built-in decoder (inflate with fixed and dynamic Huffman codes, all
   five row filters; 8-bit grey, RGB, palette, grey with alpha and RGBA). Loading 23,000
   images takes under a second; a 3x frame takes about 1 ms longer to compose.
@@ -389,26 +390,36 @@ pixel in eight of a village frame at 3x changes.
 
 ## Ali's outfit
 
-"Ali's outfit" (in the pause menu and on the launcher's GAME tab) recolours the clothes
-of the player character (`runtime/src/outfit.c`):
+"Ali's outfit" (in the pause menu and on the launcher's GAME tab) recolours the player
+character's clothes, hair, skin and jewellery, and can animate them (`runtime/src/outfit.c`):
 
 * Every sprite in the game uses palette line 0, so changing a CRAM colour would recolour
   the townspeople with him. Instead the renderer recolours only the sprites his object
   drew: motion.c already records which object each sprite-table entry belongs to, and the
   VDP marks his pixels whose colour index has an outfit colour (bit 7 of the sprite byte,
   unused by the hardware) and takes that colour instead of CRAM's.
-* His clothes are ramps of colour indices, brightest first: trousers 15, 13; sash 2, 1;
-  boots and wrist bands 7, 6, 5; hair 4, 3 (the Gold Armlet on his arm shares the hair's
-  colours). One colour is picked per part; each index gets it scaled by how bright the
-  game makes that index right now, so folds and shading stay and the game's fades still
-  darken him.
+* Each part is a ramp of colour indices, brightest first: trousers 15, 13; sash 2, 1 (his
+  sword's grip shares it); boots and headband 7, 6, 5; hair and the Gold Armlet with the
+  gold bands on his wrists and ankles 4, 3; skin 10, 9, 8; the jewel in his sword's guard
+  12. Parts that share colours are told apart by height, counted up from his feet (the
+  bottom of his sprites' box, which his sword does not move): the top 15 of his 48 rows
+  are his head (hair, headband), the rest his body and feet (armlet, boots). The VDP picks
+  each line's colours by its band. One colour is picked per part; each index gets it
+  scaled by how bright the game makes that index right now, so folds and shading stay and
+  the game's fades still darken him.
+* A part can also be animated, still in the Genesis's colours: Shimmer (a bright band
+  sweeping up him every two seconds), Pulse (breathing between full and half brightness),
+  Rainbow (hues running up him at the colour's brightness) or Flame (flickering reds and
+  yellows licking upwards). Only the picture changes.
 * The page shows him large in the colours being picked, next to how he looks now, and
   changes nothing until Apply (Reset goes back to his own colours, Cancel leaves). Each
-  part steps through named colours with left and right; Enter mixes your own from red,
-  green and blue in the Genesis's eight steps each. The launcher shows the picture of
+  part steps through 32 named colours with left and right; Space (X or Y on a controller,
+  or a click by the swatch) steps its animation; Enter mixes your own from red, green and
+  blue in the Genesis's eight steps each. The launcher shows the picture of
   him the game saved last time (`player_preview.cache` next to the executable).
-* `outfit` and `outfit_colors` (four CRAM colours in hex, `-` for his own) in
-  `settings.ini` hold the choice.
+* `outfit`, `outfit_colors` (eight CRAM colours in hex, `-` for his own; the older list
+  of four still loads) and `outfit_anims` (0 still, 1 shimmer, 2 pulse, 3 rainbow, 4 flame)
+  in `settings.ini` hold the choice.
 
 ## Cheats
 

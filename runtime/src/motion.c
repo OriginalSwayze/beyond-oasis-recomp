@@ -152,6 +152,15 @@ void motion_player_entries(const uint8_t *sat, int count, bool out[80]) {
     }
 }
 
+bool motion_entry_owner(int i, uint32_t *object, uint16_t *kind) {
+    const Tick *t = NULL;
+    for (int r = 0; r < 4; r++) if (ring[r].serial && (!t || ring[r].serial > t->serial)) t = &ring[r];
+    if (!t || i < 0 || i >= t->count || t->anchor[i] < 0) return false;
+    *object = t->anchors[t->anchor[i]].object;
+    *kind = t->anchors[t->anchor[i]].kind;
+    return true;
+}
+
 unsigned motion_sprite_moves(const HdFrame *f, int dx[80], int dy[80], int *owned) {
     memset(dx, 0, 80 * sizeof *dx);
     memset(dy, 0, 80 * sizeof *dy);

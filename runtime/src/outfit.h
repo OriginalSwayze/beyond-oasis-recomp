@@ -9,9 +9,10 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#define OUTFIT_PARTS 4                  /* trousers, sash, boots and bands, hair */
+#define OUTFIT_PARTS 8                  /* trousers, sash, boots, hair, headband, armlet, skin, jewel */
 
-/* settings.ini: outfit=0/1 and outfit_colors=a,b,c,d (CRAM colours in hex, - = his own). */
+/* settings.ini: outfit=0/1, outfit_colors=a,b,... (CRAM colours in hex, - = his own; the
+ * older four-part list still loads) and outfit_anims=0,1,... (OUTFIT_ANIM_*). */
 void outfit_defaults(void);
 bool outfit_ini_load(const char *key, const char *value);
 void outfit_ini_save(FILE *f);

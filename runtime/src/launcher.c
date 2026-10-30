@@ -587,14 +587,11 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Scaler", OPT_SCALER, "Edge rounds corners; Smooth follows curves and slopes (xBR)." },
       { ROW_OPTION, "Texture pack", OPT_TEXPACK, "High-resolution tile replacements from a folder in texture_packs." } },
     { { ROW_OPTION, "Lighting", OPT_LIGHTING, "Fire, magic and bright light glow into their surroundings." },
-      { ROW_OPTION, "Light sources", OPT_LIGHTS, "Fire and magic light up the ground around them; dark places dim a little." },
-      { ROW_OPTION, "Shadows", OPT_SHADOWS, "Characters cast soft shadows, as if lit from the top left." },
-      { ROW_OPTION, "Cinematic", OPT_CINEMATIC, "A film tone curve and grade, fine grain and lens colour at the edges." },
-      { ROW_OPTION, "Ambience", OPT_AMBIENCE, "Dust drifting in the air of the world, and a soft vignette." },
-      { ROW_OPTION, "Water", OPT_WATER, "Water shimmers, sparkles and reflects what stands above it." },
-      { ROW_OPTION, "Weather", OPT_WEATHER, "A breeze, a sandstorm, rain or mist in the world (not in menus or story scenes)." },
-      { ROW_OPTION, "Spirit effects", OPT_ELEMENTS, "Spirits, magic and fire give off embers, drops, wisps or leaves." },
-      { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." } },
+      { ROW_OPTION, "Spirit effects", OPT_ELEMENTS, "The spirits and their magic give off embers, drops, wisps or leaves." },
+      { ROW_OPTION, "Item animations", OPT_ITEMS, "Dropped items float on a soft glow and glint, easy to spot." },
+      { ROW_OPTION, "Water", OPT_WATER, "Water swells, foams at the shore, glints and reflects what stands above it." },
+      { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." },
+      { ROW_OPTION, "Dynamic lights", OPT_DYNLIGHT, "Spirits, magic and torches light the scene; characters cast soft shadows." } },
     { { ROW_ROM, "ROM", 0, "Your Beyond Oasis (USA) cartridge file." },
       { ROW_OPTION, "Cheats", OPT_CHEATS, "Infinite health, spirit power and unbreakable weapons." },
       { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
@@ -602,13 +599,13 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Slowdown fix", OPT_OVERCLOCK, "A faster 68000, so busy scenes no longer slow down." },
       { ROW_OPTION, "Rewind", OPT_REWIND_ALL, "Hold the rewind key to step back in time." },
       { ROW_CONTROLS, "Controls", 0, "Keyboard keys and controller buttons for every action." },
-      { ROW_OUTFIT, "Ali's outfit", 0, "Pick the colours of his clothes, with a preview before you apply them." },
+      { ROW_OUTFIT, "Ali's outfit", 0, "Colours and animations for his clothes, hair, skin and jewellery." },
       { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER, "Off starts the game directly (show_launcher=1 in settings.ini brings it back)." } },
     { { ROW_OPTION, "Launcher music", OPT_MUSIC, NULL }, { ROW_TRACK, "Track", 0, NULL },
       { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL },
       { ROW_OPTION, "Audio", OPT_AUDIO, NULL } },
 };
-static const int tab_count[TABS] = { 9, 9, 9, 5 };
+static const int tab_count[TABS] = { 9, 6, 9, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define PANEL_X (TABLET_X + 40)
@@ -778,7 +775,7 @@ static void draw_row(int r, const Row *row, float dx, float alpha, const PlayerV
         break;
     case ROW_OUTFIT: {
         int changed = 0;
-        for (int k = 0; k < 4; k++) changed += settings.outfit_color[k] >= 0;
+        for (int k = 0; k < OUTFIT_PARTS; k++) changed += settings.outfit_color[k] >= 0;
         if (!settings.outfit || !changed) snprintf(value, sizeof value, "His own colours");
         else snprintf(value, sizeof value, "%d part%s recoloured", changed, changed == 1 ? "" : "s");
         hint = "Enter to change\xE2\x80\xA6";

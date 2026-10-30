@@ -26,6 +26,7 @@ typedef struct {
     int  x, y, w, h;                    /* screen position (x from the left of the 320 area) and size */
     uint16_t attr;
     bool player;                        /* drawn by the player character's object */
+    bool item;                          /* a dropped item (fx.c decides, after each game frame) */
     uint32_t px[32 * 32];               /* layer pixels, w x h, row pitch 32; 0 = transparent */
     uint32_t ref[32 * 32];              /* their tile references, with vdp_opts.tile_refs (texpack.h) */
 } HdSprite;
@@ -76,28 +77,27 @@ extern int hd_owned;                    /* sprites of the newest frame that belo
  * source pixels like Scale2x so layers, priorities and transparency stay exact). */
 extern int hd_scaler;
 
-/* Characters cast soft shadows onto the planes (drawn while compositing the layers). */
-extern bool hd_shadows;
+
 /* A texture pack is loaded: replaced tiles are drawn from their images (texpack.h). */
 extern bool hd_texpack;
-/* Water shimmers, sparkles and reflects the sprites above it (also while compositing). */
+extern float hd_time;                   /* seconds, for animations drawn with the layers */
+/* Water shimmers, foams, glints and reflects the sprites above it (while compositing). */
 extern bool hd_water;
-extern float hd_time;                   /* seconds, for the water's motion */
+/* Dropped items float: their sprites are drawn a little higher, bobbing (fx.c finds them). */
+extern bool hd_items;
 
-/* The finishing steps on the picture before it goes to the GPU (hd_post): lighting,
- * ambience, sharpening. */
+/* The finishing steps on the picture before it goes to the GPU (hd_post): dynamic lights,
+ * glow, particles, sharpening. */
 typedef struct {
     int   sharpen;                      /* 0-3 */
     int   lighting;                     /* 0 off, 1 soft, 2 bright: bright pixels glow */
-    bool  ambience;                     /* dust in the air (only with `world`) and a vignette */
-    bool  lights;                       /* fire and magic light their surroundings; dark scenes dim */
-    bool  cinematic;                    /* film tone curve, colour grade, grain, lens fringing */
-    int   weather;                      /* WEATHER_* (settings.h), in the game world */
-    bool  elements;                     /* particles from spirits and magic (fx.c) */
+    bool  elements;                     /* particles from the spirits and their magic (fx.c) */
     bool  footsteps;                    /* dust, grass and splashes where Ali walks (fx.c) */
+    bool  items;                        /* dropped items bob and sparkle (fx.c) */
+    bool  dynlight;                     /* the light map of lights.c: lights and soft shadows */
     bool  world;                        /* the picture shows the game world (not a menu or story scene) */
-    float cam_x, cam_y;                 /* the game's camera, in game pixels (dust stays put in the world) */
-    float t;                            /* seconds, for the dust's drift */
+    float cam_x, cam_y;                 /* the game's camera, in game pixels (particles stay put in the world) */
+    float t;                            /* seconds, for animations */
     int   scale;                        /* picture pixels per game pixel */
     int   extra;                        /* widescreen game pixels on each side */
 } HdPost;

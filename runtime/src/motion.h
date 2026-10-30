@@ -25,4 +25,8 @@ unsigned motion_sprite_moves(const HdFrame *f, int dx[80], int dy[80], int *owne
  * the player character's object drew in the latest tick that sent them. */
 void motion_player_entries(const uint8_t *sat, int count, bool out[80]);
 
+/* The object that drew entry `i` of the sprite list in the latest tick: its address and
+ * its first word (the object's type); false for entries without an object (the HUD). */
+bool motion_entry_owner(int i, uint32_t *object, uint16_t *kind);
+
 #endif
