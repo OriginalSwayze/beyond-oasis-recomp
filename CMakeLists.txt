@@ -63,8 +63,11 @@ target_link_libraries(recomp PRIVATE musashi)
 target_compile_options(recomp PRIVATE -O1 -w)
 
 # ---- Runtime ------------------------------------------------------------------
-add_executable(BeyondOasis
+# WIN32: a windowed program, so no console window opens with the game (main.c attaches
+# to the terminal it was started from, for the test output).
+add_executable(BeyondOasis WIN32
   runtime/src/main.c
+  runtime/src/console.c
   runtime/src/machine.c
   runtime/src/widescreen.c
   runtime/src/state.c

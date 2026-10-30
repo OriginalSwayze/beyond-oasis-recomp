@@ -160,7 +160,10 @@ static SDL_Rect display_rect(int win_w, int win_h) {
     return r;
 }
 
+void console_attach(void);           /* console.c */
+
 int main(int argc, char **argv) {
+    console_attach();
     char *bp = SDL_GetBasePath();
     if (bp) { snprintf(base_dir, sizeof base_dir, "%s", bp); SDL_free(bp); }
     char ini[1100];
