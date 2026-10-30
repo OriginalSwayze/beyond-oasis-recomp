@@ -378,8 +378,8 @@ int main(int argc, char **argv) {
                     hd_compose_at(settings.internal_scale, frac);
                     double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency();
                     int n = (f - (headless_frames - 8)) * 2 + k;
-                    printf("frame %d +%.1f: t=%.2f  split %d px  plane B x scroll %d  %.2f ms\n", f, frac,
-                           hd_motion_t(frac), hd_split, hd_frame.hscroll[1][100], ms);
+                    printf("frame %d +%.1f: t=%.2f  split %d px  %.2f ms (layers %.2f, sprites %.2f + %.2f, compose %.2f)\n",
+                           f, frac, hd_motion_t(frac), hd_split, ms, hd_ms[0], hd_ms[1], hd_ms[2], hd_ms[3]);
                     snprintf(p, sizeof p, "%s/%02d.png", smooth_dir, n);
                     png_write(p, hd_px, hd_w, hd_h, hd_w);
                 }
@@ -519,7 +519,8 @@ int main(int argc, char **argv) {
                                        (settings.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
     SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, FB_W, FB_H);
-    SDL_Texture *hd_tex = NULL;         /* the frame at the internal resolution */
+    SDL_Texture *hd_tex[2] = { NULL, NULL };   /* the frame at the internal resolution, two in turn */
+    int hd_tex_now = 0;
     int hd_tex_w = 0, hd_tex_h = 0;
     bool vsync_on = false;
     SDL_GameController *pad = NULL;
@@ -617,72 +618,79 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        const Uint8 *keys = SDL_GetKeyboardState(NULL);
-        bool rewinding = settings.rewind && (keys[SDL_SCANCODE_BACKSPACE] ||
-                         (pad && SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)));
-        uint16_t old_pad;
-        if (rewinding && rewind_step(&old_pad)) {
-            /* Redraw the frame we stepped back to, then return to the state before it. */
-            pad_state[0] = old_pad;
-            machine_run_frame(framebuffer, FB_W);
-            if (vdp_opts.hd_capture) hd_frame_done();
-            rewind_restore_head();
-            sound_out_count = 0;            /* silent while rewinding */
-        } else if (!rewinding) {
-            pad_state[0] = key_bits(keys) | controller_bits(pad);
-            rewind_push(pad_state[0]);
-            cheats_frame();
-            machine_run_frame(framebuffer, FB_W);
-            if (vdp_opts.hd_capture) hd_frame_done();
-        } else {
-            sound_out_count = 0;            /* at the start of the buffer: hold the picture */
-        }
-        save_sram();
-
-        char title[160];
-        if (rewinding) snprintf(title, sizeof title, "Beyond Oasis - Rewinding (%.1f s left)", rewind_frames() / 60.0);
-        else if (SDL_GetPerformanceCounter() < message_until) snprintf(title, sizeof title, "Beyond Oasis - %s", message);
-        else snprintf(title, sizeof title, "Beyond Oasis");
-        if (strcmp(title, shown_title)) { SDL_SetWindowTitle(win, title); strcpy(shown_title, title); }
-        if (audio) {
-            /* Keep about 3 frames queued: drop audio if we fall far behind. */
-            if (SDL_GetQueuedAudioSize(audio) < (Uint32)sound_out_rate * 4 / 10) {
-                if (settings.volume < 100) {
-                    int v = settings.volume * 256 / 100;
-                    for (int i = 0; i < sound_out_count * 2; i++) sound_out[i] = (int16_t)(sound_out[i] * v / 256);
-                }
-                SDL_QueueAudio(audio, sound_out, (Uint32)sound_out_count * 4);
-            }
-        }
-
-        /* On a display faster than 60 Hz with smooth motion, every refresh until the next
-         * frame shows the moment it is (vsync paces it); otherwise one picture per frame. */
-        SDL_DisplayMode mode;
-        int refresh = SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(win), &mode) == 0 ? mode.refresh_rate : 60;
-        bool high_refresh = settings.smooth_motion && refresh > 65;
-        if (high_refresh != vsync_on) { SDL_RenderSetVSync(ren, high_refresh); vsync_on = high_refresh; }
-        next += (Uint64)(frame_s * freq);
-        Uint64 frame_ticks = (Uint64)(frame_s * freq);
-        for (;;) {
+        /* One pass of this loop is one display refresh: vsync paces it. A game frame runs
+         * whenever one is due (60 times a second, on any display), and every refresh shows
+         * the moment it is now, so motion is even at 60, 120, 144 Hz and up. */
         Uint64 now = SDL_GetPerformanceCounter();
-        float frac = now >= next ? 1 : 1 - (float)(next - now) / frame_ticks;
+        const Uint64 frame_ticks = (Uint64)(frame_s * freq);
+        if (now >= next) {
+            const Uint8 *keys = SDL_GetKeyboardState(NULL);
+            bool rewinding = settings.rewind && (keys[SDL_SCANCODE_BACKSPACE] ||
+                             (pad && SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)));
+            uint16_t old_pad;
+            if (rewinding && rewind_step(&old_pad)) {
+                /* Redraw the frame we stepped back to, then return to the state before it. */
+                pad_state[0] = old_pad;
+                machine_run_frame(framebuffer, FB_W);
+                if (vdp_opts.hd_capture) hd_frame_done();
+                rewind_restore_head();
+                sound_out_count = 0;            /* silent while rewinding */
+            } else if (!rewinding) {
+                pad_state[0] = key_bits(keys) | controller_bits(pad);
+                rewind_push(pad_state[0]);
+                cheats_frame();
+                machine_run_frame(framebuffer, FB_W);
+                if (vdp_opts.hd_capture) hd_frame_done();
+            } else {
+                sound_out_count = 0;            /* at the start of the buffer: hold the picture */
+            }
+            save_sram();
+
+            char title[160];
+            if (rewinding) snprintf(title, sizeof title, "Beyond Oasis - Rewinding (%.1f s left)", rewind_frames() / 60.0);
+            else if (SDL_GetPerformanceCounter() < message_until) snprintf(title, sizeof title, "Beyond Oasis - %s", message);
+            else snprintf(title, sizeof title, "Beyond Oasis");
+            if (strcmp(title, shown_title)) { SDL_SetWindowTitle(win, title); strcpy(shown_title, title); }
+            if (audio) {
+                /* Keep about 3 frames queued: drop audio if we fall far behind. */
+                if (SDL_GetQueuedAudioSize(audio) < (Uint32)sound_out_rate * 4 / 10) {
+                    if (settings.volume < 100) {
+                        int v = settings.volume * 256 / 100;
+                        for (int i = 0; i < sound_out_count * 2; i++) sound_out[i] = (int16_t)(sound_out[i] * v / 256);
+                    }
+                    SDL_QueueAudio(audio, sound_out, (Uint32)sound_out_count * 4);
+                }
+            }
+            next += frame_ticks;
+            if (now > next + freq / 4) next = now + frame_ticks;  /* fell far behind: don't try to catch up */
+        }
+        if (!vsync_on) { SDL_RenderSetVSync(ren, 1); vsync_on = true; }
+
+        /* The moment this picture shows: how far we are into the newest game frame (0-1). */
+        now = SDL_GetPerformanceCounter();
+        float frac = next > now ? 1 - (float)(next - now) / frame_ticks : 1;
         if (frac < 0) frac = 0;
         SDL_Rect dst = display_rect(ww, wh);
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
         bool hd = (settings.internal_scale > 1 || settings.smooth_motion) && hd_frame.h == vdp_screen_height();
         if (hd) {
-            if (settings.smooth_motion) hd_compose_at(settings.internal_scale, high_refresh ? frac : 0);
+            if (settings.smooth_motion) hd_compose_at(settings.internal_scale, frac);
             else hd_compose(settings.internal_scale);
-            if (!hd_tex || hd_tex_w != hd_w || hd_tex_h != hd_h) {
-                if (hd_tex) SDL_DestroyTexture(hd_tex);
-                hd_tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, hd_w, hd_h);
-                /* the last, non-integer step to the window; native pixels stay sharp */
-                SDL_SetTextureScaleMode(hd_tex, settings.internal_scale > 1 ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+            /* Two textures used in turn: uploading into the one the GPU just drew from
+             * can make the upload wait for the GPU. */
+            if (!hd_tex[0] || hd_tex_w != hd_w || hd_tex_h != hd_h) {
+                for (int k = 0; k < 2; k++) {
+                    if (hd_tex[k]) SDL_DestroyTexture(hd_tex[k]);
+                    hd_tex[k] = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, hd_w, hd_h);
+                    /* the last, non-integer step to the window; native pixels stay sharp */
+                    SDL_SetTextureScaleMode(hd_tex[k], settings.internal_scale > 1 ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+                }
                 hd_tex_w = hd_w; hd_tex_h = hd_h;
             }
-            SDL_UpdateTexture(hd_tex, NULL, hd_px, hd_w * 4);
-            filter_draw(ren, hd_tex, NULL, dst, frame_width(), vdp_screen_height(), settings.filter);
+            hd_tex_now ^= 1;
+            SDL_UpdateTexture(hd_tex[hd_tex_now], NULL, hd_px, hd_w * 4);
+            filter_draw(ren, hd_tex[hd_tex_now], NULL, dst, frame_width(), vdp_screen_height(), settings.filter);
         } else {
             SDL_UpdateTexture(tex, NULL, framebuffer, FB_W * 4);
             SDL_Rect src = { 0, 0, frame_width(), vdp_screen_height() };
@@ -690,16 +698,15 @@ int main(int argc, char **argv) {
         }
         Uint64 before_present = SDL_GetPerformanceCounter();
         SDL_RenderPresent(ren);
-        if (!high_refresh) break;
+        /* If the driver ignores vsync, don't spin: wait about one refresh. */
         Uint64 after = SDL_GetPerformanceCounter();
-        if (after - before_present < freq / 1000) SDL_Delay(1);   /* vsync not honoured: don't spin */
-        /* Stop when the next refresh would land past the next frame. */
-        if (after + freq / (Uint64)refresh / 2 >= next) break;
+        if (after - before_present < freq / 2000) {
+            SDL_DisplayMode mode;
+            int refresh = SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(win), &mode) == 0 && mode.refresh_rate > 0
+                          ? mode.refresh_rate : 60;
+            Uint64 until = before_present + freq / (Uint64)refresh;
+            if (until > after) SDL_Delay((Uint32)((until - after) * 1000 / freq));
         }
-
-        Uint64 now = SDL_GetPerformanceCounter();
-        if (now < next) SDL_Delay((Uint32)((next - now) * 1000 / freq));
-        else if (now - next > freq / 4) next = now; /* fell far behind: don't try to catch up */
     }
 
     save_coverage();

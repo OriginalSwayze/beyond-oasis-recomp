@@ -19,6 +19,7 @@ uint32_t *hd_px;
 int hd_w, hd_h;
 unsigned hd_serial = 1;
 int hd_split;
+double hd_ms[4];
 
 static uint32_t *scaled[3], *temp[3];
 static size_t scaled_cap;
@@ -158,17 +159,40 @@ static bool ensure(int scale) {
     return true;
 }
 
-/* ---- Threads: the work is split across cores, one thread started per job ---------- */
+/* ---- Threads: the work is split across cores by a pool of workers started once ----- *
+ * (Starting threads for every picture, over 2000 a second at 144 Hz, made some
+ * pictures stall for 10-25 ms.) */
 typedef struct { int (*fn)(void *); void *arg; } Job;
 
-static void run_jobs(Job *jobs, int n) {
-    SDL_Thread *threads[16] = { NULL };
-    for (int k = 1; k < n; k++) threads[k] = SDL_CreateThread(jobs[k].fn, "hd", jobs[k].arg);
-    jobs[0].fn(jobs[0].arg);
-    for (int k = 1; k < n; k++) {
-        if (threads[k]) SDL_WaitThread(threads[k], NULL);
-        else jobs[k].fn(jobs[k].arg);   /* no thread: do it here */
+static Job pool_job[16];
+static SDL_sem *pool_go[16], *pool_done;
+static int pool_size;                   /* workers running (jobs 1..pool_size) */
+
+static int pool_worker(void *arg) {
+    int k = (int)(intptr_t)arg;
+    for (;;) {
+        SDL_SemWait(pool_go[k]);
+        pool_job[k].fn(pool_job[k].arg);
+        SDL_SemPost(pool_done);
     }
+    return 0;
+}
+
+static void run_jobs(Job *jobs, int n) {
+    if (!pool_done) pool_done = SDL_CreateSemaphore(0);
+    while (pool_size < n - 1 && pool_size < 15 && pool_done) {
+        int k = pool_size + 1;
+        pool_go[k] = SDL_CreateSemaphore(0);
+        if (!pool_go[k] || !SDL_CreateThread(pool_worker, "hd", (void *)(intptr_t)k)) break;
+        pool_size = k;
+    }
+    int sent = 0;
+    for (int k = 1; k < n; k++) {
+        if (k <= pool_size) { pool_job[k] = jobs[k]; SDL_SemPost(pool_go[k]); sent++; }
+    }
+    jobs[0].fn(jobs[0].arg);
+    for (int k = pool_size + 1; k < n; k++) jobs[k].fn(jobs[k].arg);   /* no worker: do it here */
+    for (int k = 0; k < sent; k++) SDL_SemWait(pool_done);
 }
 
 static int workers(void) {
@@ -389,8 +413,17 @@ static void draw_sprite_layer(int scale, float t) {
 
 /* Draws the moment t between the previous motion update (0) and the latest (1), with
  * the newest frame's content. */
+static double ms_since(Uint64 *t0) {
+    Uint64 now = SDL_GetPerformanceCounter();
+    double ms = (double)(now - *t0) * 1000 / SDL_GetPerformanceFrequency();
+    *t0 = now;
+    return ms;
+}
+
 static void compose_between(int scale, float t) {
+    Uint64 t0 = SDL_GetPerformanceCounter();
     scale_planes(scale);
+    hd_ms[0] = ms_since(&t0);
     static int ox[2][HD_MAX_H], oy[2][HD_MAX_H];
     float back = 1 - t;
     for (int line = 0; line < hd_frame.h; line++) {
@@ -404,12 +437,18 @@ static void compose_between(int scale, float t) {
         }
     }
     const uint32_t *sprites = scaled[2];
+    hd_ms[1] = hd_ms[2] = 0;
     if (!hd_frame.sprite_mask) {
+        ms_since(&t0);
         scale_sprites(scale);
+        hd_ms[1] = ms_since(&t0);
         draw_sprite_layer(scale, t);
+        hd_ms[2] = ms_since(&t0);
         sprites = sprite_layer;
     }
+    ms_since(&t0);
     compose_rows(scale, sprites, ox[0], oy[0], ox[1], oy[1]);
+    hd_ms[3] = ms_since(&t0);
 }
 
 float hd_motion_t(float frac) {

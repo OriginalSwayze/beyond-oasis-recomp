@@ -146,14 +146,19 @@ glides from one motion update to the next instead of jumping:
   sprite list (or the nearest one), so the character glides as one instead of coming
   apart for a frame. Every picture is drawn this way, also when nothing moves, so
   overlapping sprites never switch between two ways of drawing.
-* At 60 Hz this turns the 30 Hz steps into 60 Hz motion. On a faster display (120, 144 Hz
-  and up) the window switches to vsync and draws a picture at every refresh.
+* The main loop runs at the display's refresh with vsync: every refresh runs a game frame
+  if one is due (60 a second on any display) and draws the moment it is now. So 30 Hz
+  steps become 60 Hz motion on a 60 Hz display and 144 Hz motion on a 144 Hz one.
 * Scene cuts (scroll jumps over 24 pixels), column scrolling and sprite masking are
   drawn as they are, without gliding.
 
 Motion is shown one update (about 33 ms) late. Smooth motion works at any internal
-resolution; at Native it moves whole pixels. A picture takes about 3 ms at 3x (16:9) on
-several cores, 5 ms on frames that also scale new layers.
+resolution; at Native it moves whole pixels. The game's own logic stays at 30 Hz: running
+it every frame would make the whole game run twice as fast.
+
+A picture takes 1.5-3 ms at 4x (16:9), split across cores by a pool of worker threads
+started once. Measured live on a 144 Hz display: 144 pictures a second, 90% of them
+6.7-7.2 ms apart (6.94 is perfect), the slowest 10.4 ms.
 
 ## Display filters
 
