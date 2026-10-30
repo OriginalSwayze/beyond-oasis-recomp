@@ -21,13 +21,13 @@ typedef enum { ITEM_ACTION, ITEM_SLOT, ITEM_OPTION } ItemKind;
 enum { ACT_RESUME, ACT_SAVE, ACT_LOAD, ACT_RESET, ACT_QUIT, ACT_CONTROLS, ACT_OUTFIT };
 typedef struct { ItemKind kind; const char *label; int id; } Item;
 
-#define TABS 4
+#define TABS 5
 #define MAX_ROWS 10
-static const char *const tab_names[TABS] = { "GAME", "DISPLAY", "EFFECTS", "MORE" };
-static const int tab_spirit[TABS] = { 2, 0, 1, 3 };     /* Bow, Dytto, Efreet, Shade */
+static const char *const tab_names[TABS] = { "GAME", "DISPLAY", "EFFECTS", "CHEATS", "MORE" };
+static const int tab_spirit[TABS] = { 2, 0, 1, SPIRIT_ARMLET, 3 };     /* Bow, Dytto, Efreet, the armlet, Shade */
 static const Item tab_items[TABS][MAX_ROWS] = {
     { { ITEM_ACTION, "Resume", ACT_RESUME }, { ITEM_SLOT, "Save state", ACT_SAVE }, { ITEM_SLOT, "Load state", ACT_LOAD },
-      { ITEM_OPTION, "Cheats", OPT_CHEATS }, { ITEM_OPTION, "Rewind", OPT_REWIND },
+      { ITEM_OPTION, "Rewind", OPT_REWIND },
       { ITEM_ACTION, "Reset game", ACT_RESET }, { ITEM_ACTION, "Quit game", ACT_QUIT } },
     { { ITEM_OPTION, "Widescreen", OPT_WIDESCREEN }, { ITEM_OPTION, "Aspect ratio", OPT_ASPECT },
       { ITEM_OPTION, "Integer scaling", OPT_INTEGER }, { ITEM_OPTION, "Internal resolution", OPT_INTERNAL },
@@ -35,14 +35,15 @@ static const Item tab_items[TABS][MAX_ROWS] = {
       { ITEM_OPTION, "Sharpening", OPT_SHARPEN }, { ITEM_OPTION, "Smooth motion", OPT_SMOOTH },
       { ITEM_OPTION, "Sprite flicker fix", OPT_FLICKER }, { ITEM_OPTION, "Slowdown fix", OPT_OVERCLOCK } },
     { { ITEM_OPTION, "Lighting", OPT_LIGHTING }, { ITEM_OPTION, "Spirit effects", OPT_ELEMENTS },
-      { ITEM_OPTION, "Item animations", OPT_ITEMS }, { ITEM_OPTION, "Water", OPT_WATER },
-      { ITEM_OPTION, "Footsteps", OPT_FOOTSTEPS }, { ITEM_OPTION, "Dynamic lights", OPT_DYNLIGHT },
-      { ITEM_OPTION, "HD-2D look", OPT_HD2D }, { ITEM_OPTION, "Swaying foliage", OPT_FOLIAGE } },
+      { ITEM_OPTION, "Water", OPT_WATER }, { ITEM_OPTION, "Footsteps", OPT_FOOTSTEPS } },
+    { { ITEM_OPTION, "Infinite health", OPT_CHEAT_HEALTH }, { ITEM_OPTION, "Infinite spirit", OPT_CHEAT_SPIRIT },
+      { ITEM_OPTION, "Unbreakable weapons", OPT_CHEAT_WEAPONS }, { ITEM_OPTION, "Attack power", OPT_CHEAT_ATTACK },
+      { ITEM_OPTION, "Move speed", OPT_CHEAT_SPEED } },
     { { ITEM_OPTION, "Volume", OPT_VOLUME }, { ITEM_OPTION, "Audio", OPT_AUDIO },
       { ITEM_ACTION, "Controls", ACT_CONTROLS }, { ITEM_ACTION, "Ali's outfit", ACT_OUTFIT },
       { ITEM_OPTION, "Texture pack", OPT_TEXPACK }, { ITEM_OPTION, "Dump tiles", OPT_DUMP } },
 };
-static const int tab_count[TABS] = { 7, 10, 8, 6 };
+static const int tab_count[TABS] = { 6, 10, 4, 5, 6 };
 
 /* What each option and action does, for the card on the right. */
 static const char *about(const Item *it) {
@@ -72,11 +73,11 @@ static const char *about(const Item *it) {
     case OPT_FOOTSTEPS: return "Ali kicks up what is under his feet as he walks: puffs of dust on sand and stone, bits of grass, splashes and rings in water.";
     case OPT_ELEMENTS: return "The spirits and their magic give off particles by element: embers from fire, drops from water, wisps from shadow, leaves from plants. Ali, the people of Oasis, enemies, items and the HUD give none.";
     case OPT_WATER: return "The sea, rivers and pools roll with slow swells, foam where they meet the shore and anyone standing in them, glint along the crests and reflect the people and things above them.";
-    case OPT_FOLIAGE: return "Tree tops sway in slow waves of wind with gusts, the grass flutters, and now and then a leaf drifts down from the trees. Only the picture moves: paths, walls and what you can walk under stay exactly where they are.";
-    case OPT_HD2D: return "A diorama look in the style of modern HD-2D games: the top and bottom of the screen soften like a tilt-shift photo while Ali stays sharp, warm sunbeams drift across daylight scenes, colours get warm highlights and cool shadows with a soft vignette, and on Full, dust motes float in the light. The HUD stays crisp.";
-    case OPT_DYNLIGHT: return "The spirits, their magic and, in caves and at night, torches and fires light up their surroundings in their own colours, and Ali, the people and creatures cast soft shadows away from them. Dark scenes dim a little so the lights stand out; daylight stays as it is.";
-    case OPT_ITEMS: return "Dropped items float gently above the ground on a soft glow, with a glint now and then, so they are easy to spot. The game itself is unchanged.";
-    case OPT_CHEATS: return "Infinite health, spirit power, and weapons that never break.";
+    case OPT_CHEAT_HEALTH: return "Ali takes no damage and his health stays full, whatever hits him.";
+    case OPT_CHEAT_SPIRIT: return "Spirit power stays full, so the spirits can be called and kept as long as you like.";
+    case OPT_CHEAT_WEAPONS: return "Weapons never wear out: a weapon keeps its uses however often it strikes.";
+    case OPT_CHEAT_ATTACK: return "Enemies take double or four times the damage from every hit, or fall to a single one. Bosses too.";
+    case OPT_CHEAT_SPEED: return "Ali walks and runs one and a half or two times as fast. Walls still stop him. If a scripted scene stalls, set it back to Normal.";
     case OPT_REWIND: return "Hold the rewind key to step back in time.";
     case OPT_VOLUME: return "The game's volume.";
     case OPT_AUDIO: return "Original is the console's sound as emulated. Clean removes aliasing, the hum and clipping; Rich adds wider stereo and a light room.";

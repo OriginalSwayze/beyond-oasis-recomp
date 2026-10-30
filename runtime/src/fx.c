@@ -1,14 +1,11 @@
-/* Elemental particles, footsteps and dropped items.
+/* Elemental particles and footsteps.
  *
  * Elements: each game frame the sprites of the spirits and their magic are looked at pixel
  * by pixel (not Ali's, the people's, the items' or the HUD's: motion.c tells which object
  * drew each sprite); bright and vivid pixels of four colours give off particles: fire
  * colours embers that rise and fade, light blue and cyan drops that splash up and fall,
  * violet wisps that drift, bright green leaves that flutter down. Particles live in world
- * coordinates (screen plus the game's camera), so they stay where they were made.
- *
- * Items: dropped items float a little above the ground, bobbing (hd.c draws their sprites
- * higher), on a soft breathing glow, with a glint crossing them now and then. */
+ * coordinates (screen plus the game's camera), so they stay where they were made. */
 #include "fx.h"
 
 #include <math.h>
@@ -17,9 +14,8 @@
 #include "settings.h"
 #include "genesis.h"
 #include "motion.h"
-#include "lights.h"
 
-enum { EMBER, DROP, WISP, LEAF, DUST, GRASS, RING, MOTE, FALLING_LEAF };
+enum { EMBER, DROP, WISP, LEAF, DUST, GRASS, RING };
 
 typedef struct { float x, y, vx, vy; short life, age; uint8_t kind, r, g, b; } Particle;
 
@@ -55,8 +51,6 @@ static void spawn(int kind, float x, float y) {
     case LEAF:  p->vx = (frand() - .5f) * .6f; p->vy = .2f + frand() * .3f; p->life = (short)(70 + next() % 40); break;
     case DUST:  p->vx = (frand() - .5f) * .5f; p->vy = -.15f - frand() * .15f; p->life = (short)(22 + next() % 14); break;
     case GRASS: p->vx = (frand() - .5f) * .9f; p->vy = -.7f - frand() * .5f; p->life = (short)(16 + next() % 8); break;
-    case FALLING_LEAF: p->vx = (frand() - .5f) * .3f; p->vy = .25f + frand() * .2f; p->life = (short)(120 + next() % 80); break;
-    case MOTE:  p->vx = (frand() - .5f) * .12f; p->vy = -.03f - frand() * .05f; p->life = (short)(240 + next() % 200); break;
     default:    p->vx = 0; p->vy = 0; p->life = 18; break;
     }
 }
@@ -108,9 +102,6 @@ static void footsteps(const HdFrame *f, float cam_x, float cam_y) {
 
 typedef struct { uint32_t obj; float wx, wy; int still; bool seen; } Track;
 static Track tracks[24];
-typedef struct { float x, y, phase; } Item;     /* world position: the middle of its bottom */
-static Item items[16];
-static int nitems;
 
 static Track *track_of(uint32_t obj) {
     Track *free_slot = NULL;
@@ -123,12 +114,11 @@ static Track *track_of(uint32_t obj) {
     return free_slot;
 }
 
-/* Marks the dropped items among the sprites and lists them for drawing. */
+/* Marks the dropped items among the sprites (they give no spirit particles). */
 static void find_items(HdFrame *f, float cam_x, float cam_y) {
     uint32_t objs[80];
     int pieces[80];
     for (int k = 0; k < 24; k++) tracks[k].seen = false;
-    nitems = 0;
     for (int i = 0; i < 80; i++) {
         objs[i] = 0;
         uint16_t kind;
@@ -153,14 +143,13 @@ static void find_items(HdFrame *f, float cam_x, float cam_y) {
         t->wx = wx; t->wy = wy; t->seen = true;
         if (t->still < 20) continue;            /* a third of a second in place */
         s->item = true;
-        if (nitems < 16) items[nitems++] = (Item){ wx, wy, (float)(obj & 0xFFF) * .37f };
     }
     for (int k = 0; k < 24; k++) if (!tracks[k].seen) tracks[k].obj = 0;   /* gone */
 }
 
 /* The sprites that may give off elemental particles: the spirits and their magic, not Ali,
  * the people, items or the HUD. */
-bool fx_light_sprite(const HdFrame *f, int i) {
+static bool elemental(const HdFrame *f, int i) {
     const HdSprite *s = &f->sprites[i];
     if (!s->drawn || s->player || s->item || (s->attr & 0x8000)) return false;
     uint32_t obj;
@@ -192,8 +181,6 @@ void fx_game_frame(HdFrame *f, bool world, float cam_x, float cam_y) {
         case LEAF:  p->vx = sinf(p->age * .12f + i) * .6f; break;
         case GRASS: p->vy += .09f; break;
         case DUST:  p->vx *= .94f; p->vy *= .96f; break;
-        case MOTE:  p->vx += sinf(p->age * .02f + i) * .004f; break;
-        case FALLING_LEAF: p->vx = sinf(p->age * .07f + i) * .7f; p->vy = .28f + .12f * cosf(p->age * .07f + i); break;
         default: break;
         }
         p->x += p->vx; p->y += p->vy;
@@ -201,35 +188,11 @@ void fx_game_frame(HdFrame *f, bool world, float cam_x, float cam_y) {
     }
     nparts = n;
     if (settings.footsteps && world) footsteps(f, cam_x, cam_y);
-    /* Swaying foliage: now and then a leaf lets go of a tree top (a high-priority green
-     * pixel of plane A) and drifts down. */
-    if (settings.foliage && world && next() % 9 == 0) {
-        for (int tries = 0; tries < 24; tries++) {
-            int x = (int)(next() % (unsigned)f->w), y = (int)(next() % (unsigned)f->h);
-            uint32_t a = f->a[y][x];
-            uint8_t lb = (uint8_t)(a >> 16);
-            if (!(lb & 0x40) || !(lb & 0x0F) || (lb & HD_WINDOW)) continue;
-            uint32_t c = vdp_color_rgb((uint16_t)a);
-            int r = (int)((c >> 16) & 255), g = (int)((c >> 8) & 255), b = (int)(c & 255);
-            if (g <= r || g < 90) continue;
-            spawn(FALLING_LEAF, x + cam_x, y + cam_y);
-            Particle *p = &parts[nparts - 1];
-            if (p->kind == FALLING_LEAF) { p->r = (uint8_t)r; p->g = (uint8_t)g; p->b = (uint8_t)b; }
-            break;
-        }
-    }
-    /* HD-2D, full: dust motes drifting in the light, in daylight. */
-    if (settings.hd2d >= 2 && world && lights_darkness() < .4f) {
-        int motes = 0;
-        for (int i = 0; i < nparts; i++) motes += parts[i].kind == MOTE;
-        for (; motes < 26; motes++) spawn(MOTE, cam_x + frand() * f->w, cam_y + frand() * f->h);
-    }
-    if ((settings.items || settings.elements || settings.dynlight) && world) find_items(f, cam_x, cam_y);
-    else nitems = 0;
+    if (settings.elements && world) find_items(f, cam_x, cam_y);
     if (!settings.elements || !world) return;
     for (int i = 0; i < 80; i++) {
         const HdSprite *s = &f->sprites[i];
-        if (!fx_light_sprite(f, i)) continue;
+        if (!elemental(f, i)) continue;
         /* Count each kind's pixels, keeping one at random of each to spawn from. */
         int count[4] = { 0, 0, 0, 0 }, px[4] = { 0 }, py[4] = { 0 };
         for (int y = 0; y < s->h; y++)
@@ -277,8 +240,6 @@ static void dot(uint32_t *px, int w, int h, float cx, float cy, float r, int cr,
         }
 }
 
-static float age_in(const Particle *q) { return q->age < 10 ? q->age / 10.f : 1; }
-
 static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
     float s = (float)p->scale;
     for (int i = 0; i < nparts; i++) {
@@ -292,18 +253,6 @@ static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
         case LEAF:  dot(px, w, h, x, y, s * 1.2f, 120, 220, 90, .85f * (life > .2f ? 1 : life * 5), false); break;
         case DUST:  dot(px, w, h, x, y, s * (2 + 4 * (1 - life)), q->r, q->g, q->b, .65f * life, false); break;
         case GRASS: dot(px, w, h, x, y, s * .9f, 90, 200, 70, .9f * life, false); break;
-        case FALLING_LEAF: {           /* the tree's own green, tumbling: wide then thin */
-            float fade = life < .2f ? life * 5 : age_in(q);
-            float flip = fabsf(sinf(q->age * .11f + i));
-            dot(px, w, h, x, y, s * (.5f + .7f * flip), q->r, q->g, q->b, .95f * fade, false);
-            break;
-        }
-        case MOTE: {                    /* fades in and out, and twinkles */
-            float age = 1 - life, in = age < .1f ? age * 10 : life < .15f ? life / .15f : 1;
-            float tw = sinf(q->age * .07f + i * 1.7f);
-            dot(px, w, h, x, y, s * .7f, 255, 244, 210, in * (.25f + .3f * tw * tw), true);
-            break;
-        }
         default: {                      /* a ring on the water, widening */
             float rr = s * (2 + 7 * (1 - life));
             for (int a = 0; a < 24; a++) {
@@ -315,33 +264,7 @@ static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
     }
 }
 
-/* Under each item a soft warm glow that breathes, and now and then a four-pointed glint
- * crossing it. */
-static void draw_items(uint32_t *px, int w, int h, const HdPost *p) {
-    float s = (float)p->scale, t = p->t;
-    for (int k = 0; k < nitems; k++) {
-        const Item *it = &items[k];
-        float x = (it->x - p->cam_x) * s, y = (it->y - p->cam_y) * s;
-        float breathe = .5f + .5f * sinf(t * 2.6f + it->phase);
-        for (int ring = 0; ring < 3; ring++)
-            dot(px, w, h, x, y - s * .5f, s * (5 + ring * 3) * (.85f + .15f * breathe), 255, 214, 140, (.16f - ring * .04f) * (.6f + .4f * breathe), true);
-        /* A glint every few seconds, at its own moment for each item. */
-        float cycle = fmodf(t * .45f + it->phase, 1);
-        if (cycle < .14f) {
-            float a = sinf(cycle / .14f * 3.14159f);
-            float gx = x + s * 4, gy = y - s * 11;
-            for (int d = -6; d <= 6; d++) {
-                float fade = a * (1 - fabsf((float)d) / 7);
-                dot(px, w, h, gx + d * s * .55f, gy, s * .45f, 255, 250, 220, fade, true);
-                dot(px, w, h, gx, gy + d * s * .55f, s * .45f, 255, 250, 220, fade, true);
-            }
-            dot(px, w, h, gx, gy, s * 1.3f, 255, 255, 235, a * .9f, true);
-        }
-    }
-}
-
 void fx_draw(uint32_t *px, int w, int h, const HdPost *p) {
     if (!p->world) return;
-    if (p->items && nitems) draw_items(px, w, h, p);
     if (nparts) draw_particles(px, w, h, p);
 }

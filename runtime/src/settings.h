@@ -20,11 +20,7 @@ typedef struct {
     int  lighting;                      /* glow of bright pixels: 0 off, 1 soft, 2 bright (hd_post) */
     bool elements;                      /* particles from spirits and magic (fx.c) */
     bool footsteps;                     /* dust, grass and splashes where Ali walks (fx.c) */
-    bool items;                         /* dropped items bob, glow and sparkle (fx.c) */
     bool water;                         /* water shimmers, foams, glints and reflects (hd_water) */
-    bool dynlight;                      /* dynamic lights with ray-traced soft shadows (lights.c) */
-    bool foliage;                       /* trees and grass sway in the wind, leaves fall (hd_foliage, fx.c) */
-    int  hd2d;                          /* HD-2D look: 0 off, 1 subtle, 2 full (depth of field, light shafts, grading, motes) */
     char texture_pack[64];              /* folder in texture_packs/, empty for none (texpack.h) */
     bool dump_tiles;                    /* write every tile shown to texture_packs/dump/ */
     int  audio;                         /* sound output: 0 original, 1 clean, 2 rich (sound_quality) */
@@ -43,6 +39,8 @@ typedef struct {
     bool cheat_health;                  /* infinite health: no damage, health held full */
     bool cheat_spirit;                  /* infinite spirit power */
     bool cheat_weapons;                 /* weapons never break */
+    int  cheat_attack;                  /* attack power: 0 normal, 1 double, 2 quadruple, 3 one-hit kills */
+    int  cheat_speed;                   /* move speed: 0 normal, 1 fast (1.5x), 2 very fast (2x) */
     char cheat_codes[512];              /* extra RAM codes, "FFxxxx:VV[VV],..." (settings.ini only) */
     bool outfit;                        /* Ali wears outfit_color (outfit.c) */
     int  outfit_color[8];               /* CRAM colour for each part (OUTFIT_PARTS, outfit.c), -1 = his own */
@@ -56,12 +54,12 @@ void settings_save(const char *path);
 /* Options the launcher and the in-game menu show: a value label, and stepping it. */
 enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_FLICKER, OPT_REWIND, OPT_REWIND_MB,
        OPT_LAUNCHER, OPT_CHEAT_HEALTH, OPT_CHEAT_SPIRIT, OPT_CHEAT_WEAPONS,
-       OPT_CHEATS, OPT_INTERNAL, OPT_SMOOTH,
+       OPT_CHEAT_ATTACK, OPT_CHEAT_SPEED, OPT_INTERNAL, OPT_SMOOTH,
        OPT_REWIND_ALL,                  /* rewind off or its buffer size, in one option */
        OPT_FILTER, OPT_WINDOW_ALL,      /* fullscreen or a window size, in one option */
        OPT_OVERCLOCK, OPT_VOLUME,
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
-       OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AUDIO, OPT_ELEMENTS, OPT_FOOTSTEPS, OPT_ITEMS, OPT_WATER, OPT_DYNLIGHT, OPT_HD2D, OPT_FOLIAGE,
+       OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AUDIO, OPT_ELEMENTS, OPT_FOOTSTEPS, OPT_WATER,
        OPT_TEXPACK, OPT_DUMP };
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */

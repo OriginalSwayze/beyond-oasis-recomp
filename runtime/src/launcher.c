@@ -574,8 +574,8 @@ int launcher_ost_check(int seconds) {
 typedef enum { ROW_OPTION, ROW_ROM, ROW_CONTROLS, ROW_TRACK, ROW_OUTFIT } RowKind;
 typedef struct { RowKind kind; const char *label; int id; const char *about; } Row;
 
-#define TABS 4
-static const char *const tab_names[TABS] = { "DISPLAY", "EFFECTS", "GAME", "MUSIC" };
+#define TABS 5
+static const char *const tab_names[TABS] = { "DISPLAY", "EFFECTS", "GAME", "MUSIC", "CHEATS" };
 static const Row tab_rows[TABS][9] = {
     { { ROW_OPTION, "Widescreen", OPT_WIDESCREEN, "Shows more of the world at the sides, streamed by the game's own map code." },
       { ROW_OPTION, "Aspect ratio", OPT_ASPECT, "The shape of the widescreen picture." },
@@ -588,14 +588,9 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Texture pack", OPT_TEXPACK, "High-resolution tile replacements from a folder in texture_packs." } },
     { { ROW_OPTION, "Lighting", OPT_LIGHTING, "Fire, magic and bright light glow into their surroundings." },
       { ROW_OPTION, "Spirit effects", OPT_ELEMENTS, "The spirits and their magic give off embers, drops, wisps or leaves." },
-      { ROW_OPTION, "Item animations", OPT_ITEMS, "Dropped items float on a soft glow and glint, easy to spot." },
       { ROW_OPTION, "Water", OPT_WATER, "Water swells, foams at the shore, glints and reflects what stands above it." },
-      { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." },
-      { ROW_OPTION, "Dynamic lights", OPT_DYNLIGHT, "Spirits, magic and torches light the scene; characters cast soft shadows." },
-      { ROW_OPTION, "HD-2D look", OPT_HD2D, "Tilt-shift focus, drifting sunbeams, warm grading and floating motes." },
-      { ROW_OPTION, "Swaying foliage", OPT_FOLIAGE, "Tree tops and grass sway in the wind; leaves drift down." } },
+      { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." } },
     { { ROW_ROM, "ROM", 0, "Your Beyond Oasis (USA) cartridge file." },
-      { ROW_OPTION, "Cheats", OPT_CHEATS, "Infinite health, spirit power and unbreakable weapons." },
       { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
       { ROW_OPTION, "Sprite flicker fix", OPT_FLICKER, "Lifts the hardware's sprites-per-line limit, so nothing flickers." },
       { ROW_OPTION, "Slowdown fix", OPT_OVERCLOCK, "A faster 68000, so busy scenes no longer slow down." },
@@ -606,8 +601,13 @@ static const Row tab_rows[TABS][9] = {
     { { ROW_OPTION, "Launcher music", OPT_MUSIC, NULL }, { ROW_TRACK, "Track", 0, NULL },
       { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL },
       { ROW_OPTION, "Audio", OPT_AUDIO, NULL } },
+    { { ROW_OPTION, "Infinite health", OPT_CHEAT_HEALTH, "Ali takes no damage; his health stays full." },
+      { ROW_OPTION, "Infinite spirit", OPT_CHEAT_SPIRIT, "Spirit power stays full." },
+      { ROW_OPTION, "Unbreakable weapons", OPT_CHEAT_WEAPONS, "Weapons keep their uses however often they strike." },
+      { ROW_OPTION, "Attack power", OPT_CHEAT_ATTACK, "Double or quadruple damage, or every enemy falls to one hit." },
+      { ROW_OPTION, "Move speed", OPT_CHEAT_SPEED, "Ali moves 1.5x or 2x as fast; walls still stop him." } },
 };
-static const int tab_count[TABS] = { 9, 8, 9, 5 };
+static const int tab_count[TABS] = { 9, 4, 8, 5, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define PANEL_X (TABLET_X + 40)
@@ -924,8 +924,8 @@ static void layout(int pixel_w) {
 /* Advances the animations by dt seconds. */
 static void animate(float dt) {
     float k = 1 - expf(-dt * 10);
-    float target = (float)ui.tab;
-    float d = remainderf(target - ui.focus, TABS);
+    float target = ui.tab < 4 ? (float)ui.tab : ui.focus;   /* four spirits on the armlet; CHEATS has none */
+    float d = remainderf(target - ui.focus, 4);
     ui.focus += d * (1 - expf(-dt * 6));
     float hy = ui.selected >= 0 && ui.selected < tab_count[ui.tab] ? row_y(ui.selected) : ui.hl_y;
     ui.hl_y += (hy - ui.hl_y) * k;

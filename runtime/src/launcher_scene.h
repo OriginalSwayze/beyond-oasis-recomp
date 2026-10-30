@@ -18,7 +18,9 @@ typedef struct { int w, h; uint32_t *rgb; uint8_t *mask; } Art;
 
 /* The spirits, in tab order: Dytto (water), Efreet (fire), Bow (plant), Shade (shadow). */
 typedef struct { const char *name, *element; Rgb light, deep; } Spirit;
-extern const Spirit spirits[4];
+/* The four spirits, and the Gold Armlet (SPIRIT_ARMLET) for pages of its own, like the cheats. */
+#define SPIRIT_ARMLET 4
+extern const Spirit spirits[5];
 
 /* Builds the parts that only change with the canvas size (sky, dunes, tablet, the art at
  * its size). Call after ui_begin(). */

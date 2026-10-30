@@ -26,7 +26,7 @@ typedef struct {
     int  x, y, w, h;                    /* screen position (x from the left of the 320 area) and size */
     uint16_t attr;
     bool player;                        /* drawn by the player character's object */
-    bool item;                          /* a dropped item (fx.c decides, after each game frame) */
+    bool item;                          /* a dropped item: gives no spirit particles (fx.c decides, after each game frame) */
     uint32_t px[32 * 32];               /* layer pixels, w x h, row pitch 32; 0 = transparent */
     uint32_t ref[32 * 32];              /* their tile references, with vdp_opts.tile_refs (texpack.h) */
 } HdSprite;
@@ -83,25 +83,14 @@ extern bool hd_texpack;
 extern float hd_time;                   /* seconds, for animations drawn with the layers */
 /* Water shimmers, foams, glints and reflects the sprites above it (while compositing). */
 extern bool hd_water;
-/* Dropped items float: their sprites are drawn a little higher, bobbing (fx.c finds them). */
-extern bool hd_items;
-/* Trees and grass sway in the wind (while compositing), in waves fixed to the world: the
- * game's camera (hd_cam_*, game pixels) places them; hd_cam_world says it is valid. */
-extern bool hd_foliage;
-extern float hd_cam_x, hd_cam_y;
-extern bool hd_cam_world;
 
-/* The finishing steps on the picture before it goes to the GPU (hd_post): dynamic lights,
- * glow, particles, sharpening. */
+/* The finishing steps on the picture before it goes to the GPU (hd_post): glow,
+ * particles, sharpening. */
 typedef struct {
     int   sharpen;                      /* 0-3 */
     int   lighting;                     /* 0 off, 1 soft, 2 bright: bright pixels glow */
     bool  elements;                     /* particles from the spirits and their magic (fx.c) */
     bool  footsteps;                    /* dust, grass and splashes where Ali walks (fx.c) */
-    bool  items;                        /* dropped items bob and sparkle (fx.c) */
-    bool  dynlight;                     /* the light map of lights.c: lights and soft shadows */
-    int   hd2d;                         /* HD-2D look: 0 off, 1 subtle, 2 full */
-    float focus_y;                      /* the row in focus for the depth of field (Ali's middle), game pixels */
     bool  world;                        /* the picture shows the game world (not a menu or story scene) */
     float cam_x, cam_y;                 /* the game's camera, in game pixels (particles stay put in the world) */
     float t;                            /* seconds, for animations */

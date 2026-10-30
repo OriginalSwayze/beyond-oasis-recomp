@@ -1,5 +1,6 @@
-/* Built-in cheats: RAM values held every frame, like a Pro Action Replay, plus one
- * recompiler patch (playerDamage in config/patches.json) for infinite health.
+/* Built-in cheats: RAM values held every frame, like a Pro Action Replay, plus recompiler
+ * patches (config/patches.json): playerDamage for infinite health, enemyDamage for the
+ * attack power (double, quadruple, one-hit kills), playerSpeed for the move speed.
  *
  * RAM used (from the disassembly):
  *   $FF19E8         player object; word +$00 is 2 while the player exists
@@ -15,6 +16,8 @@
 #include "settings.h"
 
 int patch_no_damage;
+int patch_attack;
+int patch_speed = 100;
 
 typedef struct { uint16_t addr; uint16_t value; bool word; } Code;
 
@@ -83,6 +86,9 @@ void cheats_frame(void) {
     }
     bool player = peek16(0x19E8) == 2;
     patch_no_damage = settings.cheat_health;
+    patch_attack = settings.cheat_attack;
+    static const int speeds[3] = { 100, 150, 200 };
+    patch_speed = speeds[settings.cheat_speed >= 0 && settings.cheat_speed < 3 ? settings.cheat_speed : 0];
     if (player && settings.cheat_health) fill(0x1A70, 0x1A72);
     if (player && settings.cheat_spirit) fill(0x1A74, 0x1A76);
     if (player && settings.cheat_weapons) hold_weapons();

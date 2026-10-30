@@ -21,7 +21,7 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | Smooth motion, 60-144 Hz+ (`runtime/src/hd.c`, `motion.c`) | done: moves every sprite by its object's movement between the game's 30 Hz ticks |
 | Display filters (`runtime/src/filter.c`) | done: scanlines, CRT, LCD |
 | Slowdown fix (`runtime/src/machine.c`) | done: 68000 at 150-300% |
-| Cheats (`runtime/src/cheats.c`) | done: infinite health and spirit, unbreakable weapons, RAM codes |
+| Cheats (`runtime/src/cheats.c`) | done: infinite health and spirit, unbreakable weapons, attack power, move speed, RAM codes |
 
 ## Testing
 
@@ -60,14 +60,13 @@ Other headless options:
 * `--input-check FILE`: rebind a few keys and buttons (including clashes), save them to FILE, load them back and print every binding
 * `--save-to N`, `--slot N`, `--states-base PREFIX`: save a slot at the end, pick the menu's slot,
   and keep test slots in `PREFIXstates/` instead of the real ones
-* `--hd-shot F.png SCALE`: save the last frame at internal resolution SCALE (2-4), with the time it took and the time of compositing alone
-* `--shot-time SECONDS`: the moment `--hd-shot` and `--filter-shot` draw animations at (swaying foliage, water)
+* `--hd-shot F.png SCALE`: save the last frame at internal resolution SCALE (2-4), with the time it took
 * `--sprite-check EVERY DIR SCALE`: every EVERY frames, compare the frame drawn layer by layer with the same frame drawn sprite by sprite (as smooth motion draws it); prints how many differ by more than 0.5% and saves the worst pair
 * `--smooth-check DIR SCALE`: smooth motion over the last 8 frames at 120 Hz; prints how far each picture is between ticks and how many sprites follow objects, and saves the pictures
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
-* `--lighting N` (0-2), `--elements 0|1`, `--items 0|1`, `--water 0|1`, `--dynlight 0|1`, `--hd2d N` (0-2), `--foliage 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
+* `--lighting N` (0-2), `--elements 0|1`, `--water 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
 * `--outfit a,b,...`, `--outfit-anims 0,1,...`: Ali's outfit colours and animations for this run (as `outfit_colors` and `outfit_anims` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
@@ -79,7 +78,7 @@ Other headless options:
 * `--volume N`: volume 0-100 for this run
 * `--overclock PERCENT`: run the 68000 at this speed (also below 100, to simulate a heavy scene); headless runs print the spare time, game ticks and late ticks
 * `--load N`: load slot N (from the `--states-base` folder) before the first frame
-* `--cheat health|spirit|weapons`: turn a built-in cheat on for this run
+* `--cheat health|spirit|weapons|double|quadruple|onehit|fast|veryfast`: turn a built-in cheat on for this run (repeatable)
 * `--poke FFxxxx:VV[VV],...`: hold RAM bytes or words every frame (applied after the built-in cheats)
 * `--wav F.wav`, `--pc-profile N` (hottest code over the last N frames: cycles per native block, instructions for interpreted code)
 
@@ -290,17 +289,11 @@ sprites of the spirits and their magic give off particles by colour: fire colour
 that rise and fade, light blue drops that splash up and fall, violet wisps that drift,
 bright green leaves that flutter down. Which object drew each sprite comes from motion.c,
 so Ali, the people and creatures of Oasis (object types $0032 and $003C in the character
-list), dropped items and the HUD give none, whatever their colours. Particles are placed
+list), dropped items and the HUD give none, whatever their colours. A dropped item is an
+object of the character list drawn as a single sprite of at most 16x16 that has stayed in
+place for a third of a second. Particles are placed
 in the world from the game's camera; a camera jump (a new scene) or loading a state clears
 them (`runtime/src/fx.c`).
-
-"Item animations" (`items`): dropped items float a little above the ground, bobbing, on a
-soft warm glow that breathes, with a four-pointed glint crossing them every few seconds.
-An item is an object of the character list (not Ali, not one of the people or creatures)
-drawn as a single sprite of at most 16x16 that has stayed in place for a third of a second.
-Only the picture changes: the sprite is drawn higher where the layers are put together, so
-the game, its collisions and pick-ups are exactly as they were. With this on the sprites are
-always drawn one by one, as smooth motion draws them (it costs well under a millisecond).
 
 "Water" (`water`): water is found by colour at the game's resolution (the plane pixel on
 top clearly blue, in runs at least five pixels wide, so blue details on land are left
@@ -317,48 +310,6 @@ the opening beach is the test scene, and a 4x frame takes about the same time wi
 the world), every few frames the ground under his feet decides what he kicks up: water
 splashes (a widening ring and drops), grass gives bits of green that hop away, anything
 else a puff of dust in the ground's own colour.
-
-"Dynamic lights" (`dynamic_lights`): the spirits and their magic (the same sprites that give
-off elemental particles) become lights in the colour of their bright, vivid pixels, one per
-object, moving with it. In dark scenes, the background's fire colours (torches, braziers)
-become flickering lights too. They are not looked for in daylight, since the village's straw
-roofs are the same colours. The characters' sprites make an occluder map at half the game's
-resolution. From each light, 256 rays are marched outward across it, keeping how much light
-gets through; the rays are blurred into their neighbours for soft-edged shadows. The light
-map this builds once per game frame is laid over each picture with an ordered dither, so
-gentle gradients show no rings. A scene's mean brightness tells a cave or a night from
-daylight. Dark scenes keep about 70% of their own light, eased over a second; in daylight the
-lights show only a little, and the shadows they cast darken the ground slightly
-(`runtime/src/lights.c`). `--test-light X,Y,R,G,B,RADIUS` places a light by hand.
-
-"Swaying foliage" (`foliage`): tree tops sway in slow waves of wind with gusts and the
-grass flutters, while the layers are put together. Plane A holds the trees and the grass;
-plane B is often just a flat fill under it. Tree canopies are plane A's high-priority
-pixels (characters walk under them) in a palette line that is mostly green. Grass is its
-low-priority green pixels: tufts and leaves on the ground. Shifting a flat green area
-changes nothing, so only they visibly move. Each such pixel is taken from a little to the
-side: canopies by up to a game pixel, grass by about half that and quicker. A pixel next to
-a swaying canopy takes the canopy's pixel as it sways over; where the canopy sways away,
-the ground beside it shows. The waves are fixed to the world through the camera, and
-`sin(a + b)` is split into a column part and a row part, so no sine is taken per pixel.
-Sprites, water and priorities are untouched, and so is the game. Now and then a leaf lets go
-of a tree top in the tree's own green and tumbles down (`fx.c`). It needs the layered
-drawing, as item animations and water do, and costs about 1.5 ms at 4x.
-
-"HD-2D look" (Off, Subtle, Full; `hd2d`) gives the diorama look of modern HD-2D games:
-* Depth of field like a tilt-shift photo. A soft copy of the picture (a quarter of the
-  game's resolution, box-blurred twice) is blended in towards the top and bottom of the
-  screen, away from the band around Ali. The HUD's sprites and the window plane stay
-  sharp, pixel by pixel.
-* Light shafts in daylight: warm beams falling from the upper left, drifting slowly. They
-  come from a one-dimensional pattern across the beams, shifted by half the camera's
-  movement so they sit a little behind the scene, and fade out as the scene darkens.
-* Grading: a gentle S-curve, warm highlights, cool shadows, a little more colour and a
-  soft vignette, with an ordered dither so the soft parts show no contour bands.
-* On Full, dust motes drift and twinkle in daylight.
-
-It costs about 2 ms per picture at 4x. Pair it with Lighting and Dynamic lights for the
-full effect.
 
 These, and sharpening, run on the picture before it goes to the GPU (`hd_post`), so the
 display filters still apply on top. None of them change the game. The rows are split into
@@ -453,12 +404,26 @@ character's clothes, hair, skin and jewellery, and can animate them (`runtime/sr
 
 ## Cheats
 
-The "Cheats" row (pause menu and launcher) steps through Off, Health, Health + spirit
-and All; `cheat_health`, `cheat_spirit` and `cheat_weapons` in `settings.ini` set each one.
+The CHEATS tab (pause menu and launcher, themed after the Gold Armlet) has each cheat on a
+row of its own; `cheat_health`, `cheat_spirit`, `cheat_weapons`, `cheat_attack` (0-3) and
+`cheat_speed` (0-2) in `settings.ini` hold them.
 
 * **Infinite health.** The player's hit handler subtracts no damage (a recompiler patch
   at `$005884`, `playerDamage` in `config/patches.json`), and the health is held full.
 * **Infinite spirit.** Spirit power is held full once Ali has a spirit.
+* **Attack power: Double, Quadruple, One-hit kill.** The enemies' hit handlers subtract the
+  damage (after their defence, +$92) from their HP (+$8A) at four places (`$01D494`,
+  `$01E33A`, `$02A07E`, `$02C010`, `enemyDamage` in `config/patches.json`). These take
+  2x or 4x the damage, or all the HP left (`enemy_damage()` in `recomp_rt.h`). The game
+  itself decides what follows, so enemies die as they always do.
+* **Move speed: Fast (1.5x), Very fast (2x).** The move-with-collision routine loads an
+  object's movement for the tick (+$72 x, +$76 y, 16.16) at four places (`$009078`,
+  `$00970E`, `$009200`, `$0097EA`, `playerSpeed`); for Ali's object (`$FF19E8`) it is
+  scaled (`player_move()`). The map collision still runs on the scaled step, so walls
+  stop him as before. A scripted scene that walks Ali to a spot may overshoot; set it back
+  to Normal if one stalls.
+
+With every cheat off, the patched instructions do exactly what the original ones do.
 * **Unbreakable weapons.** Breakable weapons keep their uses (a weapon on its last use
   gets two). Turning the cheat off leaves them with the count they had.
 

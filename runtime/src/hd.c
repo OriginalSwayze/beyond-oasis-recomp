@@ -9,7 +9,6 @@
 #include "hd.h"
 #include "motion.h"
 #include "fx.h"
-#include "lights.h"
 #include "texpack.h"
 
 #include <math.h>
@@ -435,95 +434,6 @@ typedef struct {
 } ComposeJob;
 
 float hd_time;
-bool hd_items;
-bool hd_foliage;
-float hd_cam_x, hd_cam_y;
-bool hd_cam_world;
-
-/* ---- Foliage ------------------------------------------------------------------------- *
- * Plane A holds the trees and the grass (plane B is often a flat fill under it). Tree
- * canopies are its high-priority pixels (characters walk under them) in a palette line
- * that is mostly green; grass is its low-priority green pixels: tufts and leaves on the
- * ground (shifting a flat green area changes nothing, so only they visibly move). While
- * the layers are put together, each such pixel is taken from a little to the side: a
- * canopy by up to a game pixel in slow waves with gusts, grass by about half that,
- * quicker. A pixel next to a moving canopy takes the canopy's pixel as it sways over, and
- * where the canopy sways away the ground beside it shows. The waves are fixed to the world
- * (the camera), sin(a + b) split into a column part and a row part so no sine is taken
- * per pixel. Sprites, water and priorities are untouched. */
-enum { SWAY_CANOPY = 1, SWAY_GRASS = 2 };
-static uint8_t sway_class[64];          /* per colour index: SWAY_* it can be */
-static float *sway_s1, *sway_c1, *sway_s2, *sway_c2;
-static int sway_w, sway_scale;
-static float sway_gust;
-
-static void make_sway(int scale) {
-    bool line_green[4];
-    for (int l = 0; l < 4; l++) {
-        int n = 0;
-        for (int c = 1; c < 16; c++) {
-            uint16_t v = vdp.cram[l * 16 + c];
-            int r = (v >> 1) & 7, g = (v >> 5) & 7, b = (v >> 9) & 7;
-            n += g > r && g * 4 >= b * 3;
-        }
-        line_green[l] = n >= 5;
-    }
-    for (int i = 0; i < 64; i++) {
-        uint16_t v = vdp.cram[i];
-        int r = (v >> 1) & 7, g = (v >> 5) & 7, b = (v >> 9) & 7;
-        bool green = g > r && g * 4 >= b * 3, dark = r + g + b <= 5;
-        sway_class[i] = (uint8_t)((i & 15) ? (line_green[i >> 4] && (green || dark) ? SWAY_CANOPY : 0) | (green ? SWAY_GRASS : 0) : 0);
-    }
-    if (hd_w > sway_w || scale != sway_scale) {
-        free(sway_s1); free(sway_c1); free(sway_s2); free(sway_c2);
-        sway_s1 = malloc(sizeof(float) * (size_t)hd_w); sway_c1 = malloc(sizeof(float) * (size_t)hd_w);
-        sway_s2 = malloc(sizeof(float) * (size_t)hd_w); sway_c2 = malloc(sizeof(float) * (size_t)hd_w);
-        sway_w = hd_w; sway_scale = scale;
-    }
-    for (int x = 0; x < hd_w; x++) {
-        float wx = (x + .5f) / scale - hd_frame.extra + hd_cam_x;
-        sway_s1[x] = sinf(wx * .045f); sway_c1[x] = cosf(wx * .045f);
-        sway_s2[x] = sinf(wx * .13f); sway_c2[x] = cosf(wx * .13f);
-    }
-    sway_gust = .6f + .25f * sinf(hd_time * .37f) + .15f * sinf(hd_time * .91f + 1.7f);
-}
-
-static inline int sway_kind(uint32_t a) {
-    uint8_t lb = (uint8_t)(a >> 16);
-    if (!(lb & 0x0F) || (lb & HD_WINDOW)) return 0;
-    uint8_t c = sway_class[lb & 0x3F];
-    return lb & 0x40 ? c & SWAY_CANOPY : c & SWAY_GRASS;
-}
-
-/* One row of plane A swayed: dst[x] from row (already offset by dxa), window pixels from row0. */
-static void sway_row(uint32_t *dst, const uint32_t *row, const uint32_t *row0, int dxa, int y, int scale) {
-    float wy = (y + .5f) / scale + hd_cam_y;
-    float p1 = hd_time * 1.6f + wy * .03f, p2 = hd_time * 3.1f - wy * .09f;
-    float rs1 = sinf(p1), rc1 = cosf(p1), rs2 = sinf(p2), rc2 = cosf(p2);
-    float ka = scale * 1.1f * sway_gust, kg = scale * .55f * sway_gust;
-    for (int x = 0; x < hd_w; x++) {
-        int xa = x + dxa;
-        xa = xa < 0 ? 0 : xa >= hd_w ? hd_w - 1 : xa;
-        uint32_t a = row[xa];
-        if ((row0[x] >> 16) & HD_WINDOW) { dst[x] = row0[x]; continue; }
-        float w1 = sway_s1[x] * rc1 + sway_c1[x] * rs1, w2 = sway_s2[x] * rc2 + sway_c2[x] * rs2;
-        int oc = (int)lrintf(ka * (.75f * w1 + .25f * w2)), og = (int)lrintf(kg * (.4f * w1 + .6f * w2));
-        int kind = sway_kind(a);
-        if (oc) {
-            int xs = xa + oc;
-            xs = xs < 0 ? 0 : xs >= hd_w ? hd_w - 1 : xs;
-            uint32_t s = row[xs];
-            if (sway_kind(s) == SWAY_CANOPY || kind == SWAY_CANOPY) { dst[x] = s; continue; }
-        }
-        if (og && kind == SWAY_GRASS) {
-            int xs = xa + og;
-            xs = xs < 0 ? 0 : xs >= hd_w ? hd_w - 1 : xs;
-            uint32_t s = row[xs];
-            if (sway_kind(s) == SWAY_GRASS || !((s >> 16) & 0x40)) { dst[x] = s; continue; }
-        }
-        dst[x] = a;
-    }
-}
 
 /* ---- Water ----------------------------------------------------------------------------- *
  * Water is found by colour at the game's resolution: the plane pixel on top is clearly
@@ -702,17 +612,8 @@ static inline uint32_t compose_tex(uint32_t a, uint32_t b, uint32_t s, uint32_t 
     return t >= 0xFF000000u ? t & 0xFFFFFF : vdp_compose(a, b, s, backdrop, sh);
 }
 
-/* A row for the swayed plane A, one per thread, kept between pictures. */
-static uint32_t *sway_scratch(void) {
-    static _Thread_local uint32_t *row;
-    static _Thread_local int cap;
-    if (cap < hd_w) { free(row); row = malloc(sizeof(uint32_t) * (size_t)hd_w); cap = row ? hd_w : 0; }
-    return row;
-}
-
 static int compose_band(void *arg) {
     const ComposeJob *j = arg;
-    uint32_t *swayed = NULL;
     int scale = j->scale;
     const uint32_t *sprites = j->sprites;
     const int *ox_a = j->ox_a, *oy_a = j->oy_a, *ox_b = j->ox_b, *oy_b = j->oy_b;
@@ -732,19 +633,7 @@ static int compose_band(void *arg) {
         const uint32_t *ra0 = scaled[0] + (size_t)y * hd_w;
         bool tex = hd_texpack && tex_cap;
         const uint32_t *tsrow = tex ? (sprites == sprite_layer ? sprite_tex_layer : tex_layer[2]) + (size_t)y * hd_w : NULL;
-        if (hd_foliage && hd_cam_world && !tex && (swayed || (swayed = sway_scratch()))) {
-            int ya = ox_a ? y + oy_a[line] : y, yb = ox_a ? y + oy_b[line] : y;
-            ya = ya < 0 ? 0 : ya >= hd_h ? hd_h - 1 : ya;
-            yb = yb < 0 ? 0 : yb >= hd_h ? hd_h - 1 : yb;
-            int dxa = ox_a ? ox_a[line] : 0, dxb = ox_b ? ox_b[line] : 0;
-            sway_row(swayed, scaled[0] + (size_t)ya * hd_w, ra0, dxa, y, scale);
-            const uint32_t *rb = scaled[1] + (size_t)yb * hd_w;
-            for (int x = 0; x < hd_w; x++) {
-                int xb = x + dxb;
-                xb = xb < 0 ? 0 : xb >= hd_w ? hd_w - 1 : xb;
-                out[x] = vdp_compose(swayed[x], rb[xb], rs[x], backdrop, sh);
-            }
-        } else if (!ox_a) {
+        if (!ox_a) {
             const uint32_t *rb = scaled[1] + (size_t)y * hd_w;
             if (tex) {
                 const uint32_t *ta = tex_layer[0] + (size_t)y * hd_w, *tb = tex_layer[1] + (size_t)y * hd_w;
@@ -805,7 +694,6 @@ static void compose_part(void *ctx, int y0, int y1) {
 static void compose_rows(int scale, const uint32_t *sprites, const int *ox_a, const int *oy_a,
                          const int *ox_b, const int *oy_b) {
     if (hd_water) make_water(scale, sprites);
-    if (hd_foliage && hd_cam_world) make_sway(scale);
     ComposeJob cj = { scale, 0, 0, sprites, ox_a, oy_a, ox_b, oy_b };
     run_bands(compose_part, &cj, hd_h);
 }
@@ -870,8 +758,7 @@ const uint32_t *hd_sharpen(const uint32_t *src, int w, int h, int pitch, int lev
  * gathered into a picture an eighth the size, blurred at two sizes, and laid over the
  * picture with a screen blend, so they glow into their surroundings. The glow is made
  * once per game frame, not for every in-between picture. */
-typedef struct { const uint32_t *src; uint32_t *dst; int w, h, pitch, y0, y1;
-                 bool bloom; const float *lmap; int lw, lh, lscale; } PostJob;
+typedef struct { const uint32_t *src; uint32_t *dst; int w, h, pitch, y0, y1; } PostJob;
 
 static float *bloom, *bloom_tmp;
 static int bloom_w, bloom_h, bloom_f;
@@ -966,30 +853,6 @@ static void make_columns(int w) {
     col_w = w; col_f = bloom_f;
 }
 
-/* The light map's columns: for each picture column, the two cells it lies between. */
-static int *lcol_x0, *lcol_x1;
-static float *lcol_tx;
-static int lcol_w, lcol_scale;
-
-static void make_light_columns(int w, int scale, int lw) {
-    if (w == lcol_w && scale == lcol_scale) return;
-    free(lcol_x0); free(lcol_x1); free(lcol_tx);
-    lcol_x0 = malloc(sizeof(int) * (size_t)w); lcol_x1 = malloc(sizeof(int) * (size_t)w); lcol_tx = malloc(sizeof(float) * (size_t)w);
-    float per = (float)(scale * LIGHT_CELL);
-    for (int x = 0; x < w; x++) {
-        float fx = (x + .5f) / per - .5f;
-        int x0 = (int)floorf(fx), x1 = x0 + 1;
-        lcol_tx[x] = fx - x0;
-        lcol_x0[x] = x0 < 0 ? 0 : x0 >= lw ? lw - 1 : x0;
-        lcol_x1[x] = x1 < 0 ? 0 : x1 >= lw ? lw - 1 : x1;
-    }
-    lcol_w = w; lcol_scale = scale;
-}
-
-/* An ordered dither of a quarter step: the lights change the colours by fractions of a
- * step over wide flat areas, which rounding alone would show as rings. */
-static const float dither4[4][4] = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
-
 static int post_rows(void *arg) {
     const PostJob *j = arg;
     int f = bloom_f, bw = bloom_w, bh = bloom_h;
@@ -1000,45 +863,20 @@ static int post_rows(void *arg) {
         int y0 = (int)floorf(fy), y1 = y0 + 1;
         float ty = fy - y0;
         y0 = y0 < 0 ? 0 : y0 >= bh ? bh - 1 : y0; y1 = y1 < 0 ? 0 : y1 >= bh ? bh - 1 : y1;
-        const float *lr0 = NULL, *lr1 = NULL;
-        float lty = 0;
-        if (j->lmap) {
-            float ly = (y + .5f) / (j->lscale * LIGHT_CELL) - .5f;
-            int a0 = (int)floorf(ly), a1 = a0 + 1;
-            lty = ly - a0;
-            a0 = a0 < 0 ? 0 : a0 >= j->lh ? j->lh - 1 : a0; a1 = a1 < 0 ? 0 : a1 >= j->lh ? j->lh - 1 : a1;
-            lr0 = j->lmap + (size_t)a0 * LIGHT_MAP_W * 4; lr1 = j->lmap + (size_t)a1 * LIGHT_MAP_W * 4;
-        }
         for (int x = 0; x < j->w; x++) {
             uint32_t p = s[x];
             float r = ((p >> 16) & 255) * (1 / 255.f), g = ((p >> 8) & 255) * (1 / 255.f), b = (p & 255) * (1 / 255.f);
-            if (lr0) {
-                /* Dynamic lights: the surface keeps its share of its own light and takes on the
-                 * lights' colour, with a faint glow in the air. */
-                const float *a = lr0 + lcol_x0[x] * 4, *bb = lr0 + lcol_x1[x] * 4, *c = lr1 + lcol_x0[x] * 4, *d = lr1 + lcol_x1[x] * 4;
-                float tx = lcol_tx[x], l[4];
-                for (int k = 0; k < 4; k++) {
-                    float top = a[k] + (bb[k] - a[k]) * tx, bot = c[k] + (d[k] - c[k]) * tx;
-                    l[k] = top + (bot - top) * lty;
-                }
-                r = fminf(r * (l[3] + l[0] * .9f) + l[0] * .05f, 1);
-                g = fminf(g * (l[3] + l[1] * .9f) + l[1] * .05f, 1);
-                b = fminf(b * (l[3] + l[2] * .9f) + l[2] * .05f, 1);
+            int x0 = col_x0[x], x1 = col_x1[x];
+            float tx = col_tx[x];
+            const float *a = bloom + ((size_t)y0 * bw + x0) * 3, *bb = bloom + ((size_t)y0 * bw + x1) * 3;
+            const float *c = bloom + ((size_t)y1 * bw + x0) * 3, *d = bloom + ((size_t)y1 * bw + x1) * 3;
+            float l[3];
+            for (int k = 0; k < 3; k++) {
+                float top = a[k] + (bb[k] - a[k]) * tx, bot = c[k] + (d[k] - c[k]) * tx;
+                l[k] = fminf((top + (bot - top) * ty) * light_k, 1);
             }
-            if (j->bloom) {
-                int x0 = col_x0[x], x1 = col_x1[x];
-                float tx = col_tx[x];
-                const float *a = bloom + ((size_t)y0 * bw + x0) * 3, *bb = bloom + ((size_t)y0 * bw + x1) * 3;
-                const float *c = bloom + ((size_t)y1 * bw + x0) * 3, *d = bloom + ((size_t)y1 * bw + x1) * 3;
-                float l[3];
-                for (int k = 0; k < 3; k++) {
-                    float top = a[k] + (bb[k] - a[k]) * tx, bot = c[k] + (d[k] - c[k]) * tx;
-                    l[k] = fminf((top + (bot - top) * ty) * light_k, 1);
-                }
-                r = 1 - (1 - r) * (1 - l[0]); g = 1 - (1 - g) * (1 - l[1]); b = 1 - (1 - b) * (1 - l[2]);
-            }
-            float round = lr0 ? (dither4[y & 3][x & 3] + .5f) / 16 : .5f;
-            o[x] = (uint32_t)((int)(r * 255 + round) << 16 | (int)(g * 255 + round) << 8 | (int)(b * 255 + round));
+            r = 1 - (1 - r) * (1 - l[0]); g = 1 - (1 - g) * (1 - l[1]); b = 1 - (1 - b) * (1 - l[2]);
+            o[x] = (uint32_t)((int)(r * 255 + .5f) << 16 | (int)(g * 255 + .5f) << 8 | (int)(b * 255 + .5f));
         }
     }
     return 0;
@@ -1050,272 +888,34 @@ static void post_part(void *ctx, int y0, int y1) {
     post_rows(&j);
 }
 
-static void hd2d(uint32_t *px, int w, int h, const HdPost *p);   /* below */
-
 const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPost *p) {
     static uint32_t *buf;
     static size_t cap;
     bool light = p->lighting > 0;
-    bool world_fx = p->world && (p->elements || p->footsteps || p->items || p->hd2d >= 2);
-    bool look = p->hd2d > 0 && hd_frame.w > 0 && w / hd_frame.w == p->scale;
-    int lw = 0, lh = 0;
-    const float *lmap = p->dynlight && p->world ? lights_map(&lw, &lh) : NULL;
-    if (light || lmap || world_fx || look) {
+    bool world_fx = p->world && (p->elements || p->footsteps);
+    if (light || world_fx) {
         size_t need = (size_t)w * h;
         if (need > cap) { free(buf); buf = malloc(need * 4); cap = buf ? need : 0; }
         if (buf) {
-            if (light || lmap) {
-                if (light) {
-                    static unsigned made_for;
-                    static int made_w, made_level;
-                    if (made_for != hd_serial || made_w != w || made_level != p->lighting) {
-                        make_bloom(src, w, h, pitch, p->lighting);   /* once per game frame */
-                        made_for = hd_serial; made_w = w; made_level = p->lighting;
-                    }
-                    make_columns(w);
+            if (light) {
+                static unsigned made_for;
+                static int made_w, made_level;
+                if (made_for != hd_serial || made_w != w || made_level != p->lighting) {
+                    make_bloom(src, w, h, pitch, p->lighting);   /* once per game frame */
+                    made_for = hd_serial; made_w = w; made_level = p->lighting;
                 }
-                if (lmap) make_light_columns(w, p->scale, lw);
-                PostJob pj = { src, buf, w, h, pitch, 0, 0, light, lmap, lw, lh, p->scale };
+                make_columns(w);
+                PostJob pj = { src, buf, w, h, pitch, 0, 0 };
                 run_bands(post_part, &pj, h);
             } else {
                 for (int y = 0; y < h; y++) memcpy(buf + (size_t)y * w, src + (size_t)y * pitch, (size_t)w * 4);
             }
-            if (look) hd2d(buf, w, h, p);
             if (world_fx) fx_draw(buf, w, h, p);
             src = buf;
             pitch = w;
         }
     }
     return hd_sharpen(src, w, h, pitch, p->sharpen);
-}
-
-/* ---- HD-2D ---------------------------------------------------------------------------- *
- * The look of modern "HD-2D" games, over the finished picture:
- * - depth of field like a tilt-shift photo: a soft copy of the picture (a quarter of the
- *   game's resolution, blurred) is blended in towards the top and bottom, away from the
- *   band around Ali; the HUD (its sprites and the window plane) stays sharp;
- * - light shafts in daylight: soft warm beams falling from the upper left, drifting
- *   slowly, from a one-dimensional pattern across the beams, shifted by half the camera so
- *   they sit a little behind the scene;
- * - grading: a gentle S-curve, warm highlights, cool shadows, a little more colour, and a
- *   soft vignette. */
-typedef struct { uint32_t *px; int w, h, y0, y1, scale, level; float focus_y, shaft_k, t; } Hd2dJob;
-
-static float *soft, *soft_tmp;          /* the soft copy, 3 floats per cell */
-static int soft_w, soft_h, soft_cell;   /* soft_cell: picture pixels per cell */
-static float *shaft;                    /* shaft brightness along the across-beam axis (game pixels) */
-static int shaft_n, shaft_off;
-static uint8_t keep_sharp[HD_MAX_H][HD_MAX_W];   /* the HUD, at the game's resolution */
-static unsigned sharp_for;
-static float grade_lut[2][256][3];
-/* Per picture column: the vignette, the game pixel, the two soft cells it lies between,
- * and its part of the across-beam position. */
-static float *vig_x, *col_stx, *col_u;
-static int *col_gx, *col_s0, *col_s1;
-static int vig_w, vig_scale, vig_cell;
-
-static void make_hd2d_columns(int w, int scale) {
-    if (w == vig_w && scale == vig_scale && soft_cell == vig_cell) return;
-    free(vig_x); free(col_stx); free(col_u); free(col_gx); free(col_s0); free(col_s1);
-    vig_x = malloc(sizeof(float) * (size_t)w); col_stx = malloc(sizeof(float) * (size_t)w); col_u = malloc(sizeof(float) * (size_t)w);
-    col_gx = malloc(sizeof(int) * (size_t)w); col_s0 = malloc(sizeof(int) * (size_t)w); col_s1 = malloc(sizeof(int) * (size_t)w);
-    for (int x = 0; x < w; x++) {
-        float n = (x + .5f) / w * 2 - 1, fx = (x + .5f) / scale;
-        vig_x[x] = n * n;
-        col_gx[x] = (int)fx < hd_frame.w ? (int)fx : hd_frame.w - 1;
-        col_u[x] = fx * .87f;
-        float sx = (x + .5f) / soft_cell - .5f;
-        int a0 = (int)floorf(sx), a1 = a0 + 1;
-        col_stx[x] = sx - a0;
-        col_s0[x] = (a0 < 0 ? 0 : a0 >= soft_w ? soft_w - 1 : a0) * 3;
-        col_s1[x] = (a1 < 0 ? 0 : a1 >= soft_w ? soft_w - 1 : a1) * 3;
-    }
-    vig_w = w; vig_scale = scale; vig_cell = soft_cell;
-}
-
-static void make_keep_sharp(void) {
-    if (sharp_for == hd_serial) return;
-    sharp_for = hd_serial;
-    const HdFrame *f = &hd_frame;
-    memset(keep_sharp, 0, sizeof keep_sharp);
-    for (int y = 0; y < f->h; y++)
-        for (int x = 0; x < f->w; x++)
-            if (((f->a[y][x] >> 16) & HD_WINDOW) && (f->a[y][x] >> 16) & 0x0F) keep_sharp[y][x] = 1;
-    for (int i = 0; i < 80; i++) {
-        const HdSprite *s = &f->sprites[i];
-        if (!s->drawn || !(s->attr & 0x8000)) continue;
-        for (int y = 0; y < s->h; y++)
-            for (int x = 0; x < s->w; x++) {
-                if (!s->px[y * 32 + x]) continue;
-                for (int dy = -1; dy <= 1; dy++)    /* its pixels and the edge around them */
-                    for (int dx = -1; dx <= 1; dx++) {
-                        int fy = s->y + y + dy, fx = s->x + f->extra + x + dx;
-                        if (fy >= 0 && fx >= 0 && fy < f->h && fx < f->w) keep_sharp[fy][fx] = 1;
-                    }
-            }
-    }
-}
-
-static void make_grade(void) {
-    static bool made;
-    if (made) return;
-    made = true;
-    for (int lv = 0; lv < 2; lv++) {
-        float k = lv ? 1 : .55f;
-        for (int i = 0; i < 256; i++) {
-            float v = i / 255.f, s = v * v * (3 - 2 * v);
-            v += (s - v) * .3f * k;                     /* a gentle S-curve */
-            float hi = v * v, sh = (1 - v) * (1 - v);
-            grade_lut[lv][i][0] = v + (.035f * hi - .02f * sh) * k;     /* warm highlights, cool shadows */
-            grade_lut[lv][i][1] = v + (.012f * hi + .008f * sh) * k;
-            grade_lut[lv][i][2] = v + (-.03f * hi + .035f * sh) * k;
-        }
-    }
-}
-
-/* The soft copy: each cell the mean of a few samples, then a box blur twice. */
-static void make_soft(const uint32_t *px, int w, int h, int scale, int level) {
-    int cell = scale * 4;
-    int sw = (w + cell - 1) / cell, sh = (h + cell - 1) / cell;
-    if (sw != soft_w || sh != soft_h || cell != soft_cell) {
-        free(soft); free(soft_tmp);
-        soft = malloc(sizeof(float) * 3 * (size_t)sw * sh);
-        soft_tmp = malloc(sizeof(float) * (size_t)(sw > sh ? sw : sh) * 3);
-        soft_w = sw; soft_h = sh; soft_cell = cell;
-    }
-    int step = cell / 4 > 1 ? cell / 4 : 1;
-    for (int cy = 0; cy < sh; cy++)
-        for (int cx = 0; cx < sw; cx++) {
-            float acc[3] = { 0, 0, 0 };
-            int n = 0;
-            for (int y = cy * cell + step / 2; y < cy * cell + cell && y < h; y += step)
-                for (int x = cx * cell + step / 2; x < cx * cell + cell && x < w; x += step) {
-                    uint32_t p = px[(size_t)y * w + x];
-                    acc[0] += (p >> 16) & 255; acc[1] += (p >> 8) & 255; acc[2] += p & 255;
-                    n++;
-                }
-            float *o = soft + ((size_t)cy * sw + cx) * 3;
-            for (int c = 0; c < 3; c++) o[c] = n ? acc[c] / n : 0;
-        }
-    int r = level >= 2 ? 2 : 1;
-    for (int pass = 0; pass < 2; pass++) {
-        for (int y = 0; y < sh; y++) {
-            float *row = soft + (size_t)y * sw * 3;
-            for (int x = 0; x < sw; x++)
-                for (int c = 0; c < 3; c++) {
-                    float s = 0;
-                    for (int k = -r; k <= r; k++) { int xx = x + k < 0 ? 0 : x + k >= sw ? sw - 1 : x + k; s += row[xx * 3 + c]; }
-                    soft_tmp[x * 3 + c] = s / (2 * r + 1);
-                }
-            memcpy(row, soft_tmp, sizeof(float) * 3 * (size_t)sw);
-        }
-        for (int x = 0; x < sw; x++) {
-            for (int y = 0; y < sh; y++)
-                for (int c = 0; c < 3; c++) {
-                    float s = 0;
-                    for (int k = -r; k <= r; k++) { int yy = y + k < 0 ? 0 : y + k >= sh ? sh - 1 : y + k; s += soft[((size_t)yy * sw + x) * 3 + c]; }
-                    soft_tmp[y * 3 + c] = s / (2 * r + 1);
-                }
-            for (int y = 0; y < sh; y++) for (int c = 0; c < 3; c++) soft[((size_t)y * sw + x) * 3 + c] = soft_tmp[y * 3 + c];
-        }
-    }
-}
-
-/* Brightness of the beams along the axis across them, at time t. */
-static void make_shafts(int fw, int fh, float cam_x, float cam_y, float t) {
-    int n = fw + fh + 2;
-    if (n > shaft_n) { free(shaft); shaft = malloc(sizeof(float) * (size_t)n); shaft_n = shaft ? n : 0; }
-    if (!shaft) return;
-    shaft_off = fh / 2 + 1;
-    float shift = (cam_x * .87f - cam_y * .5f) * .5f;
-    for (int u = 0; u < n; u++) {
-        float x = (u - shaft_off + shift) * .05f;
-        float v = .5f * sinf(x * 1.0f + t * .11f) + .3f * sinf(x * 2.3f - t * .17f + 1.3f) + .2f * sinf(x * 5.1f + t * .07f + 4.1f);
-        v = (v - .25f) / .75f;
-        shaft[u] = v > 0 ? v * v : 0;
-    }
-}
-
-static int hd2d_rows(void *arg) {
-    const Hd2dJob *j = arg;
-    int lv = j->level >= 2 ? 1 : 0;
-    float band = lv ? 56 : 70, ramp = lv ? 90 : 100, maxw = lv ? .85f : .6f;
-    float vig = lv ? .26f : .16f;
-    const HdFrame *f = &hd_frame;
-    for (int y = j->y0; y < j->y1; y++) {
-        uint32_t *o = j->px + (size_t)y * j->w;
-        float fy = (y + .5f) / j->scale;
-        int gy = (int)fy < f->h ? (int)fy : f->h - 1;
-        /* Depth of field: how soft this row is. */
-        float d = fabsf(fy - j->focus_y) - band, dof = d > 0 ? d / ramp : 0;
-        dof = dof > 1 ? 1 : dof;
-        dof = dof * dof * (3 - 2 * dof) * maxw;
-        float sy = (y + .5f) / soft_cell - .5f;
-        int s0 = (int)floorf(sy), s1 = s0 + 1;
-        float ty = sy - s0;
-        s0 = s0 < 0 ? 0 : s0 >= soft_h ? soft_h - 1 : s0; s1 = s1 < 0 ? 0 : s1 >= soft_h ? soft_h - 1 : s1;
-        const float *r0 = soft + (size_t)s0 * soft_w * 3, *r1 = soft + (size_t)s1 * soft_w * 3;
-        float ny = (y + .5f) / j->h * 2 - 1, vy = ny * ny;
-        float down = 1 - fy / f->h;                     /* beams are strongest at the top */
-        float beam_k = j->shaft_k * down * sqrtf(down > 0 ? down : 0);
-        const uint8_t *sharp_row = keep_sharp[gy];
-        float u_row = shaft_off - fy * .5f;
-        const float *dith = dither4[y & 3];
-        for (int x = 0; x < j->w; x++) {
-            uint32_t p = o[x];
-            float c[3] = { (float)((p >> 16) & 255), (float)((p >> 8) & 255), (float)(p & 255) };
-            if (dof > 0 && !sharp_row[col_gx[x]]) {
-                int a0 = col_s0[x], a1 = col_s1[x];
-                float tx = col_stx[x];
-                for (int k = 0; k < 3; k++) {
-                    float top = r0[a0 + k] + (r0[a1 + k] - r0[a0 + k]) * tx;
-                    float bot = r1[a0 + k] + (r1[a1 + k] - r1[a0 + k]) * tx;
-                    c[k] += (top + (bot - top) * ty - c[k]) * dof;
-                }
-            }
-            /* Grading, then a little more colour. */
-            float g[3];
-            for (int k = 0; k < 3; k++) {
-                int i = (int)(c[k] + .5f);
-                g[k] = grade_lut[lv][i > 255 ? 255 : i][k];
-            }
-            float lum = g[0] * .3f + g[1] * .55f + g[2] * .15f, sat = lv ? 1.12f : 1.06f;
-            for (int k = 0; k < 3; k++) g[k] = lum + (g[k] - lum) * sat;
-            if (beam_k > 0) {
-                int u = (int)(col_u[x] + u_row);
-                float b = shaft[u < 0 ? 0 : u >= shaft_n ? shaft_n - 1 : u] * beam_k;
-                g[0] += b; g[1] += b * .93f; g[2] += b * .75f;
-            }
-            float v = 1 - vig * (vig_x[x] + vy) * .5f;
-            int out[3];
-            for (int k = 0; k < 3; k++) {
-                float q = g[k] * v * 255 + (dith[x & 3] + .5f) / 16;   /* no contour bands in the soft parts */
-                out[k] = q < 0 ? 0 : q > 255 ? 255 : (int)q;
-            }
-            o[x] = (uint32_t)(out[0] << 16 | out[1] << 8 | out[2]);
-        }
-    }
-    return 0;
-}
-
-static void hd2d_part(void *ctx, int y0, int y1) {
-    Hd2dJob j = *(const Hd2dJob *)ctx;
-    j.y0 = y0; j.y1 = y1;
-    hd2d_rows(&j);
-}
-
-static void hd2d(uint32_t *px, int w, int h, const HdPost *p) {
-    make_grade();
-    make_keep_sharp();
-    make_soft(px, w, h, p->scale, p->hd2d);
-    make_hd2d_columns(w, p->scale);
-    /* Beams in daylight only, fading out as the scene darkens. */
-    float day = 1 - lights_darkness() * 2.5f;
-    float shaft_k = p->world && day > 0 ? (p->hd2d >= 2 ? .14f : .08f) * day : 0;
-    if (shaft_k > 0) make_shafts(hd_frame.w, hd_frame.h, p->cam_x, p->cam_y, p->t);
-    if (!shaft) shaft_k = 0;
-    Hd2dJob j = { px, w, h, 0, 0, p->scale, p->hd2d, p->focus_y, shaft_k, p->t };
-    run_bands(hd2d_part, &j, h);
 }
 
 static int clamp_scale(int scale) { return scale < 1 ? 1 : scale > HD_MAX_SCALE ? HD_MAX_SCALE : scale; }
@@ -1373,7 +973,6 @@ static void draw_sprite_layer(int scale, float t) {
         int i = order[k];
         const HdSprite *c = &hd_frame.sprites[i];
         float x = c->x - move_x[i] * back, y = c->y - move_y[i] * back;
-        if (c->item && hd_items) y -= 2 + 1.5f * sinf(hd_time * 2.6f + c->x * .7f);   /* floating, bobbing */
         int sw = (c->w + 2) * scale, sh = (c->h + 2) * scale;
         int X0 = (int)lroundf((x + hd_frame.extra) * scale) - scale, Y0 = (int)lroundf(y * scale) - scale;
         const uint32_t *src = sprite_scaled[i];

@@ -20,6 +20,10 @@ const REPLACED = new Map([
     ['setw(&D(0), rd16(0xFF177A) - cam_margin()); logicw(D(0) & 0xFFFFu);']]],
   [parseInt(PATCHES.playerDamage.pc, 16), ['sub.w	d0,d1',
     ['setw(&D(1), subw(patch_no_damage ? 0u : (D(0) & 0xFFFFu), D(1) & 0xFFFFu));']]],
+  ...Object.entries(PATCHES.enemyDamage.pcs).map(([pc, r]) => [parseInt(pc, 16), [`sub.w	${r},d1`,
+    [`setw(&D(1), subw(enemy_damage(D(${r[1]}) & 0xFFFFu, D(1) & 0xFFFFu), D(1) & 0xFFFFu));`]]]),
+  ...Object.entries(PATCHES.playerSpeed.pcs).map(([pc, field]) => [parseInt(pc, 16), [`move.l	${field}(a6),d0`,
+    [`D(0) = player_move(A(6), rd32(A(6) + 0x${field.slice(1)}));`, 'logicl(D(0));']]]),
 ]);
 
 const hex = (v) => '0x' + (v >>> 0).toString(16).toUpperCase();

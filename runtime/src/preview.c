@@ -11,11 +11,10 @@
 
 #include "genesis.h"
 #include "hd.h"
-#include "lights.h"
 #include "settings.h"
 #include "ui.h"
 
-typedef struct { int scale, scaler, sharpen, lighting; bool pack, water, dynlight; int hd2d; } Look;
+typedef struct { int scale, scaler, sharpen, lighting; bool pack, water; } Look;
 
 static struct { bool world; float cam_x, cam_y, focus_x, focus_y; } where;
 
@@ -60,7 +59,7 @@ bool preview_ready(void) { return hd_frame.h > 0 && hd_frame.w > 0; }
 
 /* ---- Which looks to compare ------------------------------------------------------------ */
 static Look look_now(void) {
-    return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, hd_texpack, settings.water, false, settings.hd2d };
+    return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, hd_texpack, settings.water };
 }
 
 /* The look without the option and with it, whether to show it 1:1, and the label of the
@@ -96,15 +95,6 @@ static bool looks_for(int option, Look *off, Look *on, bool *zoom, char *label, 
     case OPT_WATER:
         off->water = false; on->water = true;
         settings.water = true;
-        break;
-    case OPT_HD2D:
-        off->hd2d = 0;
-        on->hd2d = settings.hd2d ? settings.hd2d : 2;
-        settings.hd2d = on->hd2d;
-        break;
-    case OPT_DYNLIGHT:
-        off->dynlight = false; on->dynlight = true;
-        settings.dynlight = true;
         break;
     case OPT_TEXPACK:
         if (!hd_texpack) { settings = keep; return false; }     /* the frame has no tile references without a pack */
@@ -144,12 +134,7 @@ static void render_look(const Look *l, Picture *out) {
     hd_water = keep_water;
     hd_time = keep_time;
     int scale = hd_w / (hd_frame.w > 0 ? hd_frame.w : 1);
-    if (l->dynlight) {                  /* a fire spirit's light up and to the right of Ali */
-        float x = where.focus_x >= 0 ? where.focus_x : hd_frame.w / 2.f, y = where.focus_y >= 0 ? where.focus_y : hd_frame.h / 2.f;
-        lights_preview(&hd_frame, x + 30, y - 14);
-    }
-    HdPost post = { l->sharpen, l->lighting, false, false, false, l->dynlight, l->hd2d,
-                    where.focus_y >= 0 ? where.focus_y : hd_frame.h / 2.f, where.world, where.cam_x, where.cam_y, 2.0f, scale < 1 ? 1 : scale, hd_frame.extra };
+    HdPost post = { l->sharpen, l->lighting, false, false, where.world, where.cam_x, where.cam_y, 2.0f, scale < 1 ? 1 : scale, hd_frame.extra };
     const uint32_t *img = hd_post(hd_px, hd_w, hd_h, hd_w, &post);
     free(out->px);
     out->px = malloc((size_t)hd_w * hd_h * 4);

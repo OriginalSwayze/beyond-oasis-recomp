@@ -23,6 +23,8 @@ typedef struct { uint32_t pc; RecompBlock fn; } RecompEntry;
 extern uint32_t patch_cull_left, patch_cull_widen;
 extern int patch_cam_margin;
 extern int patch_no_damage;             /* infinite health cheat (cheats.c) */
+extern int patch_attack;                /* attack power cheat: 0 normal, 1 double, 2 quadruple, 3 one-hit kills */
+extern int patch_speed;                 /* move speed cheat: the player's movement per tick in percent (100 = normal) */
 
 /* Replaces the code at pc with hand-written C (machine.c); NULL restores the generated code. */
 void machine_override(uint32_t pc, RecompBlock fn);
@@ -52,6 +54,26 @@ static inline void wr32(uint32_t a, uint32_t v) { wr16(a, v >> 16); wr16(a + 2, 
 
 static inline uint32_t sx8(uint32_t v)  { return (uint32_t)(int32_t)(int8_t)v; }
 static inline uint32_t sx16(uint32_t v) { return (uint32_t)(int32_t)(int16_t)v; }
+
+/* The damage an enemy takes (playerDamage's counterpart, config/patches.json): the game's,
+ * or more with the attack power cheat; a one-hit kill takes all the HP left. Capped so the
+ * game's signed test on the result still sees it go below zero. */
+static inline uint32_t enemy_damage(uint32_t damage, uint32_t hp) {
+    switch (patch_attack) {
+    case 1: damage *= 2; break;
+    case 2: damage *= 4; break;
+    case 3: return hp ? hp : damage;
+    default: break;
+    }
+    return damage > 0x7FFF ? 0x7FFF : damage;
+}
+
+/* The movement of an object for this tick (16.16), scaled by the move speed cheat when
+ * it is the player's (the object at $FF19E8). */
+static inline uint32_t player_move(uint32_t object, uint32_t move) {
+    if (patch_speed == 100 || (object & 0xFFFFFF) != 0xFF19E8) return move;
+    return (uint32_t)(int32_t)((int64_t)(int32_t)move * patch_speed / 100);
+}
 
 /* Pixels the camera keeps from each map edge: the widescreen extra width, or less
  * when the map is too narrow to keep that much on both sides. */

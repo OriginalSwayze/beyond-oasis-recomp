@@ -13,11 +13,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-const Spirit spirits[4] = {
+const Spirit spirits[5] = {
     { "DYTTO",  "Water",  { .37f, .80f, 1.0f }, { .04f, .20f, .48f } },
     { "EFREET", "Fire",   { 1.0f, .56f, .22f }, { .48f, .10f, .02f } },
     { "BOW",    "Plant",  { .58f, .90f, .40f }, { .08f, .30f, .07f } },
     { "SHADE",  "Shadow", { .74f, .58f, 1.0f }, { .17f, .06f, .36f } },
+    { "ARMLET", "Gold",   { 1.0f, .82f, .36f }, { .40f, .26f, .04f } },
 };
 
 #define ARM_CX 318                      /* the armlet's centre and width */

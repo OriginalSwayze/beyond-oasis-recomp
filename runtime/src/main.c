@@ -15,7 +15,6 @@
 #include "outfit.h"
 #include "preview.h"
 #include "fx.h"
-#include "lights.h"
 #include "texpack.h"
 #include "menu.h"
 #include "savestate.h"
@@ -142,8 +141,6 @@ static void apply_settings(void) {
     outfit_apply();
     sound_quality = settings.audio;
     hd_scaler = settings.scaler;
-    hd_items = settings.items;
-    hd_foliage = settings.foliage;
     hd_water = settings.water;
     /* Texture packs: load a pack when it changes (it can be many images), dump on request. */
     static char loaded_pack[64] = "";
@@ -161,14 +158,11 @@ static void apply_settings(void) {
 
 /* The finishing steps for this frame (hd_post), with the camera from the game's RAM: the
  * plane A layer struct at $FF1716 holds it (+00 x, +04 y) while a map layer is active. */
-static float shot_time = 1.0f;          /* --shot-time */
-
 static HdPost finishing(int scale, float t) {
     const uint8_t *layer = bus.ram + 0x1716;
-    HdPost p = { settings.sharpen, settings.lighting, settings.elements, settings.footsteps, settings.items,
-                 settings.dynlight, settings.hd2d, 0, false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
+    HdPost p = { settings.sharpen, settings.lighting, settings.elements, settings.footsteps,
+                 false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
     p.world = (layer[0x27] & 1) && !vdp_opts.mask_sides;
-    p.focus_y = vdp_player_w ? vdp_player_y + vdp_player_h / 2.f : vdp_screen_height() / 2.f;
     p.cam_x = (float)(int16_t)(layer[0] << 8 | layer[1]);
     p.cam_y = (float)(int16_t)(layer[4] << 8 | layer[5]);
     return p;
@@ -178,7 +172,6 @@ static HdPost finishing(int scale, float t) {
 static void fx_after_frame(void) {
     HdPost here = finishing(1, 0);
     fx_game_frame(&hd_frame, here.world, here.cam_x, here.cam_y);
-    lights_game_frame(&hd_frame, here.world, SDL_GetTicks() / 1000.f);
 }
 
 /* Ali's middle on screen (frame pixels), for the previews' close-ups; -1 if unknown. */
@@ -332,19 +325,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--lighting") && i + 1 < argc) { settings.lighting = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--elements") && i + 1 < argc) { settings.elements = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--footsteps") && i + 1 < argc) { settings.footsteps = atoi(argv[++i]) != 0; test_overrides = true; }
-        else if (!strcmp(argv[i], "--items") && i + 1 < argc) { settings.items = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--water") && i + 1 < argc) { settings.water = atoi(argv[++i]) != 0; test_overrides = true; }
-        else if (!strcmp(argv[i], "--foliage") && i + 1 < argc) { settings.foliage = atoi(argv[++i]) != 0; test_overrides = true; }
-        else if (!strcmp(argv[i], "--shot-time") && i + 1 < argc) shot_time = (float)atof(argv[++i]);   /* seconds, for --filter-shot's animations */
-        else if (!strcmp(argv[i], "--hd2d") && i + 1 < argc) { settings.hd2d = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
-        else if (!strcmp(argv[i], "--dynlight") && i + 1 < argc) { settings.dynlight = atoi(argv[++i]) != 0; test_overrides = true; }
-        else if (!strcmp(argv[i], "--test-light") && i + 1 < argc) {
-            /* --test-light X,Y,R,G,B,RADIUS: a light at X,Y frame pixels, colour 0-1, every frame. */
-            float v[6] = { 0, 0, 1, 1, 1, 0 };
-            char *p = argv[++i];
-            for (int k = 0; k < 6 && *p; k++) { v[k] = strtof(p, &p); if (*p == ',') p++; }
-            lights_test(v[0], v[1], v[2], v[3], v[4], v[5]);
-        }
         else if (!strcmp(argv[i], "--texture-pack") && i + 1 < argc) { snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", argv[++i]); test_overrides = true; }
         else if (!strcmp(argv[i], "--dump-tiles") && i + 1 < argc) { settings.dump_tiles = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--scaler") && i + 1 < argc) { settings.scaler = atoi(argv[++i]) != 0; test_overrides = true; }   /* 0 edge, 1 smooth */
@@ -430,12 +411,17 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--load") && i + 1 < argc) load_from = atoi(argv[++i]);   /* load a slot first */
         else if (!strcmp(argv[i], "--poke") && i + 1 < argc) cheats_add_codes(argv[++i]);   /* FFxxxx:VV[VV],... */
         else if (!strcmp(argv[i], "--cheat") && i + 1 < argc) {
-            /* --cheat health|spirit|weapons: turn a built-in cheat on for this run. */
+            /* --cheat health|spirit|weapons|double|quadruple|onehit|fast|veryfast: turn a built-in cheat on for this run. */
             const char *c = argv[++i];
             test_overrides = true;
             if (!strcmp(c, "health")) settings.cheat_health = true;
             else if (!strcmp(c, "spirit")) settings.cheat_spirit = true;
             else if (!strcmp(c, "weapons")) settings.cheat_weapons = true;
+            else if (!strcmp(c, "double")) settings.cheat_attack = 1;
+            else if (!strcmp(c, "quadruple")) settings.cheat_attack = 2;
+            else if (!strcmp(c, "onehit")) settings.cheat_attack = 3;
+            else if (!strcmp(c, "fast")) settings.cheat_speed = 1;
+            else if (!strcmp(c, "veryfast")) settings.cheat_speed = 2;
         }
         else if (!strcmp(argv[i], "--menu-shot") && i + 3 < argc) {
             /* --menu-shot F.png W H: open the in-game menu over the last frame and render it. */
@@ -673,11 +659,9 @@ int main(int argc, char **argv) {
             uint32_t *pixels = malloc((size_t)filter_w * filter_h * 4);
             if (target && pixels) {
                 SDL_SetRenderTarget(sr, target);
-                bool hd = settings.internal_scale > 1 || settings.items || settings.water || settings.foliage || hd_texpack;   /* as the window draws it */
-                hd_time = shot_time;
-                { HdPost c = finishing(1, 0); hd_cam_x = c.cam_x; hd_cam_y = c.cam_y; hd_cam_world = c.world; }
-                if (hd && settings.items) hd_compose_sprites(settings.internal_scale);
-                else if (hd) hd_compose(settings.internal_scale);
+                bool hd = settings.internal_scale > 1 || settings.water || hd_texpack;   /* as the window draws it */
+                hd_time = 1.0f;
+                if (hd) hd_compose(settings.internal_scale);
                 int tw = hd ? hd_w : frame_width(), th = hd ? hd_h : vdp_screen_height();
                 SDL_Texture *t = SDL_CreateTexture(sr, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STATIC, tw, th);
                 HdPost post = finishing(hd ? hd_w / frame_width() : 1, 1.0f);
@@ -749,14 +733,9 @@ int main(int argc, char **argv) {
             free(img);
         }
         if (hd_shot) {
-            { HdPost c = finishing(1, 0); hd_cam_x = c.cam_x; hd_cam_y = c.cam_y; hd_cam_world = c.world; }
-            hd_time = shot_time;
             Uint64 t0 = SDL_GetPerformanceCounter();
             hd_compose(settings.internal_scale);
             double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency();
-            Uint64 t1 = SDL_GetPerformanceCounter();
-            hd_compose(settings.internal_scale);   /* again, with the layers already scaled: compositing alone */
-            printf("compositing alone: %.2f ms\n", (double)(SDL_GetPerformanceCounter() - t1) * 1000 / SDL_GetPerformanceFrequency());
             printf("hd frame %dx%d in %.2f ms\n", hd_w, hd_h, ms);
             png_write(hd_shot, hd_px, hd_w, hd_h, hd_w);
         }
@@ -962,15 +941,12 @@ int main(int argc, char **argv) {
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
         /* Shadows are drawn while the layers are put together, so they need this path too. */
-        /* Item animations move sprites by themselves, so they need the per-sprite path. */
-        bool hd = (settings.internal_scale > 1 || settings.smooth_motion || settings.items || settings.water || settings.foliage || hd_texpack) &&
+        bool hd = (settings.internal_scale > 1 || settings.smooth_motion || settings.water || hd_texpack) &&
                   hd_frame.h == vdp_screen_height();
         hd_time = (float)(SDL_GetPerformanceCounter() - start) / freq;
         if (hd) {
             hd_time = (float)(SDL_GetPerformanceCounter() - start) / freq;
-            { HdPost c = finishing(1, 0); hd_cam_x = c.cam_x; hd_cam_y = c.cam_y; hd_cam_world = c.world; }
             if (settings.smooth_motion) hd_compose_at(settings.internal_scale, frac);
-            else if (settings.items) hd_compose_sprites(settings.internal_scale);   /* sprites drawn one by one: items float */
             else hd_compose(settings.internal_scale);
             /* Two textures used in turn: uploading into the one the GPU just drew from
              * can make the upload wait for the GPU. */
