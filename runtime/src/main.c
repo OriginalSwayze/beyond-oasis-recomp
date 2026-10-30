@@ -15,6 +15,7 @@
 #include "outfit.h"
 #include "preview.h"
 #include "fx.h"
+#include "texpack.h"
 #include "menu.h"
 #include "savestate.h"
 #include "ui.h"
@@ -142,6 +143,18 @@ static void apply_settings(void) {
     hd_scaler = settings.scaler;
     hd_shadows = settings.shadows;
     hd_water = settings.water;
+    /* Texture packs: load a pack when it changes (it can be many images), dump on request. */
+    static char loaded_pack[64] = "";
+    static bool pack_tried;
+    if (!pack_tried || strcmp(loaded_pack, settings.texture_pack)) {
+        int n = texpack_load(base_dir, settings.texture_pack);
+        if (settings.texture_pack[0]) fprintf(stderr, "texture pack %s: %d images\n", settings.texture_pack, n);
+        snprintf(loaded_pack, sizeof loaded_pack, "%s", settings.texture_pack);
+        pack_tried = true;
+    }
+    texpack_dump(base_dir, settings.dump_tiles);
+    vdp_opts.tile_refs = texpack_active();
+    hd_texpack = texpack_count() > 0;
 }
 
 /* The finishing steps for this frame (hd_post), with the camera from the game's RAM: the
@@ -241,6 +254,7 @@ int main(int argc, char **argv) {
     console_attach();
     char *bp = SDL_GetBasePath();
     if (bp) { snprintf(base_dir, sizeof base_dir, "%s", bp); SDL_free(bp); }
+    settings_set_base(base_dir);
     char ini[1100];
     path_in_base(ini, sizeof ini, "settings.ini");
     savestate_init(base_dir);
@@ -317,6 +331,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--weather") && i + 1 < argc) { settings.weather = atoi(argv[++i]) % WEATHER_COUNT; test_overrides = true; }
         else if (!strcmp(argv[i], "--elements") && i + 1 < argc) { settings.elements = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--footsteps") && i + 1 < argc) { settings.footsteps = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--texture-pack") && i + 1 < argc) { snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", argv[++i]); test_overrides = true; }
+        else if (!strcmp(argv[i], "--dump-tiles") && i + 1 < argc) { settings.dump_tiles = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--scaler") && i + 1 < argc) { settings.scaler = atoi(argv[++i]) != 0; test_overrides = true; }   /* 0 edge, 1 smooth */
         else if (!strcmp(argv[i], "--audio") && i + 1 < argc) { settings.audio = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--volume") && i + 1 < argc) { settings.volume = atoi(argv[++i]); test_overrides = true; }   /* 0-100 */
@@ -326,6 +342,16 @@ int main(int argc, char **argv) {
             /* --launcher-music-check SECONDS: run the launcher music headless, print its level. */
             apply_settings();
             return launcher_music_check(atoi(argv[++i]));
+        }
+        else if (!strcmp(argv[i], "--png-check") && i + 1 < argc) {
+            /* --png-check F.png: read a PNG and print its size and a checksum of its pixels. */
+            int w = 0, h = 0;
+            uint32_t *px = png_read(argv[++i], &w, &h);
+            uint32_t sum = 0;
+            for (int k = 0; px && k < w * h; k++) sum = sum * 31 + px[k];
+            printf("png %s: %dx%d checksum %08X\n", px ? "read" : "NOT read", w, h, sum);
+            free(px);
+            return px ? 0 : 1;
         }
         else if (!strcmp(argv[i], "--ost-check") && i + 1 < argc) {
             /* --ost-check SECONDS: play every song headless, print its level per second. */
@@ -882,7 +908,7 @@ int main(int argc, char **argv) {
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
         /* Shadows are drawn while the layers are put together, so they need this path too. */
-        bool hd = (settings.internal_scale > 1 || settings.smooth_motion || settings.shadows || settings.water) &&
+        bool hd = (settings.internal_scale > 1 || settings.smooth_motion || settings.shadows || settings.water || hd_texpack) &&
                   hd_frame.h == vdp_screen_height();
         hd_time = (float)(SDL_GetPerformanceCounter() - start) / freq;
         if (hd) {

@@ -27,6 +27,7 @@ typedef struct {
     uint16_t attr;
     bool player;                        /* drawn by the player character's object */
     uint32_t px[32 * 32];               /* layer pixels, w x h, row pitch 32; 0 = transparent */
+    uint32_t ref[32 * 32];              /* their tile references, with vdp_opts.tile_refs (texpack.h) */
 } HdSprite;
 
 /* One frame of layers, written by vdp_render_line while vdp_opts.hd_capture is set.
@@ -39,6 +40,9 @@ typedef struct {
     uint32_t a[HD_MAX_H][HD_MAX_W];     /* plane A with the window */
     uint32_t b[HD_MAX_H][HD_MAX_W];
     uint32_t s[HD_MAX_H][HD_MAX_W];
+    uint32_t ta[HD_MAX_H][HD_MAX_W];    /* tile references of a, b and s, with vdp_opts.tile_refs */
+    uint32_t tb[HD_MAX_H][HD_MAX_W];
+    uint32_t ts[HD_MAX_H][HD_MAX_W];
     uint16_t backdrop[HD_MAX_H];
     uint8_t  flags[HD_MAX_H];           /* HD_LINE_* */
     int16_t  hscroll[2][HD_MAX_H];      /* plane A / B horizontal scroll per line */
@@ -74,6 +78,8 @@ extern int hd_scaler;
 
 /* Characters cast soft shadows onto the planes (drawn while compositing the layers). */
 extern bool hd_shadows;
+/* A texture pack is loaded: replaced tiles are drawn from their images (texpack.h). */
+extern bool hd_texpack;
 /* Water shimmers, sparkles and reflects the sprites above it (also while compositing). */
 extern bool hd_water;
 extern float hd_time;                   /* seconds, for the water's motion */

@@ -3,6 +3,7 @@
 #include "genesis.h"
 #include "filter.h"
 #include "input.h"
+#include "texpack.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,9 @@ static const char *weather_keys[WEATHER_COUNT] = { "off", "breeze", "sand", "rai
 static const char *weather_names[WEATHER_COUNT] = { "Off", "Breeze", "Sandstorm", "Rain", "Mist" };
 static const char *filter_keys[FILTER_COUNT] = { "off", "scanlines", "crt", "lcd" };
 static const char *filter_names[FILTER_COUNT] = { "Off", "Scanlines", "CRT", "LCD" };
+
+static char base_dir[1024];
+void settings_set_base(const char *dir) { snprintf(base_dir, sizeof base_dir, "%s", dir ? dir : ""); }
 
 static bool parse_bool(const char *v) { return !strcmp(v, "1") || !strcmp(v, "true") || !strcmp(v, "on"); }
 
@@ -78,6 +82,8 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "weather")) { for (int i = 0; i < WEATHER_COUNT; i++) if (!strcmp(v, weather_keys[i])) settings.weather = i; }
         else if (!strcmp(k, "elements")) settings.elements = parse_bool(v);
         else if (!strcmp(k, "footsteps")) settings.footsteps = parse_bool(v);
+        else if (!strcmp(k, "texture_pack")) snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", v);
+        else if (!strcmp(k, "dump_tiles")) settings.dump_tiles = parse_bool(v);
         else if (!strcmp(k, "audio")) settings.audio = atoi(v);
         else if (!strcmp(k, "ost_track")) settings.ost_track = atoi(v);
         else if (input_ini_load(k, v)) {}
@@ -137,6 +143,8 @@ void settings_save(const char *path) {
     fprintf(f, "weather=%s\n", weather_keys[settings.weather]);
     fprintf(f, "elements=%d\n", settings.elements);
     fprintf(f, "footsteps=%d\n", settings.footsteps);
+    fprintf(f, "texture_pack=%s\n", settings.texture_pack);
+    fprintf(f, "dump_tiles=%d\n", settings.dump_tiles);
     fprintf(f, "audio=%d\n", settings.audio);
     fprintf(f, "ost_track=%d\n", settings.ost_track);
     fprintf(f, "cheat_health=%d\n", settings.cheat_health);
@@ -204,6 +212,8 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_WEATHER:    snprintf(out, n, "%s", weather_names[settings.weather]); break;
     case OPT_ELEMENTS:   snprintf(out, n, "%s", settings.elements ? "On" : "Off"); break;
     case OPT_FOOTSTEPS:  snprintf(out, n, "%s", settings.footsteps ? "On" : "Off"); break;
+    case OPT_TEXPACK:    snprintf(out, n, "%s", settings.texture_pack[0] ? settings.texture_pack : "None"); break;
+    case OPT_DUMP:       snprintf(out, n, "%s", settings.dump_tiles ? "On" : "Off"); break;
     case OPT_AUDIO:      snprintf(out, n, "%s", settings.audio == 2 ? "Rich" : settings.audio ? "Clean" : "Original"); break;
     case OPT_OVERCLOCK:
         if (settings.overclock <= 100) snprintf(out, n, "Off");
@@ -314,6 +324,15 @@ void settings_option_change(int id, int dir) {
     case OPT_WEATHER:  settings.weather = settings_cycle(settings.weather, WEATHER_COUNT, dir); break;
     case OPT_ELEMENTS: settings.elements = !settings.elements; break;
     case OPT_FOOTSTEPS: settings.footsteps = !settings.footsteps; break;
+    case OPT_DUMP:     settings.dump_tiles = !settings.dump_tiles; break;
+    case OPT_TEXPACK: {                 /* None, then each folder in texture_packs/ */
+        static char names[32][64];
+        int n = texpack_list(base_dir, names, 32), at = 0;
+        for (int k = 0; k < n; k++) if (!strcmp(names[k], settings.texture_pack)) at = k + 1;
+        at = settings_cycle(at, n + 1, dir);
+        snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", at ? names[at - 1] : "");
+        break;
+    }
     case OPT_AUDIO:    settings.audio = settings_cycle(settings.audio, 3, dir); break;
     case OPT_CHEAT_HEALTH:  settings.cheat_health = !settings.cheat_health; break;
     case OPT_CHEAT_SPIRIT:  settings.cheat_spirit = !settings.cheat_spirit; break;

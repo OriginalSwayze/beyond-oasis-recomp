@@ -9,6 +9,7 @@
 #include "hd.h"
 #include "motion.h"
 #include "fx.h"
+#include "texpack.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -181,6 +182,29 @@ static uint32_t *sprite_layer;          /* sprites drawn at their in-between pos
  * so the scaler can round its outer edges. */
 #define SPR_PAD_MAX ((32 + 2) * HD_MAX_SCALE)
 static uint32_t sprite_scaled[80][SPR_PAD_MAX * SPR_PAD_MAX];
+
+/* ---- Texture packs --------------------------------------------------------------------- *
+ * With a pack loaded, the replacement colour of every picture pixel (texpack_texel: 0 none,
+ * 1 transparent, else 0xFF000000 | RGB) is worked out next to each scaled layer: for the
+ * planes and the whole sprite layer once per game frame, for each sprite with its scaled
+ * copy (so it follows the sprite in smooth motion). While compositing, a replacement that
+ * is transparent makes that layer's pixel transparent and an opaque one makes it opaque;
+ * if that layer ends up on top, the pixel is the replacement's colour. */
+bool hd_texpack;
+static uint32_t *tex_layer[3];          /* plane A, plane B, sprites (whole layer) */
+static uint32_t *sprite_tex_layer;      /* sprites at their in-between positions */
+static uint32_t (*sprite_tex)[SPR_PAD_MAX * SPR_PAD_MAX];   /* [80], with sprite_scaled */
+static size_t tex_cap;
+
+static bool ensure_tex(size_t need) {
+    if (need <= tex_cap) return true;
+    for (int k = 0; k < 3; k++) { free(tex_layer[k]); tex_layer[k] = malloc(need * 4); }
+    free(sprite_tex_layer); sprite_tex_layer = malloc(need * 4);
+    if (!sprite_tex) sprite_tex = malloc(sizeof *sprite_tex * 80);
+    bool ok = tex_layer[0] && tex_layer[1] && tex_layer[2] && sprite_tex_layer && sprite_tex;
+    tex_cap = ok ? need : 0;
+    return ok;
+}
 static uint32_t sprite_tmp[SPR_PAD_MAX * SPR_PAD_MAX];
 
 static void scroll_of(Scroll *m, const HdFrame *f) {
@@ -344,8 +368,36 @@ static void xbr_pass(const uint32_t *const src[3], int pitch, int w, int h, int 
     for (int at = 0; at < count; at += MAX_WORKERS) run_jobs(jobs + at, count - at > MAX_WORKERS ? MAX_WORKERS : count - at);
 }
 
+static int tex_scale;
+
+static void tex_rows(void *ctx, int y0, int y1) {
+    (void)ctx;
+    int s = tex_scale;
+    for (int y = y0; y < y1; y++) {
+        int line = y / s, sy = y % s;
+        size_t o = (size_t)y * hd_w;
+        for (int x = 0; x < hd_w; x++) {
+            int nx = x / s, sx = x % s;
+            tex_layer[0][o + x] = texpack_texel(hd_frame.ta[line][nx], sx, sy, s);
+            tex_layer[1][o + x] = texpack_texel(hd_frame.tb[line][nx], sx, sy, s);
+            tex_layer[2][o + x] = texpack_texel(hd_frame.ts[line][nx], sx, sy, s);
+        }
+    }
+}
+
+static unsigned tex_gen;                /* the frame the replacement layers were made for */
+static int tex_gen_scale;
+
+static void make_tex_layers(int scale) {
+    if (!hd_texpack || (tex_gen == hd_serial && tex_gen_scale == scale) || !ensure_tex((size_t)hd_w * hd_h)) return;
+    tex_scale = scale;
+    run_bands(tex_rows, NULL, hd_h);
+    tex_gen = hd_serial;
+    tex_gen_scale = scale;
+}
+
 static void scale_planes(int scale) {
-    if (scaled_gen == hd_serial && scaled_scale == scale && scaled_with == hd_scaler) return;
+    if (scaled_gen == hd_serial && scaled_scale == scale && scaled_with == hd_scaler) { make_tex_layers(scale); return; }
     scaled_with = hd_scaler;
     if (hd_scaler == 1 && scale > 1) {  /* the heavier scaler: every layer in bands over all cores */
         const uint32_t *layers[3] = { &hd_frame.a[0][0], &hd_frame.b[0][0], &hd_frame.s[0][0] };
@@ -359,6 +411,7 @@ static void scale_planes(int scale) {
         }
         scaled_gen = hd_serial;
         scaled_scale = scale;
+        make_tex_layers(scale);
         return;
     }
     ScaleJob sj[3] = {
@@ -371,6 +424,7 @@ static void scale_planes(int scale) {
     if (workers() < 3) { scale_job(&sj[1]); scale_job(&sj[2]); }
     scaled_gen = hd_serial;
     scaled_scale = scale;
+    make_tex_layers(scale);
 }
 
 typedef struct {
@@ -535,6 +589,33 @@ static inline uint32_t shade(uint32_t c, int s) {     /* s: 0-255 shadow */
     return (uint32_t)((((c >> 16) & 255) * k >> 8) << 16 | (((c >> 8) & 255) * k >> 8) << 8 | ((c & 255) * k >> 8));
 }
 
+/* A layer pixel as its replacement makes it: transparent or opaque. */
+static inline uint32_t with_tex(uint32_t p, uint32_t t) {
+    if (t == 1) return p & ~0x0F0000u;
+    if (t >= 0xFF000000u && !((p >> 16) & 0x0F)) return p | 0x010000u;
+    return p;
+}
+
+/* Which layer the VDP shows: 0 sprites, 1 plane A, 2 plane B, -1 the backdrop. */
+static inline int top_layer(uint32_t a, uint32_t b, uint32_t s) {
+    uint8_t ab = (uint8_t)(a >> 16), bb = (uint8_t)(b >> 16), sb = (uint8_t)(s >> 16);
+    bool ao = ab & 0x0F, bo = bb & 0x0F, so = sb & 0x0F;
+    if (so && (sb & 0x40)) return 0;
+    if (ao && (ab & 0x40)) return 1;
+    if (bo && (bb & 0x40)) return 2;
+    if (so) return 0;
+    if (ao) return 1;
+    if (bo) return 2;
+    return -1;
+}
+
+static inline uint32_t compose_tex(uint32_t a, uint32_t b, uint32_t s, uint32_t ta, uint32_t tb, uint32_t ts, uint16_t backdrop, bool sh) {
+    a = with_tex(a, ta); b = with_tex(b, tb); s = with_tex(s, ts);
+    int top = top_layer(a, b, s);
+    uint32_t t = top == 0 ? ts : top == 1 ? ta : top == 2 ? tb : 0;
+    return t >= 0xFF000000u ? t & 0xFFFFFF : vdp_compose(a, b, s, backdrop, sh);
+}
+
 static int compose_band(void *arg) {
     const ComposeJob *j = arg;
     int scale = j->scale;
@@ -554,9 +635,30 @@ static int compose_band(void *arg) {
         bool sh = flags & HD_LINE_SH;
         const uint32_t *rs = sprites + (size_t)y * hd_w;
         const uint32_t *ra0 = scaled[0] + (size_t)y * hd_w;
+        bool tex = hd_texpack && tex_cap;
+        const uint32_t *tsrow = tex ? (sprites == sprite_layer ? sprite_tex_layer : tex_layer[2]) + (size_t)y * hd_w : NULL;
         if (!ox_a) {
             const uint32_t *rb = scaled[1] + (size_t)y * hd_w;
-            for (int x = 0; x < hd_w; x++) out[x] = vdp_compose(ra0[x], rb[x], rs[x], backdrop, sh);
+            if (tex) {
+                const uint32_t *ta = tex_layer[0] + (size_t)y * hd_w, *tb = tex_layer[1] + (size_t)y * hd_w;
+                for (int x = 0; x < hd_w; x++) out[x] = compose_tex(ra0[x], rb[x], rs[x], ta[x], tb[x], tsrow[x], backdrop, sh);
+            } else {
+                for (int x = 0; x < hd_w; x++) out[x] = vdp_compose(ra0[x], rb[x], rs[x], backdrop, sh);
+            }
+        } else if (tex) {
+            int ya = y + oy_a[line], yb = y + oy_b[line];
+            ya = ya < 0 ? 0 : ya >= hd_h ? hd_h - 1 : ya;
+            yb = yb < 0 ? 0 : yb >= hd_h ? hd_h - 1 : yb;
+            const uint32_t *ra = scaled[0] + (size_t)ya * hd_w, *rb = scaled[1] + (size_t)yb * hd_w;
+            const uint32_t *ta0 = tex_layer[0] + (size_t)y * hd_w, *ta = tex_layer[0] + (size_t)ya * hd_w, *tb = tex_layer[1] + (size_t)yb * hd_w;
+            int dxa = ox_a[line], dxb = ox_b[line];
+            for (int x = 0; x < hd_w; x++) {
+                int xa = x + dxa, xb = x + dxb;
+                xa = xa < 0 ? 0 : xa >= hd_w ? hd_w - 1 : xa;
+                xb = xb < 0 ? 0 : xb >= hd_w ? hd_w - 1 : xb;
+                bool window = (ra0[x] >> 16) & HD_WINDOW;
+                out[x] = compose_tex(window ? ra0[x] : ra[xa], rb[xb], rs[x], window ? ta0[x] : ta[xa], tb[xb], tsrow[x], backdrop, sh);
+            }
         } else {
             /* Planes sampled where their content was at this moment; window pixels stay. */
             int ya = y + oy_a[line], yb = y + oy_b[line];
@@ -989,8 +1091,10 @@ static int scroll_delta(int now, int was) { return ((now - was + 512) & 1023) - 
 
 static void scale_sprites(int scale) {
     static int made_with = -1;
-    if (sprites_gen == hd_serial && sprites_scale == scale && made_with == hd_scaler) return;
+    static bool made_tex;
+    if (sprites_gen == hd_serial && sprites_scale == scale && made_with == hd_scaler && made_tex == hd_texpack) return;
     made_with = hd_scaler;
+    made_tex = hd_texpack;
     static uint32_t padded[34 * 34];
     for (int i = 0; i < 80; i++) {
         const HdSprite *c = &hd_frame.sprites[i];
@@ -999,6 +1103,13 @@ static void scale_sprites(int scale) {
         memset(padded, 0, sizeof padded);
         for (int y = 0; y < c->h; y++) memcpy(padded + (y + 1) * pw + 1, c->px + y * 32, (size_t)c->w * 4);
         scale_any(padded, pw, pw, ph, scale, sprite_scaled[i], sprite_tmp);
+        if (hd_texpack && sprite_tex)
+            for (int yy = 0; yy < ph * scale; yy++)
+                for (int xx = 0; xx < pw * scale; xx++) {
+                    int nx = xx / scale - 1, ny = yy / scale - 1;
+                    uint32_t ref = nx >= 0 && ny >= 0 && nx < c->w && ny < c->h ? c->ref[ny * 32 + nx] : 0;
+                    sprite_tex[i][yy * pw * scale + xx] = texpack_texel(ref, xx % scale, yy % scale, scale);
+                }
     }
     sprites_gen = hd_serial;
     sprites_scale = scale;
@@ -1007,6 +1118,8 @@ static void scale_sprites(int scale) {
 /* Sprites at their positions for moment t, back to front so earlier sprites win. */
 static void draw_sprite_layer(int scale, float t) {
     memset(sprite_layer, 0, (size_t)hd_w * hd_h * 4);
+    bool tex = hd_texpack && sprite_tex && sprite_tex_layer;
+    if (tex) memset(sprite_tex_layer, 0, (size_t)hd_w * hd_h * 4);
     int order[80], n = 0;
     for (int i = 0; i < 80; i++) if (hd_frame.sprites[i].drawn) order[n++] = i;
     for (int a = 1; a < n; a++) {       /* by rank, highest (backmost) first */
@@ -1031,6 +1144,7 @@ static void draw_sprite_layer(int scale, float t) {
                 uint32_t v = src[yy * sw + xx];
                 if (X < 0 || X >= hd_w || !((v >> 16) & 0x0F)) continue;
                 row[X] = v;
+                if (tex) sprite_tex_layer[(size_t)Y * hd_w + X] = sprite_tex[i][yy * sw + xx];
             }
         }
     }

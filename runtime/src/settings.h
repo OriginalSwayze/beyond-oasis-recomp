@@ -26,6 +26,8 @@ typedef struct {
     int  weather;                       /* WEATHER_* (fx.c) */
     bool elements;                      /* particles from spirits and magic (fx.c) */
     bool footsteps;                     /* dust, grass and splashes where Ali walks (fx.c) */
+    char texture_pack[64];              /* folder in texture_packs/, empty for none (texpack.h) */
+    bool dump_tiles;                    /* write every tile shown to texture_packs/dump/ */
     int  audio;                         /* sound output: 0 original, 1 clean, 2 rich (sound_quality) */
     int  overclock;                     /* 68000 speed in percent (100 = original): removes slowdown */
     int  window_scale;
@@ -60,7 +62,8 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_OVERCLOCK, OPT_VOLUME,
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
        OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AMBIENCE, OPT_AUDIO,
-       OPT_LIGHTS, OPT_SHADOWS, OPT_CINEMATIC, OPT_WATER, OPT_WEATHER, OPT_ELEMENTS, OPT_FOOTSTEPS };
+       OPT_LIGHTS, OPT_SHADOWS, OPT_CINEMATIC, OPT_WATER, OPT_WEATHER, OPT_ELEMENTS, OPT_FOOTSTEPS,
+       OPT_TEXPACK, OPT_DUMP };
 enum { WEATHER_OFF, WEATHER_BREEZE, WEATHER_SAND, WEATHER_RAIN, WEATHER_MIST, WEATHER_COUNT };
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
@@ -70,5 +73,8 @@ int  settings_cycle(int v, int count, int dir);     /* (v + dir) wrapped into 0.
 
 /* Widescreen pixels to add on each side for the current settings. */
 int  settings_extra_width(void);
+
+/* The folder next to the executable (texture packs are listed under it). */
+void settings_set_base(const char *dir);
 
 #endif

@@ -584,7 +584,8 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Filter", OPT_FILTER, "Scanlines, a curved CRT tube or an LCD grid over the picture." },
       { ROW_OPTION, "Sharpening", OPT_SHARPEN, "Crisper edges after scaling, without halos (contrast-adaptive)." },
       { ROW_OPTION, "Internal resolution", OPT_INTERNAL, "Redraws each layer at a higher resolution; 6x (4K) needs a fast CPU." },
-      { ROW_OPTION, "Scaler", OPT_SCALER, "Edge rounds corners; Smooth follows curves and slopes (xBR)." } },
+      { ROW_OPTION, "Scaler", OPT_SCALER, "Edge rounds corners; Smooth follows curves and slopes (xBR)." },
+      { ROW_OPTION, "Texture pack", OPT_TEXPACK, "High-resolution tile replacements from a folder in texture_packs." } },
     { { ROW_OPTION, "Lighting", OPT_LIGHTING, "Fire, magic and bright light glow into their surroundings." },
       { ROW_OPTION, "Light sources", OPT_LIGHTS, "Fire and magic light up the ground around them; dark places dim a little." },
       { ROW_OPTION, "Shadows", OPT_SHADOWS, "Characters cast soft shadows, as if lit from the top left." },
@@ -607,7 +608,7 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL },
       { ROW_OPTION, "Audio", OPT_AUDIO, NULL } },
 };
-static const int tab_count[TABS] = { 8, 9, 9, 5 };
+static const int tab_count[TABS] = { 9, 9, 9, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define PANEL_X (TABLET_X + 40)
@@ -952,6 +953,7 @@ static void update_rom_status(void) {
 static void init_common(void) {
     char *bp = SDL_GetBasePath();
     snprintf(cache_path, sizeof cache_path, "%slauncher_art.cache", bp ? bp : "");
+    settings_set_base(bp ? bp : "");
     art_prepare();                      /* (may run the intro, which draws over hd_frame) */
     preview_load(bp ? bp : "");
     if (bp) SDL_free(bp);

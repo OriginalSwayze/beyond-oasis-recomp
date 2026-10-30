@@ -66,12 +66,13 @@ Other headless options:
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
-* `--lighting N` (0-2), `--ambience 0|1`, `--lights 0|1`, `--shadows 0|1`, `--cinematic 0|1`, `--water 0|1`, `--weather N` (0-4), `--elements 0|1`, `--footsteps 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
+* `--lighting N` (0-2), `--ambience 0|1`, `--lights 0|1`, `--shadows 0|1`, `--cinematic 0|1`, `--water 0|1`, `--weather N` (0-4), `--elements 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
 * `--outfit a,b,c,d`: Ali's outfit colours for this run (as `outfit_colors` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
 * `--menu-tab TAB ROW`: with `--menu-shot`, open tab TAB (0 game, 1 display, 2 effects, 3 more) with row ROW selected (shows its preview card)
 * `--save-preview`: at the end, save the frame for the launcher's previews (`preview_frame.cache`)
+* `--png-check F.png`: read a PNG with the built-in reader and print its size and a checksum of its pixels
 * `--filter-shot F.png W H MODE`: draw the last frame at W x H with filter MODE on the GPU (hidden window) and save it
 * `--volume N`: volume 0-100 for this run
 * `--overclock PERCENT`: run the 68000 at this speed (also below 100, to simulate a heavy scene); headless runs print the spare time, game ticks and late ticks
@@ -348,6 +349,33 @@ states and replays are the same in every mode:
   second in the village at full volume).
 * Rich: Clean, with the stereo widened a little and a light room reverb (four comb and
   two all-pass filters per side, after Freeverb) mixed in quietly.
+
+## HD texture packs
+
+"Texture pack" (DISPLAY in the launcher, MORE in the pause menu; `texture_pack` in
+`settings.ini`) draws high-resolution images in place of the game's 8x8 tiles, from a
+folder in `texture_packs/` next to the executable (`runtime/src/texpack.c`):
+
+* A tile as the game shows it is its 32 bytes of pattern and the 16 colours of the palette
+  line it is drawn with; its key is a 64-bit FNV-1a hash of those, written as 16 hex digits.
+  A pack is a folder of `<key>.png` images, each square, a multiple of 8 pixels (8x8 to
+  128x128), with transparency.
+* "Dump tiles" (`dump_tiles`) writes every tile shown on screen once, as an 8x8 PNG named
+  by its key, to `texture_packs/dump/`: play through a part of the game, redraw or upscale
+  the images, and put them in a folder of their own.
+* While a pack is loaded the VDP keeps, for every pixel of each layer, its tile's
+  replacement, the tile's flips and the pixel's place in the tile. The replacement colours
+  are worked out beside the scaled layers (for the planes once per game frame, for each
+  sprite with its scaled copy, so they follow it in smooth motion), and while the layers
+  are put together a replacement can make its layer's pixel transparent or opaque; when
+  that layer is on top, the pixel takes the replacement's colour. Priorities, the window,
+  shadows, water and the other effects work as before.
+* PNGs are read by a built-in decoder (inflate with fixed and dynamic Huffman codes, all
+  five row filters; 8-bit grey, RGB, palette, grey with alpha and RGBA). Loading 23,000
+  images takes under a second; a 3x frame takes about 1 ms longer to compose.
+* Keys include the colours, so a tile during a screen fade (each step a different palette)
+  has a different key and shows the original art for those few frames. Dumping during
+  fades writes those variants too; they can be left out of a pack.
 
 ## Sharpening
 

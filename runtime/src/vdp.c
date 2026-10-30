@@ -4,6 +4,7 @@
 #include "genesis.h"
 #include "hd.h"
 #include "motion.h"
+#include "texpack.h"
 #include <string.h>
 #include <stdio.h>
 #include "m68k.h"
@@ -206,7 +207,14 @@ void vdp_write8(uint32_t a, uint8_t v) {
 static int plane_size(int bits) { return bits == 0 ? 32 : bits == 1 ? 64 : bits == 3 ? 128 : 32; }
 
 /* Draws a scrolled plane (A or B) for line `line` into out[0..w) where out[0] is screen x = -extra. */
+/* Each pixel's tile reference on this line, for texture packs (vdp_opts.tile_refs). */
+static uint32_t ref_a[320 + MAX_EXTRA_WIDTH * 2], ref_b[320 + MAX_EXTRA_WIDTH * 2], ref_s[320 + MAX_EXTRA_WIDTH * 2];
+
 static void draw_plane(uint8_t *out, int w, int extra, int line, uint32_t nt, int which) {
+    uint32_t *refs = which ? ref_b : ref_a;
+    bool keep_refs = vdp_opts.tile_refs;
+    uint16_t last_e = 0, last_id = 0;
+    bool have_e = false;
     int pw = plane_size(vdp.reg[16] & 3), ph = plane_size((vdp.reg[16] >> 4) & 3);
     if (pw == 128 && ph > 32) ph = 32; /* 128x64 / 128x128 are not valid: hardware limits to 4096 cells */
     uint32_t hs_base = (vdp.reg[13] & 0x3F) << 10;
@@ -237,6 +245,10 @@ static void draw_plane(uint8_t *out, int w, int extra, int line, uint32_t nt, in
         uint8_t b = vdp.vram[((e & 0x7FF) * 32 + row * 4 + (col >> 1)) & 0xFFFF];
         int c = (col & 1) ? (b & 0xF) : (b >> 4);
         out[i] = (uint8_t)((c ? ((e >> 9) & 0x30) | c : 0) | ((e & 0x8000) ? PRI : 0));
+        if (keep_refs) {
+            if (!have_e || e != last_e) { last_e = e; have_e = true; last_id = texpack_tile(e & 0x7FF, (e >> 13) & 3); }
+            refs[i] = texpack_ref(last_id, e & 0x0800, e & 0x1000, col, row);   /* also where transparent: a replacement may fill it */
+        }
     }
 }
 
@@ -265,6 +277,7 @@ static void draw_window(uint8_t *out, int w, int extra, int line) {
         int col = (e & 0x0800) ? 7 - (px & 7) : (px & 7);
         uint8_t b = vdp.vram[((e & 0x7FF) * 32 + row * 4 + (col >> 1)) & 0xFFFF];
         int c = (col & 1) ? (b & 0xF) : (b >> 4);
+        if (vdp_opts.tile_refs) ref_a[i] = texpack_ref(texpack_tile(e & 0x7FF, (e >> 13) & 3), e & 0x0800, e & 0x1000, col, row);
         out[i] = (uint8_t)((c ? ((e >> 9) & 0x30) | c : 0) | ((e & 0x8000) ? PRI : 0) |
                            (vdp_opts.hd_capture ? HD_WINDOW : 0));
     }
@@ -393,10 +406,12 @@ static void draw_sprites(uint8_t *out, int w, int extra, int line) {
                         player_now[py * PLAYER_IMG + px] = v & 0x3F;
                     if (vdp_opts.outfit && vdp_outfit[v & 0x3F] != OUTFIT_KEEP) v |= OUTFIT;
                 }
-                if (cap) cap->px[row * 32 + sx] = sprite_px(v);
+                uint32_t ref = vdp_opts.tile_refs ? texpack_ref(texpack_tile(tile, (attr >> 13) & 3), attr & 0x0800, attr & 0x1000, cx & 7, sy & 7) : 0;
+                if (cap) { cap->px[row * 32 + sx] = sprite_px(v); cap->ref[row * 32 + sx] = ref; }
                 if (i < 0 || i >= w) continue;
                 if (out[i] & 0x0F) { vdp.status |= 0x20; continue; } /* earlier sprite wins */
                 out[i] = v;
+                ref_s[i] = ref;
             }
         }
         if (link == 0 || link >= max_total) break;
@@ -454,7 +469,10 @@ void vdp_render_line(int line, uint32_t *dst) {
     int w = vdp_screen_width() + extra * 2;
     uint16_t backdrop = vdp.cram[vdp.reg[7] & 0x3F];
     bool capture = vdp_opts.hd_capture && line < HD_MAX_H;
-    if (line == 0) player_frame_start();
+    if (line == 0) {
+        player_frame_start();
+        if (vdp_opts.tile_refs) texpack_frame();
+    }
     if (capture) {
         if (line == 0) {
             hd_frame.w = w; hd_frame.extra = extra; hd_frame.mask_sides = vdp_opts.mask_sides;
@@ -481,6 +499,7 @@ void vdp_render_line(int line, uint32_t *dst) {
 
     static uint8_t a[320 + MAX_EXTRA_WIDTH * 2], b[320 + MAX_EXTRA_WIDTH * 2], s[320 + MAX_EXTRA_WIDTH * 2];
     memset(s, 0, (size_t)w);
+    if (vdp_opts.tile_refs) memset(ref_s, 0, (size_t)w * sizeof *ref_s);
     draw_plane(b, w, extra, line, (vdp.reg[4] & 7) << 13, 1);
     draw_plane(a, w, extra, line, (vdp.reg[2] & 0x38) << 10, 0);
     draw_window(a, w, extra, line);
@@ -497,6 +516,7 @@ void vdp_render_line(int line, uint32_t *dst) {
         for (int i = 0; i < w; i++) {
             uint32_t pa = layer_px(a[i]), pb = layer_px(b[i]), ps = sprite_px(s[i]);
             hd_frame.a[line][i] = pa; hd_frame.b[line][i] = pb; hd_frame.s[line][i] = ps;
+            if (vdp_opts.tile_refs) { hd_frame.ta[line][i] = ref_a[i]; hd_frame.tb[line][i] = ref_b[i]; hd_frame.ts[line][i] = ref_s[i]; }
             dst[i] = vdp_compose(pa, pb, ps, backdrop, sh);
         }
     } else {

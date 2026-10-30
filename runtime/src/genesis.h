@@ -58,6 +58,7 @@ typedef struct {
     int  hide_layers;                   /* debugging: bit 0 plane A, 1 plane B, 2 sprites, 3 window */
     bool hd_capture;                    /* keep each line's layers for hd_compose() (hd.h) */
     bool outfit;                        /* draw the player's sprites with vdp_outfit's colours */
+    bool tile_refs;                     /* keep each pixel's tile reference for texture packs (texpack.h) */
 } VdpOptions;
 
 /* The player character's outfit colours (vdp.c). For each colour index (palette * 16 +

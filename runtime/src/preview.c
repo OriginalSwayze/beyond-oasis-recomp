@@ -14,7 +14,7 @@
 #include "settings.h"
 #include "ui.h"
 
-typedef struct { int scale, scaler, sharpen, lighting, weather; bool ambience, lights, shadows, cinematic, water; } Look;
+typedef struct { int scale, scaler, sharpen, lighting, weather; bool ambience, lights, shadows, cinematic, water, pack; } Look;
 
 static struct { bool world; float cam_x, cam_y, focus_x, focus_y; } where;
 
@@ -60,7 +60,7 @@ bool preview_ready(void) { return hd_frame.h > 0 && hd_frame.w > 0; }
 /* ---- Which looks to compare ------------------------------------------------------------ */
 static Look look_now(void) {
     return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, settings.weather, settings.ambience,
-                   settings.lights, settings.shadows, settings.cinematic, settings.water };
+                   settings.lights, settings.shadows, settings.cinematic, settings.water, hd_texpack };
 }
 
 /* The look without the option and with it, whether to show it 1:1, and the label of the
@@ -114,6 +114,12 @@ static bool looks_for(int option, Look *off, Look *on, bool *zoom, char *label, 
         off->water = false; on->water = true;
         settings.water = true;
         break;
+    case OPT_TEXPACK:
+        if (!hd_texpack) { settings = keep; return false; }     /* the frame has no tile references without a pack */
+        off->pack = false; on->pack = true;
+        if (on->scale < 2) on->scale = off->scale = 3;
+        *zoom = true;
+        break;
     case OPT_WEATHER:
         off->weather = 0;
         on->weather = settings.weather ? settings.weather : WEATHER_BREEZE;
@@ -139,16 +145,18 @@ typedef struct { uint32_t *px; int w, h; } Picture;
 
 static void render_look(const Look *l, Picture *out) {
     int keep_scaler = hd_scaler;
-    bool keep_shadows = hd_shadows, keep_water = hd_water;
+    bool keep_shadows = hd_shadows, keep_water = hd_water, keep_pack = hd_texpack;
     float keep_time = hd_time;
     hd_scaler = l->scaler;
     hd_shadows = l->shadows;
     hd_water = l->water;
+    hd_texpack = l->pack;
     hd_time = 2.0f;
     hd_compose(l->scale);
     hd_scaler = keep_scaler;
     hd_shadows = keep_shadows;
     hd_water = keep_water;
+    hd_texpack = keep_pack;
     hd_time = keep_time;
     int scale = hd_w / (hd_frame.w > 0 ? hd_frame.w : 1);
     HdPost post = { l->sharpen, l->lighting, l->ambience, l->lights, l->cinematic, l->weather, false, false, where.world, where.cam_x, where.cam_y, 2.0f, scale < 1 ? 1 : scale, hd_frame.extra };

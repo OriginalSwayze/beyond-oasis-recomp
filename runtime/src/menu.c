@@ -40,9 +40,10 @@ static const Item tab_items[TABS][MAX_ROWS] = {
       { ITEM_OPTION, "Weather", OPT_WEATHER }, { ITEM_OPTION, "Spirit effects", OPT_ELEMENTS },
       { ITEM_OPTION, "Footsteps", OPT_FOOTSTEPS } },
     { { ITEM_OPTION, "Volume", OPT_VOLUME }, { ITEM_OPTION, "Audio", OPT_AUDIO },
-      { ITEM_ACTION, "Controls", ACT_CONTROLS }, { ITEM_ACTION, "Ali's outfit", ACT_OUTFIT } },
+      { ITEM_ACTION, "Controls", ACT_CONTROLS }, { ITEM_ACTION, "Ali's outfit", ACT_OUTFIT },
+      { ITEM_OPTION, "Texture pack", OPT_TEXPACK }, { ITEM_OPTION, "Dump tiles", OPT_DUMP } },
 };
-static const int tab_count[TABS] = { 7, 10, 9, 4 };
+static const int tab_count[TABS] = { 7, 10, 9, 6 };
 
 /* What each option and action does, for the card on the right. */
 static const char *about(const Item *it) {
@@ -70,6 +71,8 @@ static const char *about(const Item *it) {
     case OPT_AMBIENCE: return "A soft vignette at the edges, and dust drifting in the air of the world that stays in place as the camera moves.";
     case OPT_LIGHTS: return "Fire, magic and glowing things cast coloured light on the ground and walls around them. In dark places the rest dims a little so they stand out.";
     case OPT_SHADOWS: return "Characters cast a soft shadow on the ground and walls behind them, as if lit from the top left. The HUD casts none.";
+    case OPT_TEXPACK: return "High-resolution replacements for the game's tiles, from a folder in texture_packs next to the game. None is the original art.";
+    case OPT_DUMP: return "Writes every tile shown on screen once to texture_packs/dump, named by its key: the starting point for making a pack.";
     case OPT_FOOTSTEPS: return "Ali kicks up what is under his feet as he walks: puffs of dust on sand and stone, bits of grass, splashes and rings in water.";
     case OPT_WATER: return "The sea, rivers and pools shimmer with slow swells, sparkle in the light and reflect the people and things above them.";
     case OPT_WEATHER: return "Weather in the world: a breeze with pollen and shafts of light, a sandstorm, rain with splashes, or drifting mist. Menus and story scenes stay clear.";
