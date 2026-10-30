@@ -75,15 +75,18 @@ add_executable(BeyondOasis WIN32
   runtime/src/png.c
   runtime/src/text.c
   runtime/src/launcher.c
+  runtime/src/launcher_scene.c
   runtime/src/ui.c
   runtime/src/menu.c
   runtime/src/savestate.c
   runtime/src/cheats.c
   runtime/src/hd.c
   runtime/src/motion.c
+  runtime/src/ost.c
   runtime/src/filter.c
   runtime/src/input.c
   runtime/src/controls.c
+  runtime/src/outfit.c
   runtime/src/bus.c
   runtime/src/vdp.c
   runtime/src/io.c

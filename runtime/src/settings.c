@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "outfit.h"
 #include "genesis.h"
 #include "filter.h"
 #include "input.h"
@@ -23,6 +24,7 @@ Settings settings = {
     .state_slot = 1,
     .show_launcher = true,
     .launcher_music = true,
+    .ost_track = -1,
     .volume = 100,
 };
 
@@ -33,6 +35,7 @@ static bool parse_bool(const char *v) { return !strcmp(v, "1") || !strcmp(v, "tr
 
 void settings_load(const char *path) {
     input_defaults();
+    outfit_defaults();
     FILE *f = fopen(path, "r");
     if (!f) return;
     char line[1200];
@@ -61,7 +64,11 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "show_launcher")) settings.show_launcher = parse_bool(v);
         else if (!strcmp(k, "launcher_music")) settings.launcher_music = parse_bool(v);
         else if (!strcmp(k, "volume")) settings.volume = atoi(v);
+        else if (!strcmp(k, "ost_mode")) settings.ost_mode = atoi(v);
+        else if (!strcmp(k, "sharpen")) settings.sharpen = atoi(v);
+        else if (!strcmp(k, "ost_track")) settings.ost_track = atoi(v);
         else if (input_ini_load(k, v)) {}
+        else if (outfit_ini_load(k, v)) {}
         else if (!strcmp(k, "cheat_health")) settings.cheat_health = parse_bool(v);
         else if (!strcmp(k, "cheat_spirit")) settings.cheat_spirit = parse_bool(v);
         else if (!strcmp(k, "cheat_weapons")) settings.cheat_weapons = parse_bool(v);
@@ -74,6 +81,9 @@ void settings_load(const char *path) {
     if (settings.filter < 0 || settings.filter >= FILTER_COUNT) settings.filter = FILTER_OFF;
     if (settings.overclock < 100 || settings.overclock > 400) settings.overclock = 100;
     if (settings.volume < 0 || settings.volume > 100) settings.volume = 100;
+    if (settings.ost_mode < 0 || settings.ost_mode >= OST_MODE_COUNT) settings.ost_mode = OST_MODE_ALL;
+    if (settings.sharpen < 0 || settings.sharpen > 3) settings.sharpen = 0;
+    if (settings.ost_track < -1 || settings.ost_track > 0xFF) settings.ost_track = -1;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
     if (settings.state_slot < 1 || settings.state_slot > 9) settings.state_slot = 1;
 }
@@ -99,12 +109,16 @@ void settings_save(const char *path) {
     fprintf(f, "show_launcher=%d\n", settings.show_launcher);
     fprintf(f, "launcher_music=%d\n", settings.launcher_music);
     fprintf(f, "volume=%d\n", settings.volume);
+    fprintf(f, "ost_mode=%d\n", settings.ost_mode);
+    fprintf(f, "sharpen=%d\n", settings.sharpen);
+    fprintf(f, "ost_track=%d\n", settings.ost_track);
     fprintf(f, "cheat_health=%d\n", settings.cheat_health);
     fprintf(f, "cheat_spirit=%d\n", settings.cheat_spirit);
     fprintf(f, "cheat_weapons=%d\n", settings.cheat_weapons);
     fprintf(f, "# Extra RAM codes held every frame: FFxxxx:VV (byte) or FFxxxx:VVVV (word), comma-separated\n");
     fprintf(f, "cheat_codes=%s\n", settings.cheat_codes);
     input_ini_save(f);
+    outfit_ini_save(f);
     fclose(f);
 }
 
@@ -125,6 +139,8 @@ int settings_extra_width(void) {
 static const int aspects[][2] = { { 16, 10 }, { 16, 9 }, { 2, 1 } };
 static const int rewind_sizes[] = { 32, 64, 128, 256, 512 };
 static const int overclocks[] = { 100, 150, 200, 300 };
+static const char *sharpen_names[4] = { "Off", "Light", "Medium", "Strong" };
+static const char *ost_modes[OST_MODE_COUNT] = { "Play all", "Repeat track", "Shuffle" };
 static const char *cheat_presets[] = { "Off", "Health", "Health + spirit", "All" };
 
 /* Index of the cheat preset matching the current toggles, or -1 for another mix. */
@@ -148,6 +164,9 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_SMOOTH:     snprintf(out, n, "%s", settings.smooth_motion ? "On" : "Off"); break;
     case OPT_FILTER:     snprintf(out, n, "%s", filter_names[settings.filter]); break;
     case OPT_VOLUME:     snprintf(out, n, "%d%%", settings.volume); break;
+    case OPT_MUSIC:      snprintf(out, n, "%s", settings.launcher_music ? "On" : "Off"); break;
+    case OPT_OST_MODE:   snprintf(out, n, "%s", ost_modes[settings.ost_mode]); break;
+    case OPT_SHARPEN:    snprintf(out, n, "%s", sharpen_names[settings.sharpen]); break;
     case OPT_OVERCLOCK:
         if (settings.overclock <= 100) snprintf(out, n, "Off");
         else snprintf(out, n, "%d%% CPU", settings.overclock);
@@ -237,6 +256,9 @@ void settings_option_change(int id, int dir) {
         break;
     }
     case OPT_LAUNCHER: settings.show_launcher = !settings.show_launcher; break;
+    case OPT_MUSIC:    settings.launcher_music = !settings.launcher_music; break;
+    case OPT_OST_MODE: settings.ost_mode = settings_cycle(settings.ost_mode, OST_MODE_COUNT, dir); break;
+    case OPT_SHARPEN:  settings.sharpen = settings_cycle(settings.sharpen, 4, dir); break;
     case OPT_CHEAT_HEALTH:  settings.cheat_health = !settings.cheat_health; break;
     case OPT_CHEAT_SPIRIT:  settings.cheat_spirit = !settings.cheat_spirit; break;
     case OPT_CHEAT_WEAPONS: settings.cheat_weapons = !settings.cheat_weapons; break;

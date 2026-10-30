@@ -57,7 +57,25 @@ typedef struct {
     bool mask_sides;                    /* draw the widescreen columns black (screens made for 320) */
     int  hide_layers;                   /* debugging: bit 0 plane A, 1 plane B, 2 sprites, 3 window */
     bool hd_capture;                    /* keep each line's layers for hd_compose() (hd.h) */
+    bool outfit;                        /* draw the player's sprites with vdp_outfit's colours */
 } VdpOptions;
+
+/* The player character's outfit colours (vdp.c). For each colour index (palette * 16 +
+ * colour), vdp_outfit_pick is the colour picked for it or OUTFIT_KEEP, and
+ * vdp_outfit_ref the brightness (r + g + b, 0-21) of the colour it stands for: each frame
+ * the index gets the pick scaled by how bright the game's CRAM colour is now, so shades
+ * keep their depth and fades still darken him. Which sprites are his comes from motion.c.
+ * The last frame he was on screen is kept in vdp_player (colour indices, 0 = none) with
+ * that frame's CRAM, for previews. */
+#define OUTFIT_KEEP 0xFFFF
+#define PLAYER_IMG 128
+extern uint16_t vdp_outfit_pick[64];
+extern uint8_t  vdp_outfit_ref[64];
+extern uint8_t  vdp_player[PLAYER_IMG * PLAYER_IMG];
+extern uint16_t vdp_player_cram[64];
+extern int      vdp_player_w, vdp_player_h;   /* 0 until he has been on screen */
+uint16_t vdp_outfit_shade(uint16_t pick, uint16_t now, int ref);   /* the colour an index gets */
+uint32_t vdp_color_rgb(uint16_t cram);                             /* 0x00RRGGBB */
 
 extern Vdp vdp;
 extern VdpOptions vdp_opts;

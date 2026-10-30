@@ -3,6 +3,7 @@
  * rewind, reset and quit. Drawn with the launcher's UI style. */
 #include "menu.h"
 #include "controls.h"
+#include "outfit.h"
 #include "genesis.h"
 #include "savestate.h"
 #include "settings.h"
@@ -12,7 +13,7 @@
 #include <string.h>
 
 typedef enum { ITEM_HEADER, ITEM_ACTION, ITEM_SLOT, ITEM_OPTION } ItemKind;
-enum { ACT_RESUME, ACT_SAVE, ACT_LOAD, ACT_RESET, ACT_QUIT, ACT_CONTROLS };
+enum { ACT_RESUME, ACT_SAVE, ACT_LOAD, ACT_RESET, ACT_QUIT, ACT_CONTROLS, ACT_OUTFIT };
 typedef struct { ItemKind kind; const char *label; int id; } Item;
 
 static const Item items[] = {
@@ -27,16 +28,15 @@ static const Item items[] = {
     { ITEM_OPTION, "Internal resolution", OPT_INTERNAL },
     { ITEM_OPTION, "Smooth motion", OPT_SMOOTH },
     { ITEM_OPTION, "Filter", OPT_FILTER },
+    { ITEM_OPTION, "Sharpening", OPT_SHARPEN },
     { ITEM_OPTION, "Sprite flicker fix", OPT_FLICKER },
     { ITEM_OPTION, "Slowdown fix", OPT_OVERCLOCK },
-    { ITEM_HEADER, "CHEATS", 0 },
-    { ITEM_OPTION, "Infinite health", OPT_CHEAT_HEALTH },
-    { ITEM_OPTION, "Infinite spirit", OPT_CHEAT_SPIRIT },
-    { ITEM_OPTION, "Unbreakable weapons", OPT_CHEAT_WEAPONS },
     { ITEM_HEADER, "GAME", 0 },
+    { ITEM_OPTION, "Cheats", OPT_CHEATS },
     { ITEM_OPTION, "Rewind", OPT_REWIND },
     { ITEM_OPTION, "Volume", OPT_VOLUME },
     { ITEM_ACTION, "Controls", ACT_CONTROLS },
+    { ITEM_ACTION, "Ali's outfit", ACT_OUTFIT },
     { ITEM_ACTION, "Reset game", ACT_RESET },
     { ITEM_ACTION, "Quit game", ACT_QUIT },
 };
@@ -202,6 +202,7 @@ static MenuAction act(int dir, bool activate) {
         if (!activate) return MENU_NONE;
         if (it->id == ACT_RESUME) return MENU_CLOSE;
         if (it->id == ACT_CONTROLS) { controls_open(); return MENU_NONE; }
+        if (it->id == ACT_OUTFIT) { outfit_open(); return MENU_NONE; }
         /* Reset and quit lose progress: ask for a second press. */
         if (!confirm_pending || confirm_item != selected) {
             confirm_pending = true;
@@ -220,12 +221,13 @@ static MenuAction act(int dir, bool activate) {
 MenuAction menu_event(const SDL_Event *e) {
     int dir = 0;
     bool activate = false;
-    if (controls_is_open()) {           /* the controls page takes all input while it is up */
+    if (controls_is_open() || outfit_is_open()) {   /* a page takes all input while it is up */
         float mx = 0, my = 0;
         if (e->type == SDL_MOUSEMOTION) { mx = e->motion.x; my = e->motion.y; }
         if (e->type == SDL_MOUSEBUTTONDOWN) { mx = e->button.x; my = e->button.y; }
         mx = (mx * mouse_scale - ui_ox) / ui_s;
         my = (my * mouse_scale - ui_oy) / ui_s;
+        if (outfit_is_open()) return outfit_event(e, mx, my) ? MENU_SETTINGS : MENU_NONE;
         return controls_event(e, mx, my) ? MENU_SETTINGS : MENU_NONE;
     }
     switch (e->type) {
@@ -400,4 +402,5 @@ void menu_render(double time_s) {
         ui_draw_text(toast, "Segoe UI Semibold", 16, 600, 1, x + 24, y + 9, rgb_hex(0xF3DDA4), rgb_hex(0xF3DDA4), a);
     }
     controls_render(time_s);
+    outfit_render(time_s);
 }

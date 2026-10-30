@@ -1,17 +1,22 @@
-/* Launcher: a settings screen shown before the game, with the game presented as a
- * collector's steelbook: brushed steel, the Gold Armlet and title logo embossed into it,
- * and a holographic foil finish whose light follows the mouse like tilting a real case.
+/* Launcher: a settings screen shown before the game. The Gold Armlet floats over a desert
+ * at dusk with the four spirits circling it (launcher_scene.c); the settings sit on a stone
+ * tablet with one tab per spirit, and the game's soundtrack plays through a built-in player,
+ * with the game's own menu sounds for every choice.
  *
  * The artwork comes from the user's own ROM: the launcher runs the game's intro
  * silently and captures the armlet scene and the title screen, then caches them in
  * launcher_art.cache next to the executable. Everything is drawn in software into one
  * ui_px (also used for headless screenshots), at the window's pixel scale. */
 #include "launcher.h"
+#include "ost.h"
+#include "launcher_scene.h"
+#include "recomp_rt.h"
 #include "genesis.h"
 #include "settings.h"
 #include "ui.h"
 #include "png.h"
 #include "controls.h"
+#include "outfit.h"
 #include <SDL.h>
 #include <math.h>
 #include <stdio.h>
@@ -27,10 +32,7 @@
 #define BASE_W UI_BASE_W
 #define BASE_H UI_BASE_H
 
-static uint32_t *background;            /* static parts of the frame, drawn once per size */
-
 /* ---- Artwork captured from the ROM -------------------------------------------- */
-typedef struct { int w, h; uint32_t *rgb; uint8_t *mask; } Art;
 static Art armlet, logo;
 
 #define ART_MAGIC    0x34524142u       /* cache file tag (bump when the capture changes) */
@@ -194,28 +196,46 @@ static void art_prepare(void) {
 
 static void init_common(void);
 
-/* ---- Music ------------------------------------------------------------------------ *
- * The launcher plays the game's title theme: the ROM runs on a background thread from a
+/* ---- Soundtrack player ------------------------------------------------------------ *
+ * The launcher plays the game's own soundtrack. A background thread runs the ROM from a
  * reset (with blank save RAM, like the art capture) to the title screen in a fraction of
- * a second without sound, then in real time, its sound driver feeding the audio device.
- * The title lasts a fixed time before the attract demo; just before it ends the music
- * fades out and the title starts again from a snapshot.
- * The thread owns the machine until music_stop(); the game resets it afterwards. */
+ * a second without sound, notes which song the title asked for, then parks the game and
+ * drives its sound driver directly (ost.c): any of the 34 songs, and the game's own menu
+ * sounds for the launcher's choices. Songs that loop play for PLAY_FOR seconds and fade
+ * out; jingles end when they go quiet. The thread owns the machine until music_stop();
+ * the game resets it afterwards. */
+#define PLAY_FOR   (3 * 60)             /* seconds a looping song plays before the next */
+#define FADE_OUT   (4 * 60)             /* frames */
+#define FADE_STOP  15                   /* frames: quitting or switching off */
+#define METER_BARS 24
+
 static SDL_Thread *music_thread;
 static SDL_AudioDeviceID music_dev;
-static SDL_atomic_t music_quit;
+static SDL_mutex *music_lock;
 static uint8_t *music_sram;             /* the real save RAM, put back by music_stop() */
 static bool music_sram_dirty;
-static uint8_t music_snap[STATE_MAX];   /* the machine at the title screen */
-static size_t music_snap_len;
 static uint32_t music_fb[320 * 240];
+static int title_song = -1;             /* the song the title screen starts */
 
-/* Runs to the title screen, keeps a snapshot of it, and measures (silently, in a
- * fraction of a second) how many frames the title stays before the attract demo. */
-static int music_len;                   /* frames from the snapshot until the demo, or 0 */
+/* Requests from the launcher and what the player is doing, under music_lock. */
+static struct {
+    bool quit;
+    int  want_song;                     /* -1: none */
+    int  step;                          /* +1 / -1: next / previous song */
+    bool want_on, want_off;
+    uint16_t sfx[8];
+    int  sfx_count;
+    /* published by the player */
+    bool ready, on;
+    int  song, frames;                  /* the song playing, and for how long */
+    float meter[METER_BARS];            /* level of the latest frame, in slices, 0-1 */
+} player;
 
-static bool title_up(void) {
-    return count(music_fb, is_gold, 140) > 900 && count(music_fb, is_teal, 224) > 25000;
+/* Records the songs the game asks for while it runs to the title. */
+static uint32_t note_song(uint32_t pc) {
+    (void)pc;
+    if ((D(0) & 0xFF00) == 0x0100) title_song = (int)(D(0) & 0xFF);
+    return 0x06042A;                    /* on to the driver, as `bra` at $060004 does */
 }
 
 static bool music_to_title(void) {
@@ -223,75 +243,163 @@ static bool music_to_title(void) {
     widescreen_patches(0);
     memset(bus.sram, 0xFF, SRAM_SIZE);
     machine_reset();
-    if (!run_until(music_fb, title_shown, 100, 3000)) return false;
-    music_snap_len = state_save(music_snap, sizeof music_snap);
-    if (!music_snap_len) return false;
-    music_len = 0;
-    for (int f = 1; f <= 60 * 60; f++) {
-        bool check = f % 2 == 0;
-        machine_run_frame(check ? music_fb : NULL, 320);
-        if (check && !title_up()) { music_len = f - 2; break; }
-    }
-    return state_load(music_snap, music_snap_len);
+    machine_override(0x060004, note_song);
+    bool ok = run_until(music_fb, title_shown, 100, 3000);
+    machine_override(0x060004, NULL);
+    return ok;
 }
 
-/* One frame of music, scaled by volume (0-1). Returns the stereo frames in sound_out. */
-static int music_frame(float volume) {
+/* One frame of sound, scaled by volume (0-1). Returns the stereo frames in sound_out and
+ * the frame's level without its DC offset (the FM DAC can hold a constant level). */
+static int music_frame(float volume, double *level) {
+    ost_frame();
     machine_run_frame(NULL, 320);
+    double sum = 0, sum2 = 0;
+    int n = sound_out_count * 2;
+    for (int i = 0; i < n; i++) { sum += sound_out[i]; sum2 += (double)sound_out[i] * sound_out[i]; }
+    *level = n ? sqrt(fmax(0, sum2 / n - (sum / n) * (sum / n))) : 0;
     int v = (int)(volume * settings.volume / 100.f * 256);
-    for (int i = 0; i < sound_out_count * 2; i++) sound_out[i] = (int16_t)(sound_out[i] * v / 256);
+    for (int i = 0; i < n; i++) sound_out[i] = (int16_t)(sound_out[i] * v / 256);
     return sound_out_count;
 }
 
-#define MUSIC_FADE_OUT 15               /* frames: a quarter second */
+static int next_song(int song, int dir) {
+    if (settings.ost_mode == OST_MODE_SHUFFLE && dir > 0) {
+        int s = (int)(hash32((uint32_t)SDL_GetPerformanceCounter()) % (OST_SONGS - 1));
+        return s >= song ? s + 1 : s;   /* any other song */
+    }
+    return settings_cycle(song, OST_SONGS, dir);
+}
+
+/* The player's state, kept by the thread (and by launcher_music_check()). */
+typedef struct {
+    int song, frames;
+    bool on;
+    float volume, peak;
+    double top, quiet;                  /* loudest second so far; frames it has been quiet */
+    int fading;                         /* frames of fade left (0: not fading) */
+    int after_fade;                     /* song to start when the fade ends, -1 to stop */
+} Player;
+
+static void start_song(Player *p, int song) {
+    p->song = song;
+    p->frames = 0;
+    p->top = p->quiet = 0;
+    p->fading = 0;
+    p->volume = p->peak;
+    ost_command(OST_STOP);
+    ost_command(OST_PLAY(song));
+}
+
+static void fade_to(Player *p, int song, int frames) {
+    if (p->fading) { p->after_fade = song; return; }
+    p->fading = frames;
+    p->after_fade = song;
+}
+
+/* Runs one frame of the player; returns the stereo frames in sound_out. */
+static int player_frame(Player *p) {
+    double level;
+    if (p->fading) {
+        p->volume -= p->volume / p->fading;
+        if (--p->fading == 0) {
+            p->volume = 0;
+            if (p->after_fade >= 0) start_song(p, p->after_fade);
+            else { ost_command(OST_STOP); p->on = false; p->volume = p->peak; }
+        }
+    }
+    int n = music_frame(p->on || p->fading ? p->volume : p->peak, &level);
+    if (!p->on || p->fading) return n;
+    p->frames++;
+    /* A jingle is over once it stays quiet (well under its loudest part) for 1.5 s. */
+    if (level > p->top) p->top = level;
+    p->quiet = level < fmax(120, p->top * .03) ? p->quiet + 1 : 0;
+    bool ended = p->frames > 3 * 60 && p->quiet > 90;
+    bool long_enough = settings.ost_mode != OST_MODE_REPEAT && p->frames >= PLAY_FOR * 60;
+    if (ended) start_song(p, settings.ost_mode == OST_MODE_REPEAT ? p->song : next_song(p->song, 1));
+    else if (long_enough) fade_to(p, next_song(p->song, 1), FADE_OUT);
+    return n;
+}
+
+static void publish(const Player *p) {
+    float m[METER_BARS];
+    int n = sound_out_count;
+    for (int b = 0; b < METER_BARS; b++) {
+        double s = 0;
+        int i0 = n * b / METER_BARS, i1 = n * (b + 1) / METER_BARS, c = 0;
+        for (int i = i0; i < i1; i++) { double v = (sound_out[i * 2] + sound_out[i * 2 + 1]) * .5; s += v * v; c++; }
+        m[b] = c ? clampf((float)sqrt(s / c) / 9000.f, 0, 1) : 0;
+    }
+    SDL_LockMutex(music_lock);
+    player.ready = true;
+    player.on = p->on && !(p->fading && p->after_fade < 0);
+    player.song = p->song;
+    player.frames = p->frames;
+    for (int b = 0; b < METER_BARS; b++) player.meter[b] = p->on ? fmaxf(m[b], player.meter[b] * .82f) : player.meter[b] * .8f;
+    SDL_UnlockMutex(music_lock);
+}
 
 static int music_run(void *arg) {
     (void)arg;
     if (!music_to_title()) return 0;
+    ost_start();
+    Player p = { .song = title_song >= 0 ? title_song : 0, .peak = .8f, .after_fade = -1 };
+    if (settings.ost_track >= 0 && settings.ost_track < OST_SONGS) p.song = settings.ost_track;
+    p.volume = p.peak;
+    p.on = settings.launcher_music;
+    if (p.on) start_song(&p, p.song);
+    else ost_command(OST_STOP);
     const Uint32 target = (Uint32)sound_out_rate * 4 / 10;      /* keep about 100 ms queued */
-    float volume = 0, peak = .7f;                               /* fade in to 70% */
-    int frame = 0;
     bool quitting = false;
     for (;;) {
-        if (SDL_AtomicGet(&music_quit)) quitting = true;
-        if (SDL_GetQueuedAudioSize(music_dev) > (quitting ? target / 2 : target)) { SDL_Delay(2); continue; }
-        /* In over two seconds at the start; out over a quarter second to stop, and just
-         * before the title ends, so each loop ends before the demo's sound begins. */
-        bool ending = music_len && frame >= music_len - MUSIC_FADE_OUT;
-        if (quitting || ending) volume -= peak / MUSIC_FADE_OUT;
-        else if (volume < peak) volume += peak / 120;
-        volume = clampf(volume, 0, peak);
-        int n = music_frame(volume);
-        SDL_QueueAudio(music_dev, sound_out, (Uint32)n * 4);
-        frame++;
-        if (quitting && volume <= 0) break;
-        if (music_len && frame >= music_len) {
-            state_load(music_snap, music_snap_len);
-            frame = 0;
-            volume = peak;              /* the title starts again at full volume */
+        SDL_LockMutex(music_lock);
+        bool quit = player.quit;
+        int want = player.want_song, step = player.step;
+        bool want_on = player.want_on, want_off = player.want_off;
+        for (int k = 0; k < player.sfx_count; k++) ost_command(player.sfx[k]);
+        player.sfx_count = 0;
+        player.want_song = -1; player.step = 0; player.want_on = player.want_off = false;
+        SDL_UnlockMutex(music_lock);
+
+        if (quit && !quitting) { quitting = true; if (p.on) fade_to(&p, -1, FADE_STOP); }
+        if (!quitting) {
+            if (step) want = next_song(p.song, step);
+            if (want >= 0) { p.on = true; start_song(&p, want); }
+            if (want_on && !p.on) { p.on = true; start_song(&p, p.song); }
+            if (want_off && p.on) fade_to(&p, -1, FADE_STOP);
         }
+        if (quitting && !p.fading) break;
+        if (SDL_GetQueuedAudioSize(music_dev) > target) { SDL_Delay(2); continue; }
+        int n = player_frame(&p);
+        SDL_QueueAudio(music_dev, sound_out, (Uint32)n * 4);
+        publish(&p);
     }
+    ost_end();
     return 0;
 }
 
 static void music_start(void) {
-    if (music_thread || !rom_ok || !settings.launcher_music) return;
+    if (music_thread || !rom_ok) return;
     SDL_InitSubSystem(SDL_INIT_AUDIO);
     SDL_AudioSpec want = { .freq = 48000, .format = AUDIO_S16SYS, .channels = 2, .samples = 1024 }, have;
     music_dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (!music_dev) return;
     sound_out_rate = have.freq;
+    if (!music_lock) music_lock = SDL_CreateMutex();
+    memset(&player, 0, sizeof player);
+    player.want_song = -1;
     music_sram = malloc(SRAM_SIZE);
     memcpy(music_sram, bus.sram, SRAM_SIZE);
     music_sram_dirty = bus.sram_dirty;
-    SDL_AtomicSet(&music_quit, 0);
     SDL_PauseAudioDevice(music_dev, 0);
     music_thread = SDL_CreateThread(music_run, "music", NULL);
 }
 
 static void music_stop(void) {
     if (!music_thread) return;
-    SDL_AtomicSet(&music_quit, 1);
+    SDL_LockMutex(music_lock);
+    player.quit = true;
+    SDL_UnlockMutex(music_lock);
     SDL_WaitThread(music_thread, NULL);
     music_thread = NULL;
     SDL_Delay(60);                      /* let the faded tail play out */
@@ -306,6 +414,26 @@ static void music_stop(void) {
     pad_state[0] = 0;
 }
 
+/* Requests to the player; they do nothing before it is running. */
+static void music_sfx(uint16_t sfx) {
+    if (!music_thread) return;
+    SDL_LockMutex(music_lock);
+    if (player.sfx_count < 8) player.sfx[player.sfx_count++] = sfx;
+    SDL_UnlockMutex(music_lock);
+}
+
+static void music_request(int song, int step, bool on, bool off) {
+    if (!music_thread) return;
+    SDL_LockMutex(music_lock);
+    if (song >= 0) player.want_song = song;
+    player.step += step;
+    player.want_on |= on;
+    player.want_off |= off;
+    SDL_UnlockMutex(music_lock);
+}
+
+/* --launcher-music-check: the player without an audio device, at full speed. Prints each
+ * second's level and every song change, starting with the title theme. */
 int launcher_music_check(int seconds) {
     init_common();
     if (!rom_ok) {
@@ -318,29 +446,24 @@ int launcher_music_check(int seconds) {
     bool dirty = bus.sram_dirty;
     Uint64 t0 = SDL_GetPerformanceCounter();
     bool ok = music_to_title();
-    printf("title reached and measured in %.0f ms: %s, it lasts %d frames (%.1f s)\n",
-           (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency(), ok ? "yes" : "NO",
-           music_len, music_len / 59.92);
-    /* Level per second over two loops; both loops must match, and the fade at the end of
-     * each loop must reach silence before the restart. */
-    int frame = 0;
-    float volume = 1;
-    for (int s = 0; ok && s < seconds; s++) {
-        double sum = 0;
-        long n = 0;
-        for (int f = 0; f < 60; f++) {
-            bool ending = music_len && frame >= music_len - MUSIC_FADE_OUT;
-            volume = ending ? volume - 1.f / MUSIC_FADE_OUT : 1;
-            if (volume < 0) volume = 0;
-            int c = music_frame(volume);
-            for (int i = 0; i < c * 2; i++) { sum += (double)sound_out[i] * sound_out[i]; n++; }
-            if (++frame >= music_len && music_len) {
-                printf("  loop ends with volume %.2f\n", volume);
-                state_load(music_snap, music_snap_len);
-                frame = 0;
+    printf("title reached in %.0f ms: %s; the title theme is song %02X\n",
+           (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency(), ok ? "yes" : "NO", title_song);
+    if (ok) {
+        ost_start();
+        Player p = { .peak = 1, .volume = 1, .on = true, .after_fade = -1 };
+        start_song(&p, title_song >= 0 ? title_song : 0);
+        int shown = -1;
+        for (int s = 0; s < seconds; s++) {
+            double sum = 0;
+            long n = 0;
+            for (int f = 0; f < 60; f++) {
+                if (p.song != shown) { printf("  second %d: song %02X\n", s, p.song); shown = p.song; }
+                int c = player_frame(&p);
+                for (int i = 0; i < c * 2; i++) { sum += (double)sound_out[i] * sound_out[i]; n++; }
             }
+            if (s % 30 == 0) printf("second %4d: level %5.0f rms\n", s, n ? sqrt(sum / n) : 0);
         }
-        printf("second %3d: level %5.0f rms\n", s, n ? sqrt(sum / n) : 0);
+        ost_end();
     }
     memcpy(bus.sram, sram, SRAM_SIZE);
     bus.sram_dirty = dirty;
@@ -348,451 +471,402 @@ int launcher_music_check(int seconds) {
     return ok ? 0 : 1;
 }
 
-/* ---- The steelbook -------------------------------------------------------------- */
-#define CASE_X 84
-#define CASE_Y 54
-#define CASE_W 408
-#define CASE_H 612
-#define CASE_R 16
-
-enum { MAT_STEEL, MAT_FOIL, MAT_ART, MAT_GOLD };
-
-static int sw, sh;                      /* case size in pixels */
-static float *height;                   /* emboss height field */
-static uint8_t *mat, *coverage, *brush;
-static float *nrm_x, *nrm_y, *nrm_z;    /* surface normals of the height field */
-static uint32_t *art_color;
-
-static void blur(float *f, int w, int h, int r) {
-    if (r < 1) return;
-    float *tmp = malloc(sizeof(float) * (size_t)w * h);
-    for (int pass = 0; pass < 2; pass++) {
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++) {
-                float s = 0; int n = 0;
-                for (int k = -r; k <= r; k++) { int xx = x + k; if (xx >= 0 && xx < w) { s += f[y * w + xx]; n++; } }
-                tmp[y * w + x] = s / n;
+/* Plays every song for up to `seconds` and prints its level per second (in tenths of the
+ * loudest second), to tell songs from jingles and empty entries. */
+int launcher_ost_check(int seconds) {
+    init_common();
+    if (!rom_ok) { fprintf(stderr, "could not load the ROM\n"); return 1; }
+    uint8_t *sram = malloc(SRAM_SIZE);
+    memcpy(sram, bus.sram, SRAM_SIZE);
+    bool dirty = bus.sram_dirty;
+    bool ok = music_to_title();
+    ost_start();
+    for (int song = 0; ok && song < OST_SONGS; song++) {
+        ost_command(OST_STOP);
+        ost_command(OST_PLAY(song));
+        double level[600] = { 0 }, top = 0;
+        for (int s = 0; s < seconds && s < 600; s++) {
+            double sum = 0, sum2 = 0;
+            long n = 0;
+            for (int f = 0; f < 60; f++) {
+                ost_frame();
+                machine_run_frame(NULL, 320);
+                for (int i = 0; i < sound_out_count * 2; i++) { sum += sound_out[i]; sum2 += (double)sound_out[i] * sound_out[i]; n++; }
             }
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++) {
-                float s = 0; int n = 0;
-                for (int k = -r; k <= r; k++) { int yy = y + k; if (yy >= 0 && yy < h) { s += tmp[yy * w + x]; n++; } }
-                f[y * w + x] = s / n;
-            }
+            /* Without the DC offset (the FM DAC holds a constant level after a jingle). */
+            level[s] = n ? sqrt(fmax(0, sum2 / n - (sum / n) * (sum / n))) : 0;
+            if (level[s] > top) top = level[s];
+        }
+        printf("song %02X peak %5.0f: ", song, top);
+        for (int s = 0; s < seconds && s < 600; s++) putchar(top > 0 ? '0' + (int)(level[s] * 9.99 / top) : '.');
+        putchar('\n');
     }
-    free(tmp);
-}
-
-/* Places `a` (scaled to `width` layout units, centered at cx, top at top) into the case
- * layers. Returns the bottom edge in layout units. */
-static float place_art(const Art *a, float cx, float top, float width, int material, float lift, float detail) {
-    if (!a->w) return top;
-    float k = width / a->w, h = a->h * k;
-    float *m = calloc((size_t)sw * sh, sizeof(float));
-    int x0 = (int)((cx - width / 2) * ui_s), y0 = (int)(top * ui_s), pw = (int)(width * ui_s), ph = (int)(h * ui_s);
-    for (int y = 0; y < ph; y++)
-        for (int x = 0; x < pw; x++) {
-            int X = x0 + x, Y = y0 + y;
-            if (X < 0 || Y < 0 || X >= sw || Y >= sh) continue;
-            /* Bilinear sample, weighting colors by the mask so edges don't pick up the background. */
-            float fx = (x + .5f) * a->w / pw - .5f, fy = (y + .5f) * a->h / ph - .5f;
-            int ix = (int)floorf(fx), iy = (int)floorf(fy);
-            float tx = fx - ix, ty = fy - iy, cov = 0;
-            Rgb cc = rgb(0, 0, 0);
-            for (int k = 0; k < 4; k++) {
-                int sx = ix + (k & 1), sy = iy + (k >> 1);
-                if (sx < 0 || sy < 0 || sx >= a->w || sy >= a->h) continue;
-                float wgt = ((k & 1) ? tx : 1 - tx) * ((k >> 1) ? ty : 1 - ty) * a->mask[sy * a->w + sx] / 255.f;
-                cc = add(cc, unpack(a->rgb[sy * a->w + sx]), wgt);
-                cov += wgt;
-            }
-            if (cov < .5f) continue;
-            cc = scale(cc, 1 / cov);
-            m[Y * sw + X] = 1;
-            mat[Y * sw + X] = (uint8_t)material;
-            art_color[Y * sw + X] = pack(cc);
-            height[Y * sw + X] += (cc.r * .3f + cc.g * .5f + cc.b * .2f) * detail;
+    /* The menu sound effects over silence: level of the first half second. */
+    static const uint16_t sfx[] = { SFX_CURSOR, SFX_CONFIRM, SFX_CANCEL, SFX_ERROR };
+    for (int k = 0; ok && k < 4; k++) {
+        ost_command(OST_STOP);
+        for (int f = 0; f < 30; f++) { ost_frame(); machine_run_frame(NULL, 320); }
+        ost_command(sfx[k]);
+        double sum = 0, sum2 = 0;
+        long n = 0;
+        for (int f = 0; f < 30; f++) {
+            ost_frame();
+            machine_run_frame(NULL, 320);
+            for (int i = 0; i < sound_out_count * 2; i++) { sum += sound_out[i]; sum2 += (double)sound_out[i] * sound_out[i]; n++; }
         }
-    blur(m, sw, sh, (int)(1.5f * ui_s + .5f));
-    for (int i = 0; i < sw * sh; i++) height[i] += m[i] * lift;
-    free(m);
-    return top + h;
-}
-
-static void place_text(const char *s, const char *face, float px, int weight, float tracking, float cy, float depth) {
-    const TextMask *t = ui_text_get(s, face, px, weight, tracking);
-    if (!t->a) return;
-    int x0 = (sw - t->w) / 2, y0 = (int)(cy * ui_s) - t->h / 2;
-    for (int y = 0; y < t->h; y++)
-        for (int x = 0; x < t->w; x++) {
-            int X = x0 + x, Y = y0 + y;
-            if (X < 0 || Y < 0 || X >= sw || Y >= sh) continue;
-            float a = t->a[y * t->w + x] / 255.f;
-            height[Y * sw + X] -= a * depth;
-            if (a > .5f) mat[Y * sw + X] = MAT_FOIL;
-        }
-}
-
-static void build_case(void) {
-    sw = (int)(CASE_W * ui_s); sh = (int)(CASE_H * ui_s);
-    size_t n = (size_t)sw * sh;
-    free(height); free(mat); free(coverage); free(brush); free(art_color);
-    free(nrm_x); free(nrm_y); free(nrm_z);
-    height = calloc(n, sizeof(float));
-    mat = calloc(n, 1); coverage = calloc(n, 1); brush = malloc(n);
-    art_color = calloc(n, 4);
-
-    /* Brushed steel: horizontal streaks that drift slowly along each row. */
-    for (int y = 0; y < sh; y++) {
-        float row = hashf((uint32_t)y * 7919u);
-        for (int x = 0; x < sw; x++) {
-            float drift = hashf((uint32_t)(y * 31 + x / (int)(37 * ui_s + 1)) * 104729u);
-            float fine = hashf((uint32_t)(y * 8191 + x) * 2654435761u);
-            brush[y * sw + x] = (uint8_t)((row * .55f + drift * .25f + fine * .2f) * 255);
-        }
+        printf("sound effect %04X: level %.0f\n", sfx[k], n ? sqrt(fmax(0, sum2 / n - (sum / n) * (sum / n))) : 0);
     }
-
-    float frame_in = 18, cxu = CASE_W / 2.f;
-    for (int y = 0; y < sh; y++)
-        for (int x = 0; x < sw; x++) {
-            float ux = x / ui_s, uy = y / ui_s;
-            float d = ui_rrect_dist(ux, uy, 0, 0, CASE_W, CASE_H, CASE_R);
-            coverage[y * sw + x] = (uint8_t)(clampf(.5f - d * ui_s, 0, 1) * 255);
-            float h = smooth(0, 7, -d) * .9f;                              /* rounded bevel at the edge */
-            float d1 = ui_rrect_dist(ux, uy, frame_in, frame_in, CASE_W - 2 * frame_in, CASE_H - 2 * frame_in, 8);
-            float d2 = ui_rrect_dist(ux, uy, frame_in + 7, frame_in + 7, CASE_W - 2 * frame_in - 14, CASE_H - 2 * frame_in - 14, 5);
-            float line1 = 1 - smooth(.6f, 1.8f, fabsf(d1)), line2 = 1 - smooth(.3f, 1.1f, fabsf(d2));
-            h += line1 * .55f + line2 * .3f;                                 /* raised double frame */
-            if (line1 > .4f || line2 > .5f) mat[y * sw + x] = MAT_FOIL;
-            /* Engraved sunburst behind the art, fading toward the frame. */
-            float dx = ux - cxu, dy = uy - 360;
-            float ang = atan2f(dy, dx), r = sqrtf(dx * dx + dy * dy);
-            float ray = .5f + .5f * cosf(ang * 72);
-            h += ray * .05f * smooth(40, 120, r) * (1 - smooth(250, 340, r)) * (d1 < -2);
-            if (ux < 26) h -= (1 - smooth(1, 3.5f, fabsf(ux - 22))) * .6f;   /* hinge groove */
-            height[y * sw + x] = h;
-        }
-
-    float logo_bottom = place_art(&logo, cxu, 46, 330, MAT_GOLD, 1.0f, .7f);
-    float art_top = logo_bottom + 34;
-    place_art(&armlet, cxu, art_top, 346, MAT_ART, .9f, .6f);
-    place_text("NATIVE PC EDITION", "Segoe UI Semibold", 13, 600, 5, CASE_H - 52, .7f);
-    if (!logo.w) place_text("BEYOND OASIS", "Palatino Linotype", 46, 700, 6, 120, .9f);
-
-    nrm_x = malloc(n * sizeof(float)); nrm_y = malloc(n * sizeof(float)); nrm_z = malloc(n * sizeof(float));
-    float bump = 2.2f * ui_s;
-    for (int y = 0; y < sh; y++)
-        for (int x = 0; x < sw; x++) {
-            int i = y * sw + x;
-            float hl = height[i - (x > 0)], hr = height[i + (x < sw - 1)];
-            float hu = height[i - (y > 0) * sw], hd = height[i + (y < sh - 1) * sw];
-            float nx = (hl - hr) * bump, ny = (hu - hd) * bump, nn = sqrtf(nx * nx + ny * ny + 1);
-            nrm_x[i] = nx / nn; nrm_y[i] = ny / nn; nrm_z[i] = 1 / nn;
-        }
+    ost_end();
+    memcpy(bus.sram, sram, SRAM_SIZE);
+    bus.sram_dirty = dirty;
+    free(sram);
+    return ok ? 0 : 1;
 }
 
-/* Shades the case for light direction (lx, ly) and time t, onto the ui_px. The work is
- * split by rows across threads; normals were precomputed with the height field. */
-typedef struct { float lx, ly, t; int y0, y1; } ShadeJob;
+/* ---- The tablet: four tabs, one per spirit ---------------------------------------- */
+typedef enum { ROW_OPTION, ROW_ROM, ROW_CONTROLS, ROW_TRACK, ROW_OUTFIT } RowKind;
+typedef struct { RowKind kind; const char *label; int id; const char *about; } Row;
 
-static inline float gauss(float x2k) {  /* ~exp(-x2k), cheap */
-    float q = 1 - x2k * .25f;
-    if (q <= 0) return 0;
-    q *= q;
-    return q * q;
-}
+#define TABS 4
+static const char *const tab_names[TABS] = { "DISPLAY", "ENHANCE", "GAME", "MUSIC" };
+static const Row tab_rows[TABS][6] = {
+    { { ROW_OPTION, "Widescreen", OPT_WIDESCREEN, "Shows more of the world at the sides, streamed by the game's own map code." },
+      { ROW_OPTION, "Aspect ratio", OPT_ASPECT, "The shape of the widescreen picture." },
+      { ROW_OPTION, "Integer scaling", OPT_INTEGER, "Whole-number scaling only: every pixel the same size." },
+      { ROW_OPTION, "Window", OPT_WINDOW_ALL, "Fullscreen, or a window of this many times the game's size." },
+      { ROW_OPTION, "Filter", OPT_FILTER, "Scanlines, a curved CRT tube or an LCD grid over the picture." },
+      { ROW_OPTION, "Sharpening", OPT_SHARPEN, "Crisper edges after scaling, without halos (contrast-adaptive)." } },
+    { { ROW_OPTION, "Internal resolution", OPT_INTERNAL, "Redraws each layer at a higher resolution with smoothed edges." },
+      { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
+      { ROW_OPTION, "Sprite flicker fix", OPT_FLICKER, "Lifts the hardware's sprites-per-line limit, so nothing flickers." },
+      { ROW_OPTION, "Slowdown fix", OPT_OVERCLOCK, "A faster 68000, so busy scenes no longer slow down." },
+      { ROW_OPTION, "Rewind", OPT_REWIND_ALL, "Hold the rewind key to step back in time." } },
+    { { ROW_ROM, "ROM", 0, "Your Beyond Oasis (USA) cartridge file." },
+      { ROW_OPTION, "Cheats", OPT_CHEATS, "Infinite health, spirit power and unbreakable weapons." },
+      { ROW_CONTROLS, "Controls", 0, "Keyboard keys and controller buttons for every action." },
+      { ROW_OUTFIT, "Ali's outfit", 0, "Pick the colours of his clothes, with a preview before you apply them." },
+      { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER, "Off starts the game directly (show_launcher=1 in settings.ini brings it back)." } },
+    { { ROW_OPTION, "Launcher music", OPT_MUSIC, NULL }, { ROW_TRACK, "Track", 0, NULL },
+      { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL } },
+};
+static const int tab_count[TABS] = { 6, 5, 5, 4 };
 
-static int shade_rows(void *arg) {
-    const ShadeJob *j = arg;
-    float lx = j->lx, ly = j->ly, t = j->t;
-    int ox = (int)(CASE_X * ui_s), oy = (int)(CASE_Y * ui_s);
-    float ln = sqrtf(lx * lx + ly * ly + 1);
-    float Lx = lx / ln, Ly = ly / ln, Lz = 1 / ln;
-    float hx = Lx, hy = Ly, hz = Lz + 1, hn = sqrtf(hx * hx + hy * hy + hz * hz);
-    hx /= hn; hy /= hn; hz /= hn;
-    float cell = 5 * ui_s;
-    Rgb steel_tint = rgb(.90f, .94f, 1.0f);
-    float glint_at = .7f + .6f * lx + .3f * ly;
-    for (int y = j->y0; y < j->y1; y++) {
-        float v = (float)y / sh;
-        float bd = (v - .5f - ly * .42f) * 3.6f;
-        float band = gauss(bd * bd);
-        uint32_t *row = ui_px + (size_t)(oy + y) * ui_w + ox;
-        int gy = (int)(y / cell);
-        for (int x = 0; x < sw; x++) {
-            int i = y * sw + x;
-            uint8_t cov = coverage[i];
-            if (!cov) continue;
-            float u = (float)x / sw;
-            float nx = nrm_x[i], ny = nrm_y[i], nz = nrm_z[i];
-            float ndl = fmaxf(0, nx * Lx + ny * Ly + nz * Lz);
-            float ndh = fmaxf(0, nx * hx + ny * hy + nz * hz);
-            float p2 = ndh * ndh, p4 = p2 * p2, p8 = p4 * p4, p16 = p8 * p8;
-            float spec = p16 * p16 * p16;   /* ndh^48 */
-            float br = brush[i] / 255.f;
-
-            /* Brushed steel with an anisotropic highlight band that follows the light. */
-            float base = .075f + .035f * br;
-            Rgb c = scale(steel_tint, base * (.6f + .5f * ndl) + band * (.035f + .07f * br) + spec * .5f);
-
-            /* Diagonal glint that sweeps across as the case tilts. */
-            float gd = (u * .8f + v * .6f) - glint_at;
-            float glint = gauss(gd * gd * 90);
-
-            uint8_t m = mat[i];
-            if (m == MAT_FOIL) {
-                Rgb holo = mix(rgb(1, 1, 1), hue(u * .9f + v * .7f + lx * .55f + ly * .35f + (nx + ny) * 1.4f + t * .02f), .78f);
-                float k = .16f + .75f * p4;
-                c = add(scale(c, .6f), holo, k * .8f);
-                c = add(c, rgb(1, 1, 1), glint * .5f + spec * .45f);
-            } else if (m == MAT_GOLD) {
-                /* Polished gold foil: the logo's own shading picks dark bronze to bright gold. */
-                Rgb a = unpack(art_color[i]);
-                float lum = a.r * .3f + a.g * .55f + a.b * .15f;
-                Rgb gold = mix(rgb_hex(0x3A2408), rgb_hex(0xF7DC92), smooth(.05f, .8f, lum));
-                c = scale(gold, .45f + .6f * ndl);
-                Rgb holo = mix(rgb(1, 1, 1), hue(u * .9f + v * .7f + lx * .55f + ly * .35f + (nx + ny) * 1.2f), .55f);
-                c = add(c, holo, p2 * ndh * .32f * lum);
-                c = add(c, rgb(1, .96f, .85f), spec * .7f + glint * .5f);
-            } else if (m == MAT_ART) {
-                Rgb a = unpack(art_color[i]);
-                /* Warm the Genesis palette's lime-yellow toward gold. */
-                float lum = a.r * .3f + a.g * .55f + a.b * .15f;
-                bool goldish = a.r > a.b + .15f && a.g > a.b + .1f;
-                if (goldish) a = mix(a, mix(rgb_hex(0x4A2E0A), rgb_hex(0xFFE3A0), lum), .45f);
-                c = scale(a, .42f + .38f * ndl);
-                c = add(c, rgb(1, .88f, .58f), p16 * p8 * p4 * p2 * .45f);
-                c = add(c, hue(u * .6f + v * .5f + lx * .5f + ly * .4f), p4 * .10f);
-                c = add(c, rgb(1, .95f, .85f), glint * .28f);
-            } else {
-                c = add(c, rgb(.85f, .9f, 1), glint * .10f);
-            }
-
-            /* Sparkles: sparse points that flash at particular angles. */
-            int gx = (int)(x / cell);
-            uint32_t hcell = (uint32_t)(gx * 73856093) ^ (uint32_t)(gy * 19349663);
-            float hp = hashf(hcell);
-            if (hp < (m == MAT_STEEL ? .02f : m == MAT_ART ? .03f : .08f)) {
-                float sx = (gx + .2f + .6f * hashf(hcell + 1)) * cell, sy = (gy + .2f + .6f * hashf(hcell + 2)) * cell;
-                float d2 = ((x - sx) * (x - sx) + (y - sy) * (y - sy)) / (ui_s * ui_s);
-                if (d2 < 3.5f * 3.5f) {
-                    float sn = fmaxf(0, sinf(hashf(hcell + 3) * 40 + lx * 7 + ly * 5 + t * .6f));
-                    float f2 = sn * sn, f4 = f2 * f2, f8 = f4 * f4, f16 = f8 * f8;
-                    float flash = f16 * f8 * f4 * f2;   /* ^30 */
-                    float dd = sqrtf(d2);
-                    float star = fmaxf(0, 1 - dd / 1.6f) + .35f * fmaxf(0, 1 - dd / 3.5f);
-                    c = add(c, mix(rgb(1, 1, 1), hue(hp * 9 + lx), .3f), flash * star);
-                }
-            }
-            if (cov == 255) row[x] = pack(c);
-            else row[x] = pack(mix(unpack(row[x]), c, cov / 255.f));
-        }
-    }
-    return 0;
-}
-
-static void draw_case(float lx, float ly, float t) {
-    enum { MAX_THREADS = 16 };
-    int n = SDL_GetCPUCount();
-    if (n > MAX_THREADS) n = MAX_THREADS;
-    if (n < 1) n = 1;
-    ShadeJob jobs[MAX_THREADS];
-    SDL_Thread *threads[MAX_THREADS];
-    for (int k = 0; k < n; k++) {
-        jobs[k] = (ShadeJob){ lx, ly, t, sh * k / n, sh * (k + 1) / n };
-        threads[k] = k ? SDL_CreateThread(shade_rows, "case", &jobs[k]) : NULL;
-    }
-    shade_rows(&jobs[0]);
-    for (int k = 1; k < n; k++) {
-        if (threads[k]) SDL_WaitThread(threads[k], NULL);
-        else shade_rows(&jobs[k]);
-    }
-}
-
-/* ---- Background ----------------------------------------------------------------- */
-static void build_background(void) {
-    free(background);
-    background = malloc((size_t)ui_w * ui_h * 4);
-    for (int y = 0; y < ui_h; y++)
-        for (int x = 0; x < ui_w; x++) {
-            float ux = x / ui_s, uy = y / ui_s;
-            float r = sqrtf((ux - 760) * (ux - 760) + (uy - 300) * (uy - 300));
-            Rgb c = mix(rgb_hex(0x1A1E29), rgb_hex(0x07080C), smooth(0, 900, r));
-            /* Warm desert glow behind the case. */
-            float g = sqrtf((ux - 290) * (ux - 290) + (uy - 380) * (uy - 380));
-            c = add(c, rgb(.55f, .33f, .10f), .22f * expf(-g * g / (2 * 330.f * 330.f)));
-            /* Soft shadow under the case. */
-            float d = ui_rrect_dist(ux, uy, CASE_X + 10, CASE_Y + 22, CASE_W, CASE_H, CASE_R);
-            c = scale(c, 1 - .65f * (1 - smooth(-6, 34, d)));
-            float dither = (hashf((uint32_t)(y * ui_w + x)) - .5f) / 255.f;
-            c = add(c, rgb(1, 1, 1), dither);
-            background[y * ui_w + x] = pack(c);
-        }
-}
-
-/* ---- Settings rows -------------------------------------------------------------- */
-typedef enum { ROW_HEADER, ROW_OPTION, ROW_ROM, ROW_CONTROLS } RowKind;
-typedef struct { RowKind kind; const char *label; int id; } Row;
-
-/* The volume slider's track, left of its value. */
+/* ---- Layout (1280x720 units) ------------------------------------------------------- */
+#define PANEL_X (TABLET_X + 40)
+#define PANEL_R (TABLET_X + TABLET_W - 44)
+#define TAB_Y   (TABLET_Y + 26)
+#define TAB_H   70
+#define TAB_X0  (TABLET_X + 26)
+#define TAB_W   ((TABLET_W - 52) / TABS)
+#define ROWS_Y  (TAB_Y + TAB_H + 26)
+#define ROW_H   44
+#define CARD_Y  (ROWS_Y + 4 * ROW_H + 18)
+#define CARD_H  160
+#define BTN_Y   (TABLET_Y + TABLET_H - 118)
+#define BTN_H   54
+#define PLAY_X  PANEL_X
+#define PLAY_W  330
+#define QUIT_X  (PANEL_R - 150)
+#define QUIT_W  150
 #define VOLUME_W 150
 #define VOLUME_X (PANEL_R - 22 - 52 - 26 - VOLUME_W)
+#define PLAYER_BTN_Y (CARD_Y + 112)
 
-static const Row rows[] = {
-    { ROW_HEADER, "DISPLAY", 0 },
-    { ROW_OPTION, "Widescreen", OPT_WIDESCREEN },
-    { ROW_OPTION, "Aspect ratio", OPT_ASPECT },
-    { ROW_OPTION, "Integer scaling", OPT_INTEGER },
-    { ROW_OPTION, "Window", OPT_WINDOW_ALL },
-    { ROW_OPTION, "Filter", OPT_FILTER },
-    { ROW_HEADER, "ENHANCEMENTS", 0 },
-    { ROW_OPTION, "Internal resolution", OPT_INTERNAL },
-    { ROW_OPTION, "Smooth motion", OPT_SMOOTH },
-    { ROW_OPTION, "Sprite flicker fix", OPT_FLICKER },
-    { ROW_OPTION, "Slowdown fix", OPT_OVERCLOCK },
-    { ROW_OPTION, "Rewind", OPT_REWIND_ALL },
-    { ROW_HEADER, "GAME", 0 },
-    { ROW_ROM, "ROM", 0 },
-    { ROW_OPTION, "Cheats", OPT_CHEATS },
-    { ROW_OPTION, "Volume", OPT_VOLUME },
-    { ROW_CONTROLS, "Controls", 0 },
-    { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER },
-};
-#define ROW_COUNT ((int)(sizeof rows / sizeof *rows))
+/* Selection: the tab bar, a row of the open tab, or a button. */
+enum { ITEM_TABS = -1, ITEM_PLAY = 100, ITEM_QUIT = 101 };
+enum { HIT_PREV = 200, HIT_TOGGLE, HIT_NEXT, HIT_TAB0 = 300 };
 
-/* ---- Layout --------------------------------------------------------------------- */
-#define PANEL_X 572
-#define PANEL_R 1196
-#define ROWS_Y  172
-#define ROW_H   25
-#define HEAD_H  22
+static struct {
+    int tab, selected;
+    float focus;                        /* the spirit circling to the front, follows tab */
+    float tab_t0;                       /* when the tab last changed, and from where */
+    int tab_from;
+    float hl_y, hl_x;                   /* the highlight, gliding to the selected item */
+    float changed_t0;                   /* when a value last changed (it pulses) */
+    int changed_item;
+    float flash;                        /* the spirits' flare on a choice, fading */
+    float t;
+} ui;
 
-/* Selectable items: the option/ROM rows, then PLAY and QUIT. */
-enum { ITEM_PLAY = 100, ITEM_QUIT = 101 };
-static int selected = 1;
 static bool play_enabled(void) { return rom_ok; }
+static char rom_status[96];
 
-static float row_y(int r) {
-    float y = ROWS_Y;
-    for (int i = 0; i < r; i++) y += rows[i].kind == ROW_HEADER ? HEAD_H : ROW_H;
-    return y;
-}
-
-#define BTN_Y 622
-#define BTN_H 54
-#define PLAY_X PANEL_X
-#define PLAY_W 300
-#define QUIT_X (PANEL_X + 320)
-#define QUIT_W 150
+static float row_y(int r) { return ROWS_Y + r * ROW_H; }
 
 static int hit_test(float mx, float my) {
-    for (int r = 0; r < ROW_COUNT; r++) {
-        if (rows[r].kind == ROW_HEADER) continue;
+    for (int k = 0; k < TABS; k++)
+        if (mx >= TAB_X0 + k * TAB_W && mx < TAB_X0 + (k + 1) * TAB_W && my >= TAB_Y && my < TAB_Y + TAB_H) return HIT_TAB0 + k;
+    for (int r = 0; r < tab_count[ui.tab]; r++) {
         float y = row_y(r);
-        if (mx >= PANEL_X - 12 && mx <= PANEL_R + 4 && my >= y && my < y + ROW_H) return r;
+        if (mx >= PANEL_X - 14 && mx <= PANEL_R + 8 && my >= y && my < y + ROW_H) return r;
+    }
+    if (ui.tab == 3 && my >= PLAYER_BTN_Y - 20 && my <= PLAYER_BTN_Y + 20) {
+        float cx = (PANEL_X + PANEL_R) / 2.f;
+        if (fabsf(mx - (cx - 70)) < 24) return HIT_PREV;
+        if (fabsf(mx - cx) < 28) return HIT_TOGGLE;
+        if (fabsf(mx - (cx + 70)) < 24) return HIT_NEXT;
     }
     if (my >= BTN_Y && my <= BTN_Y + BTN_H) {
         if (mx >= PLAY_X && mx <= PLAY_X + PLAY_W) return ITEM_PLAY;
         if (mx >= QUIT_X && mx <= QUIT_X + QUIT_W) return ITEM_QUIT;
     }
-    return -1;
+    return -2;
+}
+
+static void select_item(int item) {
+    if (item == ui.selected) return;
+    ui.selected = item;
+    music_sfx(SFX_CURSOR);
 }
 
 static void move_selection(int dir) {
-    int order[ROW_COUNT + 2], n = 0, at = 0;
-    for (int r = 0; r < ROW_COUNT; r++) if (rows[r].kind != ROW_HEADER) order[n++] = r;
+    int order[16], n = 0, at = 0;
+    order[n++] = ITEM_TABS;
+    for (int r = 0; r < tab_count[ui.tab]; r++) order[n++] = r;
     order[n++] = ITEM_PLAY; order[n++] = ITEM_QUIT;
-    for (int i = 0; i < n; i++) if (order[i] == selected) at = i;
-    selected = order[settings_cycle(at, n, dir)];
+    for (int i = 0; i < n; i++) if (order[i] == ui.selected) at = i;
+    select_item(order[settings_cycle(at, n, dir)]);
 }
 
-static void draw_button(float x, float w, const char *label, bool primary, bool focus, bool enabled, float lx, float ly, float t) {
-    ui_button(x, BTN_Y, w, BTN_H, label, 20, primary, focus, enabled, lx, ly, t);
+static void open_tab(int tab) {
+    tab = (tab % TABS + TABS) % TABS;
+    if (tab == ui.tab) return;
+    ui.tab_from = ui.tab;
+    ui.tab = tab;
+    ui.tab_t0 = ui.t;
+    if (ui.selected >= 0 && ui.selected < 100 && ui.selected >= tab_count[tab]) ui.selected = tab_count[tab] - 1;
+    ui.flash = 1;
+    music_sfx(SFX_CURSOR);
 }
 
-static char rom_status[96];
+/* What the player is doing (a copy, taken under its lock). */
+typedef struct { bool ready, on; int song, frames; float meter[METER_BARS]; } PlayerView;
 
-static void draw_ui(float lx, float ly, float t) {
-    Rgb gold_top = rgb_hex(0xFBEBB8), gold_bot = rgb_hex(0xC08A2C);
-    ui_draw_text("BEYOND OASIS", "Palatino Linotype", 54, 700, 7, PANEL_X - 3, 50, gold_top, gold_bot, 1);
-    ui_draw_text("NATIVE PC EDITION  \xC2\xB7  RECOMPILED FROM YOUR CARTRIDGE", "Segoe UI", 12.5f, 600, 3.5f, PANEL_X, 122,
-              rgb_hex(0x99A2B4), rgb_hex(0x99A2B4), 1);
-    /* Divider fading out to the right. */
-    for (int px = (int)(PANEL_X * ui_s); px < (int)(PANEL_R * ui_s); px++) {
-        float u = (px / ui_s - PANEL_X) / (PANEL_R - PANEL_X);
-        for (int py = (int)(152 * ui_s); py < (int)(152 * ui_s) + (ui_s > 1.5f ? 2 : 1); py++)
-            ui_blend_px(px, py, mix(rgb_hex(0xD9B567), rgb_hex(0x2A2F3B), u), .9f * (1 - u * .8f));
+static PlayerView player_view(void) {
+    PlayerView v = { 0 };
+    if (!music_lock || !music_thread) return v;
+    SDL_LockMutex(music_lock);
+    v.ready = player.ready; v.on = player.on; v.song = player.song; v.frames = player.frames;
+    memcpy(v.meter, player.meter, sizeof v.meter);
+    SDL_UnlockMutex(music_lock);
+    return v;
+}
+
+static void song_name(int song, char *out, size_t n) {
+    if (song == title_song) snprintf(out, n, "Title Theme");
+    else snprintf(out, n, "Track %02d", song + 1);
+}
+
+/* ---- Drawing ----------------------------------------------------------------------- */
+static float ease_out(float x) { x = clampf(x, 0, 1); return 1 - (1 - x) * (1 - x) * (1 - x); }
+
+/* A filled triangle (layout units), antialiased by 2x2 supersampling. */
+static void fill_tri(float ax, float ay, float bx, float by, float cx, float cy, Rgb c, float a) {
+    float x0 = fminf(ax, fminf(bx, cx)), x1 = fmaxf(ax, fmaxf(bx, cx)), y0 = fminf(ay, fminf(by, cy)), y1 = fmaxf(ay, fmaxf(by, cy));
+    int px0 = (int)ui_x(x0) - 1, px1 = (int)ui_x(x1) + 1, py0 = (int)ui_y(y0) - 1, py1 = (int)ui_y(y1) + 1;
+    for (int y = py0; y <= py1; y++)
+        for (int x = px0; x <= px1; x++) {
+            int in = 0;
+            for (int s = 0; s < 4; s++) {
+                float ux = (x + .25f + (s & 1) * .5f - ui_ox) / ui_s, uy = (y + .25f + (s >> 1) * .5f - ui_oy) / ui_s;
+                float e0 = (bx - ax) * (uy - ay) - (by - ay) * (ux - ax);
+                float e1 = (cx - bx) * (uy - by) - (cy - by) * (ux - bx);
+                float e2 = (ax - cx) * (uy - cy) - (ay - cy) * (ux - cx);
+                in += (e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0);
+            }
+            if (in) ui_blend_px(x, y, c, a * in / 4.f);
+        }
+}
+
+static void draw_tabs(void) {
+    for (int k = 0; k < TABS; k++) {
+        float x = TAB_X0 + k * TAB_W, cx = x + TAB_W / 2.f;
+        bool open = ui.tab == k, focus = ui.selected == ITEM_TABS && open;
+        const Spirit *sp = &spirits[k];
+        float bright = open ? 1 : .45f;
+        if (open) {
+            ui_fill_rect(x + 6, TAB_Y, TAB_W - 12, TAB_H, sp->light, focus ? .10f : .06f);
+            /* A glowing line under the open tab. */
+            for (int i = 0; i < 3; i++) ui_fill_rect(x + 14 - i * 3, TAB_Y + TAB_H - 3 - i, TAB_W - 28 + i * 6, 2, sp->light, .5f - i * .15f);
+        }
+        scene_orb(k, cx, TAB_Y + 24, open ? 15 : 12, ui.t, bright + (open ? ui.flash * .4f : 0));
+        Rgb tc = open ? mix(rgb_hex(0xFFF4DA), sp->light, .25f) : rgb_hex(0x8A8170);
+        float tw = ui_text_width(tab_names[k], "Segoe UI Semibold", 12.5f, 600, 3);
+        ui_draw_text(tab_names[k], "Segoe UI Semibold", 12.5f, 600, 3, cx - tw / 2, TAB_Y + 46, tc, tc, 1);
+    }
+}
+
+static void draw_row(int r, const Row *row, float dx, float alpha, const PlayerView *pv) {
+    float y = row_y(r);
+    bool focus = ui.selected == r;
+    Rgb lc = focus ? rgb_hex(0xFFFFFF) : rgb_hex(0xD8CDB6);
+    ui_draw_text(row->label, "Segoe UI", 17.5f, 400, 0, PANEL_X + 4 + dx, y + 10, lc, lc, alpha);
+    char value[96];
+    Rgb vc = focus ? rgb_hex(0xFFE4A0) : rgb_hex(0xEBD9AE);
+    const char *hint = NULL;
+    switch (row->kind) {
+    case ROW_ROM:
+        snprintf(value, sizeof value, "%s", rom_status);
+        vc = rom_ok ? rgb_hex(0x9FDCA6) : rgb_hex(0xF09A86);
+        hint = "Enter to choose\xE2\x80\xA6";
+        break;
+    case ROW_CONTROLS:
+        snprintf(value, sizeof value, "Keyboard & controller");
+        hint = "Enter to change\xE2\x80\xA6";
+        break;
+    case ROW_OUTFIT: {
+        int changed = 0;
+        for (int k = 0; k < 4; k++) changed += settings.outfit_color[k] >= 0;
+        if (!settings.outfit || !changed) snprintf(value, sizeof value, "His own colours");
+        else snprintf(value, sizeof value, "%d part%s recoloured", changed, changed == 1 ? "" : "s");
+        hint = "Enter to change\xE2\x80\xA6";
+        break;
+    }
+    case ROW_TRACK:
+        song_name(pv->ready ? pv->song : (settings.ost_track >= 0 ? settings.ost_track : title_song), value, sizeof value);
+        hint = pv->on ? "Enter to stop" : "Enter to play";
+        break;
+    default:
+        settings_option_text(row->id, value, sizeof value);
+    }
+    float pulse = ui.changed_item == r ? 1 - ease_out((ui.t - ui.changed_t0) / .35f) : 0;
+    if (pulse > 0) vc = mix(vc, rgb(1, 1, 1), pulse * .8f);
+    float px = 17.5f + pulse * 1.5f;
+    float vw = ui_text_width(value, "Segoe UI Semibold", px, 600, 0);
+    float vx = PANEL_R - vw;
+    bool arrows = row->kind == ROW_OPTION || row->kind == ROW_TRACK;
+    if (row->kind == ROW_OPTION && row->id == OPT_VOLUME) {
+        vw = ui_text_width("100%", "Segoe UI Semibold", px, 600, 0);
+        vx = PANEL_R - 22 - vw;
+        ui_slider(VOLUME_X + dx, y + ROW_H / 2.f, VOLUME_W, settings.volume / 100.f, focus);
+    } else if (arrows) {
+        vx -= 22;
+    }
+    if (focus && hint) {
+        float hw = ui_text_width(hint, "Segoe UI", 13, 400, 0);
+        ui_draw_text(hint, "Segoe UI", 13, 400, 0, vx - hw - (arrows ? 34 : 16) + dx, y + 13, rgb_hex(0x8F8673), rgb_hex(0x8F8673), alpha);
+    }
+    if (arrows) {
+        Rgb ac = focus ? spirits[ui.tab].light : rgb_hex(0x6A5F4C);
+        float nudge = pulse * 3;
+        ui_draw_text("\xE2\x80\xB9", "Segoe UI Semibold", 20, 600, 0, vx - 18 - nudge + dx, y + 7, ac, ac, alpha);
+        ui_draw_text("\xE2\x80\xBA", "Segoe UI Semibold", 20, 600, 0, PANEL_R - 12 + nudge + dx, y + 7, ac, ac, alpha);
+    }
+    ui_draw_text(value, "Segoe UI Semibold", px, 600, 0, vx + dx, y + 10 - pulse * .8f, vc, vc, alpha);
+}
+
+/* The soundtrack player: the song, its time, a level meter and the transport buttons. */
+static void draw_player(const PlayerView *pv, float dx, float alpha) {
+    float x = PANEL_X - 6 + dx, w = PANEL_R - PANEL_X + 12, y = CARD_Y;
+    const Spirit *sp = &spirits[3];
+    ui_panel(x, y, w, CARD_H, 12, rgb_hex(0x1B1426), rgb_hex(0x100C16), .9f * alpha, sp->light, .28f * alpha);
+    char name[64], time[48];
+    int song = pv->ready ? pv->song : (settings.ost_track >= 0 ? settings.ost_track : title_song);
+    song_name(song, name, sizeof name);
+    ui_draw_text(pv->on ? "NOW PLAYING" : "STOPPED", "Segoe UI Semibold", 11, 600, 3, x + 20, y + 16, sp->light, sp->light, alpha * .9f);
+    ui_draw_text(name, "Palatino Linotype", 26, 700, 1, x + 20, y + 32, rgb_hex(0xFFF1D0), rgb_hex(0xD9B567), alpha);
+    char count[32];
+    snprintf(count, sizeof count, "%d / %d", (song < 0 ? 0 : song) + 1, OST_SONGS);
+    float cw = ui_text_width(count, "Segoe UI", 14, 400, 0);
+    ui_draw_text(count, "Segoe UI", 14, 400, 0, x + w - 20 - cw, y + 20, rgb_hex(0x9A8FB0), rgb_hex(0x9A8FB0), alpha);
+    /* Level meter, right of the name. */
+    float mx0 = x + w - 20 - METER_BARS * 7, my = y + 72;
+    for (int b = 0; b < METER_BARS; b++) {
+        float h = 3 + pv->meter[b] * 26;
+        Rgb c = mix(sp->light, rgb_hex(0xFFE4A0), pv->meter[b]);
+        ui_fill_rect(mx0 + b * 7, my - h, 4, h, c, alpha * (.35f + .65f * pv->meter[b]));
+    }
+    /* Progress through the song's turn, and the time. */
+    int secs = pv->frames / 60;
+    snprintf(time, sizeof time, "%d:%02d", secs / 60, secs % 60);
+    float bar_x = x + 20, bar_w = w - 40, bar_y = y + 86;
+    float prog = clampf(pv->frames / (PLAY_FOR * 60.f), 0, 1);
+    ui_fill_rect(bar_x, bar_y, bar_w, 3, rgb_hex(0x3A2F4A), alpha);
+    ui_fill_rect(bar_x, bar_y, bar_w * prog, 3, sp->light, alpha);
+    ui_draw_text(time, "Segoe UI", 12, 400, 0, bar_x, bar_y + 8, rgb_hex(0x9A8FB0), rgb_hex(0x9A8FB0), alpha);
+    /* Previous, play/stop, next. */
+    float cx = (PANEL_X + PANEL_R) / 2.f + dx, by = PLAYER_BTN_Y;
+    Rgb bc = rgb_hex(0xEADFC8);
+    fill_tri(cx - 62, by, cx - 50, by - 9, cx - 50, by + 9, bc, alpha * .85f);
+    fill_tri(cx - 74, by, cx - 62, by - 9, cx - 62, by + 9, bc, alpha * .85f);
+    fill_tri(cx + 62, by, cx + 50, by - 9, cx + 50, by + 9, bc, alpha * .85f);
+    fill_tri(cx + 74, by, cx + 62, by - 9, cx + 62, by + 9, bc, alpha * .85f);
+    scene_glow(cx, by, 30, sp->light, .25f * alpha);
+    if (pv->on) {
+        ui_fill_rect(cx - 9, by - 10, 18, 20, rgb_hex(0xFFF1D0), alpha);
+    } else {
+        fill_tri(cx - 8, by - 12, cx + 13, by, cx - 8, by + 12, rgb_hex(0xFFF1D0), alpha);
+    }
+}
+
+static void draw_ui(float t) {
+    PlayerView pv = player_view();
+    draw_tabs();
+    /* The open tab slides in from the side it came from. */
+    float k = ease_out((t - ui.tab_t0) / .32f);
+    int dir = ui.tab > ui.tab_from ? 1 : -1;
+    float dx = (1 - k) * 36 * dir, alpha = k;
+    /* The highlight glides to the selected row. */
+    bool on_row = ui.selected >= 0 && ui.selected < tab_count[ui.tab];
+    if (on_row) {
+        float y = ui.hl_y;
+        Rgb c = spirits[ui.tab].light;
+        ui_fill_rect(PANEL_X - 14, y + 2, PANEL_R - PANEL_X + 22, ROW_H - 4, c, .07f);
+        ui_fill_rect(PANEL_X - 14, y + 2, 3, ROW_H - 4, c, .95f);
+        scene_glow(PANEL_X - 12, y + ROW_H / 2.f, 16, c, .35f);
+    }
+    for (int r = 0; r < tab_count[ui.tab]; r++) draw_row(r, &tab_rows[ui.tab][r], dx, alpha, &pv);
+    if (ui.tab == 3) draw_player(&pv, dx, alpha);
+    else if (on_row && tab_rows[ui.tab][ui.selected].about) {
+        /* What the selected option does, under a thin rule in the tab's colour. */
+        float y = row_y(tab_count[ui.tab]) + 22;
+        ui_fill_rect(PANEL_X, y, 46, 2, spirits[ui.tab].light, .7f * alpha);
+        ui_draw_text(tab_rows[ui.tab][ui.selected].about, "Segoe UI", 14.5f, 400, 0, PANEL_X + dx, y + 14,
+                     rgb_hex(0xB8AC92), rgb_hex(0xB8AC92), alpha);
     }
 
-    for (int r = 0; r < ROW_COUNT; r++) {
-        float y = row_y(r);
-        const Row *row = &rows[r];
-        if (row->kind == ROW_HEADER) {
-            ui_draw_text(row->label, "Segoe UI Semibold", 11.5f, 600, 3.5f, PANEL_X, y + 12, rgb_hex(0xC9A45C), rgb_hex(0xC9A45C), 1);
-            continue;
-        }
-        bool focus = selected == r;
-        if (focus) {
-            ui_fill_rect(PANEL_X - 12, y + 1, PANEL_R - PANEL_X + 16, ROW_H - 2, rgb_hex(0xD9B567), .07f);
-            ui_fill_rect(PANEL_X - 12, y + 1, 3, ROW_H - 2, rgb_hex(0xE8C77A), .95f);
-        }
-        Rgb lc = focus ? rgb_hex(0xFFFFFF) : rgb_hex(0xC5CAD5);
-        ui_draw_text(row->label, "Segoe UI", 16.5f, 400, 0, PANEL_X + 2, y + 5, lc, lc, 1);
-        char value[96];
-        Rgb vc = focus ? rgb_hex(0xF3DDA4) : rgb_hex(0xE6E9EF);
-        if (row->kind == ROW_ROM) {
-            snprintf(value, sizeof value, "%s", rom_status);
-            vc = rom_ok ? rgb_hex(0x8FD19E) : rgb_hex(0xE58A7A);
-            if (focus) {
-                const char *hint = "Enter to choose\xE2\x80\xA6";
-                float hw = ui_text_width(hint, "Segoe UI", 13, 400, 0);
-                float vw = ui_text_width(value, "Segoe UI Semibold", 16.5f, 600, 0);
-                ui_draw_text(hint, "Segoe UI", 13, 400, 0, PANEL_R - vw - hw - 18, y + 8, rgb_hex(0x8C93A3), rgb_hex(0x8C93A3), 1);
-            }
-        } else if (row->kind == ROW_CONTROLS) {
-            snprintf(value, sizeof value, "Keyboard & controller");
-            if (focus) {
-                const char *hint = "Enter to change\xE2\x80\xA6";
-                float hw = ui_text_width(hint, "Segoe UI", 13, 400, 0);
-                float vw = ui_text_width(value, "Segoe UI Semibold", 16.5f, 600, 0);
-                ui_draw_text(hint, "Segoe UI", 13, 400, 0, PANEL_R - vw - hw - 18, y + 8, rgb_hex(0x8C93A3), rgb_hex(0x8C93A3), 1);
-            }
-        } else {
-            settings_option_text(row->id, value, sizeof value);
-        }
-        float vw = ui_text_width(value, "Segoe UI Semibold", 16.5f, 600, 0);
-        float vx = PANEL_R - vw;
-        if (row->id == OPT_VOLUME && row->kind == ROW_OPTION) {
-            vw = ui_text_width("100%", "Segoe UI Semibold", 16.5f, 600, 0);   /* the track stays put */
-            vx = PANEL_R - 22 - vw;
-            ui_slider(VOLUME_X, y + ROW_H / 2.f, VOLUME_W, settings.volume / 100.f, focus);
-        }
-        if (row->kind == ROW_OPTION) {
-            if (row->id != OPT_VOLUME) vx -= 22;
-            Rgb ac = focus ? rgb_hex(0xE8C77A) : rgb_hex(0x5B6274);
-            ui_draw_text("\xE2\x80\xB9", "Segoe UI Semibold", 18, 600, 0, vx - 18, y + 3, ac, ac, 1);
-            ui_draw_text("\xE2\x80\xBA", "Segoe UI Semibold", 18, 600, 0, PANEL_R - 12, y + 3, ac, ac, 1);
-        }
-        ui_draw_text(value, "Segoe UI Semibold", 16.5f, 600, 0, vx, y + 5, vc, vc, 1);
-    }
+    float lx = .5f * sinf(t * .45f), ly = .3f * cosf(t * .33f);
+    ui_button(PLAY_X, BTN_Y, PLAY_W, BTN_H, "PLAY", 20, true, ui.selected == ITEM_PLAY, play_enabled(), lx, ly, t);
+    ui_button(QUIT_X, BTN_Y, QUIT_W, BTN_H, "QUIT", 20, false, ui.selected == ITEM_QUIT, true, lx, ly, t);
+    const char *keys = "\xE2\x86\x91\xE2\x86\x93 select    \xE2\x86\x90\xE2\x86\x92 change    Q E  tabs    [ ]  track    M  music    Esc  quit";
+    ui_draw_text(keys, "Segoe UI", 12, 400, 1, PANEL_X, TABLET_Y + TABLET_H - 44, rgb_hex(0x7C7262), rgb_hex(0x7C7262), 1);
 
-    draw_button(PLAY_X, PLAY_W, "PLAY", true, selected == ITEM_PLAY, play_enabled(), lx, ly, t);
-    draw_button(QUIT_X, QUIT_W, "QUIT", false, selected == ITEM_QUIT, true, lx, ly, t);
-    const char *keys = "\xE2\x86\x91\xE2\x86\x93 select     \xE2\x86\x90\xE2\x86\x92 change     Enter  select     M  music     Esc  quit";
-    ui_draw_text(keys, "Segoe UI", 12, 400, 1, PANEL_X, 684, rgb_hex(0x6C7385), rgb_hex(0x6C7385), 1);
+    /* Under the armlet, on every tab: what is playing. */
+    if (pv.ready && pv.on) {
+        char name[64], line[96];
+        song_name(pv.song, name, sizeof name);
+        snprintf(line, sizeof line, "\xE2\x99\xAA  %s", name);
+        float w = ui_text_width(line, "Segoe UI Semibold", 14, 600, 1);
+        ui_draw_text(line, "Segoe UI Semibold", 14, 600, 1, 318 - w / 2, 662, rgb_hex(0xF6DFA6), rgb_hex(0xC99B4E), .85f);
+    }
 }
 
 /* ---- Frame -------------------------------------------------------------------- */
 static void layout(int pixel_w) {
     ui_begin(pixel_w, (int)(BASE_H * (pixel_w / (float)BASE_W) + .5f));
-    build_background();
-    build_case();
+    scene_layout(&armlet, &logo);
 }
 
-static void render(float lx, float ly, float t) {
-    memcpy(ui_px, background, (size_t)ui_w * ui_h * 4);
-    draw_case(lx, ly, t);
-    draw_ui(lx, ly, t);
+/* Advances the animations by dt seconds. */
+static void animate(float dt) {
+    float k = 1 - expf(-dt * 10);
+    float target = (float)ui.tab;
+    float d = remainderf(target - ui.focus, TABS);
+    ui.focus += d * (1 - expf(-dt * 6));
+    float hy = ui.selected >= 0 && ui.selected < tab_count[ui.tab] ? row_y(ui.selected) : ui.hl_y;
+    ui.hl_y += (hy - ui.hl_y) * k;
+    ui.flash *= expf(-dt * 3);
+}
+
+static void render(float t) {
+    ui.t = t;
+    scene_draw(t, ui.focus, .6f + .4f * ui.flash);
+    draw_ui(t);
+    if (!logo.w) {
+        Rgb gold_top = rgb_hex(0xFBEBB8), gold_bot = rgb_hex(0xC08A2C);
+        float w = ui_text_width("BEYOND OASIS", "Palatino Linotype", 54, 700, 7);
+        ui_draw_text("BEYOND OASIS", "Palatino Linotype", 54, 700, 7, 318 - w / 2, 60, gold_top, gold_bot, 1);
+    }
 }
 
 static void update_rom_status(void) {
@@ -816,13 +890,18 @@ static void art_write_png(const Art *a, const char *base, const char *suffix) {
     png_write(p, a->rgb, a->w, a->h, a->w);
 }
 
-int launcher_screenshot(const char *png, int width, float lx, float ly, float t) {
+int launcher_screenshot(const char *png, int width, int tab, float t) {
     init_common();
     art_write_png(&armlet, png, ".armlet.png");
     art_write_png(&logo, png, ".logo.png");
     layout(width);
+    ui.tab = ui.tab_from = (tab % TABS + TABS) % TABS;
+    ui.focus = (float)ui.tab;
+    ui.selected = tab_count[ui.tab] > 1 ? 1 : 0;
+    ui.hl_y = row_y(ui.selected);
+    ui.tab_t0 = -10;
     Uint64 t0 = SDL_GetPerformanceCounter();
-    for (int i = 0; i < 10; i++) render(lx, ly, t);
+    for (int i = 0; i < 10; i++) render(t);
     printf("launcher frame: %.1f ms at %dx%d\n", (SDL_GetPerformanceCounter() - t0) * 100.0 / SDL_GetPerformanceFrequency(), ui_w, ui_h);
     return png_write(png, ui_px, ui_w, ui_h, ui_w);
 }
@@ -848,7 +927,7 @@ static void choose_rom(SDL_Window *win) {
     music_stop();
     art_prepare();
     update_rom_status();
-    build_case();
+    scene_layout(&armlet, &logo);
     music_start();
 #else
     (void)win;
@@ -856,6 +935,41 @@ static void choose_rom(SDL_Window *win) {
 }
 
 /* ---- Interactive loop --------------------------------------------------------------- */
+/* Changes the selected row's value (dir -1/+1), or activates it (dir 0). */
+static void row_action(SDL_Window *win, int dir) {
+    const Row *row = &tab_rows[ui.tab][ui.selected];
+    switch (row->kind) {
+    case ROW_ROM: if (!dir) { music_sfx(SFX_CONFIRM); choose_rom(win); } return;
+    case ROW_CONTROLS: if (!dir) { music_sfx(SFX_CONFIRM); controls_open(); } return;
+    case ROW_OUTFIT:
+        if (!dir) {
+            char *bp = SDL_GetBasePath();
+            outfit_preview_load(bp ? bp : "");
+            if (bp) SDL_free(bp);
+            music_sfx(SFX_CONFIRM);
+            outfit_open();
+        }
+        return;
+    case ROW_TRACK: {
+        PlayerView pv = player_view();
+        if (dir) music_request(-1, dir, false, false);
+        else music_request(-1, 0, !pv.on, pv.on);
+        if (dir || !pv.on) settings.launcher_music = true;
+        break;
+    }
+    default:
+        if (row->id == OPT_VOLUME && !dir) return;
+        settings_option_change(row->id, dir ? dir : 1);
+        if (row->id == OPT_MUSIC) music_request(-1, 0, settings.launcher_music, !settings.launcher_music);
+    }
+    ui.changed_item = ui.selected;
+    ui.changed_t0 = ui.t;
+    ui.flash = 1;
+    music_sfx(SFX_CONFIRM);
+}
+
+static void launcher_outfit_sound(int kind) { music_sfx(kind == 0 ? SFX_CURSOR : kind == 1 ? SFX_CONFIRM : SFX_CANCEL); }
+
 int launcher_run(const char *ini_path) {
     init_common();
     SDL_Window *win = SDL_CreateWindow("Beyond Oasis", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, BASE_W, BASE_H,
@@ -864,27 +978,36 @@ int launcher_run(const char *ini_path) {
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     int ow, oh;
     SDL_GetRendererOutputSize(ren, &ow, &oh);
-    layout(ow);
+    layout(ow > 1920 ? 1920 : ow);      /* drawn in software: past 1080p the GPU scales it up */
     SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, ui_w, ui_h);
     SDL_GameController *pad = NULL;
-    selected = ITEM_PLAY;
-    if (!rom_ok) for (int r = 0; r < ROW_COUNT; r++) if (rows[r].kind == ROW_ROM) selected = r;
+    memset(&ui, 0, sizeof ui);
+    outfit_sound = launcher_outfit_sound;
+    ui.tab_t0 = -10;
+    ui.changed_item = -1;
+    ui.selected = ITEM_PLAY;
+    if (!rom_ok) { ui.tab = ui.tab_from = 2; ui.focus = 2; ui.selected = 0; }   /* the ROM row */
+    ui.hl_y = row_y(ui.selected >= 0 && ui.selected < 100 ? ui.selected : 0);
     music_start();
 
-    float lx = 0, ly = 0, tx = 0, ty = 0;
-    Uint64 freq = SDL_GetPerformanceFrequency(), start = SDL_GetPerformanceCounter(), last_mouse = 0;
+    Uint64 freq = SDL_GetPerformanceFrequency(), start = SDL_GetPerformanceCounter(), last = start;
     int result = -1;
     while (result < 0) {
-        float t = (float)(SDL_GetPerformanceCounter() - start) / freq;
+        Uint64 now = SDL_GetPerformanceCounter();
+        float t = (float)(now - start) / freq, dt = (float)(now - last) / freq;
+        last = now;
+        ui.t = t;
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             int activate = 0, change = 0;
-            if (controls_is_open() && e.type != SDL_QUIT) {
-                /* The controls page takes all input while it is up (mouse points match the layout). */
+            if ((controls_is_open() || outfit_is_open()) && e.type != SDL_QUIT) {
+                /* A page takes all input while it is up (mouse points match the layout). */
                 if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
                 float mx = e.type == SDL_MOUSEMOTION ? e.motion.x : e.type == SDL_MOUSEBUTTONDOWN ? e.button.x : 0;
                 float my = e.type == SDL_MOUSEMOTION ? e.motion.y : e.type == SDL_MOUSEBUTTONDOWN ? e.button.y : 0;
+                if (outfit_is_open()) { outfit_event(&e, mx, my); continue; }
                 controls_event(&e, mx, my);
+                if (!controls_is_open()) music_sfx(SFX_CANCEL);
                 continue;
             }
             switch (e.type) {
@@ -892,37 +1015,43 @@ int launcher_run(const char *ini_path) {
             case SDL_CONTROLLERDEVICEADDED: if (!pad) pad = SDL_GameControllerOpen(e.cdevice.which); break;
             case SDL_MOUSEMOTION: {
                 /* Mouse positions are in window points, which match the 1280x720 layout. */
-                tx = clampf((e.motion.x - (CASE_X + CASE_W / 2.f)) / 420.f, -1.2f, 1.2f);
-                ty = clampf((e.motion.y - (CASE_Y + CASE_H / 2.f)) / 320.f, -1.2f, 1.2f);
-                last_mouse = SDL_GetPerformanceCounter();
                 int h = hit_test(e.motion.x, e.motion.y);
-                if (h >= 0) selected = h;
+                if (h >= HIT_TAB0) { if (ui.tab == h - HIT_TAB0) select_item(ITEM_TABS); }
+                else if (h >= -1 && h < 200) select_item(h);
                 break;
             }
-            case SDL_MOUSEBUTTONDOWN:
+            case SDL_MOUSEBUTTONDOWN: {
+                int h = hit_test(e.button.x, e.button.y);
                 if (e.button.button == SDL_BUTTON_LEFT) {
-                    int h = hit_test(e.button.x, e.button.y);
-                    if (h >= 0 && h < ROW_COUNT && rows[h].id == OPT_VOLUME && rows[h].kind == ROW_OPTION &&
-                        e.button.x >= VOLUME_X - 8 && e.button.x <= VOLUME_X + VOLUME_W + 8) {
-                        selected = h;           /* click on the track: set the volume there */
+                    if (h >= HIT_TAB0) { open_tab(h - HIT_TAB0); ui.selected = ITEM_TABS; }
+                    else if (h == HIT_PREV || h == HIT_NEXT) { music_request(-1, h == HIT_NEXT ? 1 : -1, false, false); settings.launcher_music = true; music_sfx(SFX_CONFIRM); }
+                    else if (h == HIT_TOGGLE) { PlayerView pv = player_view(); music_request(-1, 0, !pv.on, pv.on); settings.launcher_music = !pv.on; music_sfx(SFX_CONFIRM); }
+                    else if (h >= 0 && h < 100 && tab_rows[ui.tab][h].kind == ROW_OPTION && tab_rows[ui.tab][h].id == OPT_VOLUME &&
+                             e.button.x >= VOLUME_X - 8 && e.button.x <= VOLUME_X + VOLUME_W + 8) {
+                        ui.selected = h;        /* click on the track: set the volume there */
                         settings_set_volume_fraction(ui_slider_value(VOLUME_X, VOLUME_W, (float)e.button.x));
-                    } else if (h >= 0) { selected = h; activate = 1; }
-                } else if (e.button.button == SDL_BUTTON_RIGHT) {
-                    int h = hit_test(e.button.x, e.button.y);
-                    if (h >= 0 && h < ROW_COUNT) { selected = h; change = -1; }
+                        music_sfx(SFX_CURSOR);
+                    } else if (h >= 0 || h == ITEM_PLAY || h == ITEM_QUIT) { ui.selected = h; activate = 1; }
+                } else if (e.button.button == SDL_BUTTON_RIGHT && h >= 0 && h < 100) {
+                    ui.selected = h; change = -1;
                 }
                 break;
+            }
             case SDL_KEYDOWN:
                 switch (e.key.keysym.sym) {
                 case SDLK_UP: case SDLK_w: move_selection(-1); break;
                 case SDLK_DOWN: case SDLK_s: case SDLK_TAB: move_selection(1); break;
                 case SDLK_LEFT: case SDLK_a: change = -1; break;
                 case SDLK_RIGHT: case SDLK_d: change = 1; break;
+                case SDLK_q: case SDLK_PAGEUP: open_tab(ui.tab - 1); break;
+                case SDLK_e: case SDLK_PAGEDOWN: open_tab(ui.tab + 1); break;
+                case SDLK_LEFTBRACKET: music_request(-1, -1, false, false); settings.launcher_music = true; break;
+                case SDLK_RIGHTBRACKET: music_request(-1, 1, false, false); settings.launcher_music = true; break;
                 case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_SPACE: activate = 1; break;
                 case SDLK_ESCAPE: result = 0; break;
                 case SDLK_m:            /* music on/off */
                     settings.launcher_music = !settings.launcher_music;
-                    if (settings.launcher_music) music_start(); else music_stop();
+                    music_request(-1, 0, settings.launcher_music, !settings.launcher_music);
                     break;
                 }
                 break;
@@ -932,37 +1061,37 @@ int launcher_run(const char *ini_path) {
                 case SDL_CONTROLLER_BUTTON_DPAD_DOWN: move_selection(1); break;
                 case SDL_CONTROLLER_BUTTON_DPAD_LEFT: change = -1; break;
                 case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: change = 1; break;
+                case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: open_tab(ui.tab - 1); break;
+                case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: open_tab(ui.tab + 1); break;
                 case SDL_CONTROLLER_BUTTON_A: activate = 1; break;
-                case SDL_CONTROLLER_BUTTON_START: if (play_enabled()) result = 1; break;
+                case SDL_CONTROLLER_BUTTON_START: if (play_enabled()) result = 1; else music_sfx(SFX_ERROR); break;
                 case SDL_CONTROLLER_BUTTON_B: result = 0; break;
                 }
                 break;
             }
-            if (selected < ROW_COUNT && rows[selected].kind == ROW_OPTION && (change || activate))
-                settings_option_change(rows[selected].id, change ? change : 1);
-            else if (selected < ROW_COUNT && rows[selected].kind == ROW_ROM && activate)
-                choose_rom(win);
-            else if (selected < ROW_COUNT && rows[selected].kind == ROW_CONTROLS && activate)
-                controls_open();
-            else if (activate && selected == ITEM_PLAY && play_enabled()) result = 1;
-            else if (activate && selected == ITEM_QUIT) result = 0;
+            if (ui.selected == ITEM_TABS && change) open_tab(ui.tab + change);
+            else if (ui.selected >= 0 && ui.selected < tab_count[ui.tab] && (change || activate)) row_action(win, change);
+            else if (activate && ui.selected == ITEM_PLAY) {
+                if (play_enabled()) { music_sfx(SFX_CONFIRM); result = 1; }
+                else music_sfx(SFX_ERROR);
+            }
+            else if (activate && ui.selected == ITEM_QUIT) result = 0;
         }
 
-        /* The light follows the mouse; when the mouse rests, the case sways gently. */
-        float idle = last_mouse ? (float)(SDL_GetPerformanceCounter() - last_mouse) / freq : 99;
-        float auto_x = .55f * sinf(t * .45f), auto_y = .35f * cosf(t * .33f);
-        float w = smooth(2.5f, 5, idle);
-        float gx = tx * (1 - w) + auto_x * w, gy = ty * (1 - w) + auto_y * w;
-        lx += (gx - lx) * .12f; ly += (gy - ly) * .12f;
-
-        render(lx, ly, t);
+        animate(dt);
+        render(t);
         controls_render(t);
+        outfit_render(t);
         SDL_UpdateTexture(tex, NULL, ui_px, ui_w * 4);
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, NULL, NULL);
         SDL_RenderPresent(ren);
     }
 
+    if (music_thread) {
+        PlayerView pv = player_view();
+        if (pv.ready) settings.ost_track = pv.song;
+    }
     music_stop();
     settings_save(ini_path);
     if (pad) SDL_GameControllerClose(pad);

@@ -15,7 +15,7 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 | 68000 → C recompiler (`tools/recomp.mjs`, built automatically by CMake) | done: 99.98% of 68000 time runs as native C |
 | Widescreen game patches (`runtime/src/widescreen.c`, `config/patches.json`) | done: gameplay at 16:9, other screens pillarboxed |
 | Save states and rewind (`runtime/src/state.c`, `rewind.c`) | done |
-| Launcher (`runtime/src/launcher.c`) | done: settings, ROM picker, foil steelbook |
+| Launcher (`runtime/src/launcher.c`, `launcher_scene.c`) | done: settings, ROM picker, animated armlet and spirits, soundtrack player |
 | In-game menu (`runtime/src/menu.c`) | done: save/load slots with thumbnails, options, reset, quit |
 | Internal resolution 2-4x (`runtime/src/hd.c`) | done: per-layer Scale2x/Scale3x |
 | Smooth motion, 60-144 Hz+ (`runtime/src/hd.c`, `motion.c`) | done: moves every sprite by its object's movement between the game's 30 Hz ticks |
@@ -51,9 +51,10 @@ Other headless options:
 * `--hide-layers MASK`: hide plane A (1), plane B (2) or sprites (4)
 * `--state-check A B`: snapshot before frame A, run to B, reload and replay; both runs must end identical
 * `--rewind-check K`: record every frame, rewind K frames; must equal the snapshot taken then
-* `--launcher-shot F.png WIDTH LX LY`: render the launcher to a PNG with the light at (LX, LY), -1..1
+* `--launcher-shot F.png WIDTH TAB TIME`: render the launcher to a PNG with tab TAB (0-3) open, TIME seconds into its animations
 * `--no-launcher`: start the game directly this time
-* `--launcher-music-check SECONDS`: run the launcher music without an audio device and print its level per second and each loop's fade
+* `--launcher-music-check SECONDS`: run the soundtrack player without an audio device; prints the title's song, each song change and the level every 30 seconds
+* `--ost-check SECONDS`: play every song for SECONDS and print its level per second (in tenths of its loudest second), then the menu sound effects' levels
 * `--menu-shot F.png W H`: open the in-game menu over the last frame and render it at W x H
 * `--controls-shot`: with `--menu-shot`, render the Controls page over the menu
 * `--input-check FILE`: rebind a few keys and buttons (including clashes), save them to FILE, load them back and print every binding
@@ -64,6 +65,10 @@ Other headless options:
 * `--smooth-check DIR SCALE`: smooth motion over the last 8 frames at 120 Hz; prints how far each picture is between ticks and how many sprites follow objects, and saves the pictures
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
+* `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
+* `--outfit a,b,c,d`: Ali's outfit colours for this run (as `outfit_colors` in `settings.ini`)
+* `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
+* `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
 * `--filter-shot F.png W H MODE`: draw the last frame at W x H with filter MODE on the GPU (hidden window) and save it
 * `--volume N`: volume 0-100 for this run
 * `--overclock PERCENT`: run the 68000 at this speed (also below 100, to simulate a heavy scene); headless runs print the spare time, game ticks and late ticks
@@ -74,27 +79,50 @@ Other headless options:
 
 ## Launcher
 
-Before the game starts, a launcher shows the settings (display, enhancements, ROM) next
-to the game presented as a collector's steelbook: brushed steel with a holographic foil
-frame, the title logo in gold foil and the Gold Armlet embossed over a sunburst. The
-light follows the mouse like tilting a real case, and sways by itself when the mouse rests.
+Before the game starts, a launcher shows the settings over a desert at dusk: the sun sets
+behind the dunes, stars twinkle, sand blows across and embers rise from the Gold Armlet,
+which floats in the middle with a sheen sweeping over it. The four spirits circle the
+armlet as glowing orbs with their emblems: Dytto (water), Efreet (fire), Bow (plant) and
+Shade (shadow).
+
+The settings sit on a stone tablet with gold trim and one tab per spirit: DISPLAY,
+ENHANCE, GAME and MUSIC. Opening a tab turns its spirit to the front of the circle and
+slides its rows in; the highlight glides between rows, a changed value pulses, and the
+selected option's description shows under the rows.
 
 The artwork comes from your ROM: on first start the launcher plays the intro silently
 (about two seconds), captures the armlet scene and the title screen, and caches them in
-`launcher_art.cache` next to the executable. It is redrawn in software every frame,
-split across CPU cores (about 8 ms per frame at 1080p).
+`launcher_art.cache` next to the executable. The spirits' orbs and emblems are drawn from
+shapes. Everything is drawn in software every frame (about 5 ms at 720p, 15 ms at 1080p;
+larger windows are drawn at 1080p and scaled up).
 
-The launcher plays the game's title theme, made live by your ROM's own sound driver on
-the emulated Z80, YM2612 and PSG; no audio is stored anywhere. A background thread runs
-the ROM from a reset (with blank save RAM, like the art capture) to the title screen
-without sound, measures how long the title stays before the attract demo (740 frames,
-12.3 s), then plays it in real time, fading in, and loops it with a short fade just
-before the demo would start. M turns the music on and off (`launcher_music` in
-`settings.ini`); pressing Play fades it out. The game then starts from a reset with
-your real save RAM.
+### Soundtrack player and sounds
 
-Keys: arrows select and change, Enter activates, M music, Esc quits; mouse and controller work
-too. "Show launcher at startup" turns it off; `show_launcher=1` in `settings.ini` brings it back.
+The launcher plays the game's soundtrack, made live by your ROM's own sound driver on the
+emulated Z80, YM2612 and PSG; no audio is stored anywhere (`runtime/src/ost.c`):
+
+* A background thread runs the ROM from a reset (with blank save RAM, like the art capture)
+  to the title screen without sound, noting the song the title asks for (song $04).
+* It then parks the game (the 68000 loops on a `bra.s *` in work RAM with interrupts
+  masked) and calls the sound driver itself, as the game does: `jsr $060000` once a frame
+  to play the music and `jsr $060004` with a command to start a song ($01nn) or a sound
+  effect. The calls return to a hand-written routine at an address in the cartridge header.
+* The ROM's song table at $0638D4 has 34 songs ($00-$21). Looping songs play for three
+  minutes and fade out; jingles end when they go quiet (measured without the FM DAC's DC
+  offset). The player plays them all in order, repeats one, or shuffles (`ost_mode`), and
+  remembers the last song (`ost_track`).
+* The MUSIC tab shows the song, its time, a level meter and previous / play-stop / next
+  buttons; the song playing also shows under the armlet on every tab.
+* Every choice in the launcher makes the game's own menu sound: the cursor sound ($0256)
+  when moving, the confirm sound ($0347) when changing or opening something, the cancel
+  sound ($03AA) when closing the controls page, and the error sound ($0253) when Play is
+  pressed without a ROM. They play even with the music off.
+
+Keys: arrows select and change, Enter activates, Q / E (or Page Up / Down, LB / RB) switch
+tabs, [ and ] change the song, M turns the music on and off, Esc quits; the mouse and a
+controller work too. Pressing Play fades the music out; the game then starts from a reset
+with your real save RAM. "Show launcher at startup" turns the launcher off;
+`show_launcher=1` in `settings.ini` brings it back.
 
 ## Volume
 
@@ -106,7 +134,8 @@ click on the track sets it there (in steps of 5%).
 
 Esc pauses the game over a blurred copy of the last frame. The menu saves and loads
 the nine slots (each with a thumbnail and the time it was saved), changes the display
-options and rewind on the spot, and resets or quits (both ask for a second press).
+options and rewind on the spot, opens the Controls and Ali's outfit pages, and resets or
+quits (both ask for a second press).
 
 ## Internal resolution
 
@@ -212,10 +241,43 @@ At 100% the machine is unchanged (`--verify` and native/interpreter logs match).
 Moments that were CPU-bound, like area loading, also get shorter. Save states work at
 any speed, but replays are only identical at the speed they were recorded at.
 
+## Sharpening
+
+"Sharpening" (Off, Light, Medium, Strong; `sharpen` in `settings.ini`) sharpens the
+picture before it goes to the GPU, at the internal resolution (or the native one), split
+across CPU cores (`hd_sharpen` in `runtime/src/hd.c`). It is contrast-adaptive, after
+AMD's CAS: each pixel is pushed away from its four neighbours, by less where the contrast
+is already high, so the soft edges of the scaled layers and of the final stretch to the
+window get crisper while hard pixel edges get no halos or ringing. On Strong, about one
+pixel in eight of a village frame at 3x changes.
+
+## Ali's outfit
+
+"Ali's outfit" (in the pause menu and on the launcher's GAME tab) recolours the clothes
+of the player character (`runtime/src/outfit.c`):
+
+* Every sprite in the game uses palette line 0, so changing a CRAM colour would recolour
+  the townspeople with him. Instead the renderer recolours only the sprites his object
+  drew: motion.c already records which object each sprite-table entry belongs to, and the
+  VDP marks his pixels whose colour index has an outfit colour (bit 7 of the sprite byte,
+  unused by the hardware) and takes that colour instead of CRAM's.
+* His clothes are ramps of colour indices, brightest first: trousers 15, 13; sash 2, 1;
+  boots and wrist bands 7, 6, 5; hair 4, 3 (the Gold Armlet on his arm shares the hair's
+  colours). One colour is picked per part; each index gets it scaled by how bright the
+  game makes that index right now, so folds and shading stay and the game's fades still
+  darken him.
+* The page shows him large in the colours being picked, next to how he looks now, and
+  changes nothing until Apply (Reset goes back to his own colours, Cancel leaves). Each
+  part steps through named colours with left and right; Enter mixes your own from red,
+  green and blue in the Genesis's eight steps each. The launcher shows the picture of
+  him the game saved last time (`player_preview.cache` next to the executable).
+* `outfit` and `outfit_colors` (four CRAM colours in hex, `-` for his own) in
+  `settings.ini` hold the choice.
+
 ## Cheats
 
-The pause menu has a toggle for each cheat; the launcher's "Cheats" row steps through
-Off, Health, Health + spirit and All.
+The "Cheats" row (pause menu and launcher) steps through Off, Health, Health + spirit
+and All; `cheat_health`, `cheat_spirit` and `cheat_weapons` in `settings.ini` set each one.
 
 * **Infinite health.** The player's hit handler subtracts no damage (a recompiler patch
   at `$005884`, `playerDamage` in `config/patches.json`), and the health is held full.

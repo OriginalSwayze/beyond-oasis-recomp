@@ -12,6 +12,7 @@
 #include "filter.h"
 #include "input.h"
 #include "controls.h"
+#include "outfit.h"
 #include "menu.h"
 #include "savestate.h"
 #include "ui.h"
@@ -134,6 +135,7 @@ static void apply_settings(void) {
     vdp_opts.no_sprite_limit = settings.no_sprite_limit;
     vdp_opts.hd_capture = settings.internal_scale > 1 || settings.smooth_motion;
     machine_opts.overclock = settings.overclock;
+    outfit_apply();
 }
 
 /* Largest rectangle with the game's display aspect that fits the window. */
@@ -189,12 +191,13 @@ int main(int argc, char **argv) {
     float shot_lx = 0, shot_ly = 0;
     const char *menu_shot = NULL;
     int menu_w = 1920, menu_h = 1080;
-    bool controls_shot = false;
+    bool controls_shot = false, outfit_page_shot = false;
     int save_to = 0;
     int load_from = 0;
     bool rom_from_args = false;         /* a ROM path was given on the command line */
     bool test_overrides = false;        /* settings overridden on the command line: don't save them */
     const char *hd_shot = NULL;
+    const char *outfit_shot = NULL;     /* --outfit-check F.png */
     const char *smooth_dir = NULL;      /* --smooth-check DIR SCALE */
     bool motion_check = false;
     const char *sprite_dir = NULL;      /* --sprite-check EVERY DIR SCALE */
@@ -229,6 +232,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--shots") && i + 2 < argc) { shot_every = atoi(argv[++i]); shot_dir = argv[++i]; }
         else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) { settings.widescreen = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--overclock") && i + 1 < argc) { settings.overclock = atoi(argv[++i]); test_overrides = true; }   /* percent */
+        else if (!strcmp(argv[i], "--sharpen") && i + 1 < argc) { settings.sharpen = atoi(argv[++i]) & 3; test_overrides = true; }   /* 0-3 */
         else if (!strcmp(argv[i], "--volume") && i + 1 < argc) { settings.volume = atoi(argv[++i]); test_overrides = true; }   /* 0-100 */
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) { settings.filter = atoi(argv[++i]) % FILTER_COUNT; test_overrides = true; }   /* 0 off, 1 scanlines, 2 CRT, 3 LCD */
         else if (!strcmp(argv[i], "--no-launcher")) no_launcher = true;
@@ -236,6 +240,11 @@ int main(int argc, char **argv) {
             /* --launcher-music-check SECONDS: run the launcher music headless, print its level. */
             apply_settings();
             return launcher_music_check(atoi(argv[++i]));
+        }
+        else if (!strcmp(argv[i], "--ost-check") && i + 1 < argc) {
+            /* --ost-check SECONDS: play every song headless, print its level per second. */
+            apply_settings();
+            return launcher_ost_check(atoi(argv[++i]));
         }
         else if (!strcmp(argv[i], "--filter-shot") && i + 4 < argc) {
             /* --filter-shot F.png W H MODE: draw the last frame into a W x H picture with
@@ -267,6 +276,17 @@ int main(int argc, char **argv) {
             settings.internal_scale = atoi(argv[++i]);
             settings.smooth_motion = true;
         }
+        else if (!strcmp(argv[i], "--outfit") && i + 1 < argc) {
+            /* --outfit a,b,c,d: Ali's outfit colours for this run (as outfit_colors in settings.ini). */
+            outfit_ini_load("outfit_colors", argv[++i]);
+            settings.outfit = true;
+            test_overrides = true;
+        }
+        else if (!strcmp(argv[i], "--outfit-check") && i + 1 < argc) {
+            /* --outfit-check F.png: at the end, save the player's sprites 6x with their colours
+             * and list the colour indices he uses. */
+            outfit_shot = argv[++i];
+        }
         else if (!strcmp(argv[i], "--hd-shot") && i + 2 < argc) {
             /* --hd-shot F.png SCALE: save the last frame at the internal resolution SCALE (2-4). */
             hd_shot = argv[++i];
@@ -292,6 +312,7 @@ int main(int argc, char **argv) {
             menu_h = atoi(argv[++i]);
         }
         else if (!strcmp(argv[i], "--controls-shot")) controls_shot = true;   /* with --menu-shot: the Controls page */
+        else if (!strcmp(argv[i], "--outfit-shot")) outfit_page_shot = true;  /* with --menu-shot: the outfit page */
         else if (!strcmp(argv[i], "--input-check") && i + 1 < argc) {
             /* --input-check FILE: rebind a few keys and buttons, save to FILE, load it back,
              * and print the bindings (never touches settings.ini). */
@@ -308,7 +329,7 @@ int main(int argc, char **argv) {
             return 0;
         }
         else if (!strcmp(argv[i], "--launcher-shot") && i + 4 < argc) {
-            /* --launcher-shot F.png WIDTH LX LY: render the launcher (light direction LX, LY). */
+            /* --launcher-shot F.png WIDTH TAB TIME: render the launcher with tab TAB (0-3) open at TIME seconds. */
             launcher_shot = argv[++i];
             shot_width = atoi(argv[++i]);
             shot_lx = (float)atof(argv[++i]);
@@ -319,7 +340,7 @@ int main(int argc, char **argv) {
 
     if (launcher_shot) {
         apply_settings();
-        return launcher_screenshot(launcher_shot, shot_width, shot_lx, shot_ly, 1.0f) ? 1 : 0;
+        return launcher_screenshot(launcher_shot, shot_width, (int)shot_lx, shot_ly) ? 1 : 0;
     }
     if (SDL_Init(headless_frames ? 0 : SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
@@ -521,7 +542,8 @@ int main(int argc, char **argv) {
                 if (hd) hd_compose(settings.internal_scale);
                 int tw = hd ? hd_w : frame_width(), th = hd ? hd_h : vdp_screen_height();
                 SDL_Texture *t = SDL_CreateTexture(sr, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STATIC, tw, th);
-                SDL_UpdateTexture(t, NULL, hd ? hd_px : framebuffer, (hd ? hd_w : FB_W) * 4);
+                if (settings.sharpen) SDL_UpdateTexture(t, NULL, hd_sharpen(hd ? hd_px : framebuffer, tw, th, hd ? hd_w : FB_W, settings.sharpen), tw * 4);
+                else SDL_UpdateTexture(t, NULL, hd ? hd_px : framebuffer, (hd ? hd_w : FB_W) * 4);
                 SDL_SetRenderDrawColor(sr, 0, 0, 0, 255);
                 SDL_RenderClear(sr);
                 Uint64 t0 = SDL_GetPerformanceCounter();
@@ -539,6 +561,25 @@ int main(int argc, char **argv) {
             if (sr) SDL_DestroyRenderer(sr);
             if (hw) SDL_DestroyWindow(hw);
         }
+        if (outfit_shot) {
+            int w = vdp_player_w, h = vdp_player_h, count[64] = { 0 };
+            printf("player: %dx%d pixels\n", w, h);
+            uint32_t *img = calloc((size_t)w * h * 36 + 1, 4);
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++) {
+                    int v = vdp_player[y * PLAYER_IMG + x];
+                    if (!v) continue;
+                    count[v]++;
+                    uint16_t c = vdp_opts.outfit && vdp_outfit_pick[v] != OUTFIT_KEEP
+                                     ? vdp_outfit_shade(vdp_outfit_pick[v], vdp_player_cram[v], vdp_outfit_ref[v]) : vdp_player_cram[v];
+                    uint32_t rgbv = (uint32_t)(((c >> 1) & 7) * 36) << 16 | (uint32_t)(((c >> 5) & 7) * 36) << 8 | (uint32_t)(((c >> 9) & 7) * 36);
+                    for (int k = 0; k < 36; k++) img[(size_t)(y * 6 + k / 6) * w * 6 + x * 6 + k % 6] = rgbv;
+                }
+            for (int v = 0; v < 64; v++)
+                if (count[v]) printf("  index %2d (palette %d colour %2d): %4d pixels, CRAM %03X\n", v, v >> 4, v & 15, count[v], vdp_player_cram[v]);
+            if (w && h) png_write(outfit_shot, img, w * 6, h * 6, w * 6);
+            free(img);
+        }
         if (hd_shot) {
             Uint64 t0 = SDL_GetPerformanceCounter();
             hd_compose(settings.internal_scale);
@@ -552,6 +593,7 @@ int main(int argc, char **argv) {
             SDL_Rect r = display_rect(menu_w, menu_h);
             menu_open(framebuffer, frame_width(), vdp_screen_height(), FB_W, r.x, r.y, r.w, r.h, menu_w, menu_h, 1);
             if (controls_shot) controls_open();
+            if (outfit_page_shot) outfit_open();
             menu_render(1.0);
             png_write(menu_shot, ui_px, ui_w, ui_h, ui_w);
         }
@@ -629,6 +671,7 @@ int main(int argc, char **argv) {
                 int win_w, win_h;
                 SDL_GetWindowSize(win, &win_w, &win_h);
                 SDL_Rect r = display_rect(ww, wh);
+                outfit_preview_save(base_dir);  /* Ali as the launcher's outfit page will show him */
                 menu_open(framebuffer, frame_width(), vdp_screen_height(), FB_W, r.x, r.y, r.w, r.h, ww, wh,
                           win_w ? (float)ww / win_w : 1);
             }
@@ -746,11 +789,12 @@ int main(int argc, char **argv) {
                 hd_tex_w = hd_w; hd_tex_h = hd_h;
             }
             hd_tex_now ^= 1;
-            SDL_UpdateTexture(hd_tex[hd_tex_now], NULL, hd_px, hd_w * 4);
+            SDL_UpdateTexture(hd_tex[hd_tex_now], NULL, hd_sharpen(hd_px, hd_w, hd_h, hd_w, settings.sharpen), hd_w * 4);
             filter_draw(ren, hd_tex[hd_tex_now], NULL, dst, frame_width(), vdp_screen_height(), settings.filter);
         } else {
-            SDL_UpdateTexture(tex, NULL, framebuffer, FB_W * 4);
             SDL_Rect src = { 0, 0, frame_width(), vdp_screen_height() };
+            if (settings.sharpen) SDL_UpdateTexture(tex, &src, hd_sharpen(framebuffer, src.w, src.h, FB_W, settings.sharpen), src.w * 4);
+            else SDL_UpdateTexture(tex, NULL, framebuffer, FB_W * 4);
             filter_draw(ren, tex, &src, dst, frame_width(), vdp_screen_height(), settings.filter);
         }
         Uint64 before_present = SDL_GetPerformanceCounter();
@@ -768,6 +812,7 @@ int main(int argc, char **argv) {
 
     save_coverage();
     save_sram();
+    outfit_preview_save(base_dir);
     if (!test_overrides) settings_save(ini);
     SDL_Quit();
     return 0;

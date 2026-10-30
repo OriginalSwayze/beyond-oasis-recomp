@@ -67,4 +67,11 @@ void  hd_compose_sprites(int scale);
 extern double hd_ms[4];                 /* last hd_compose_at: ms scaling layers, scaling sprites, sprite layer, compositing */
 extern int hd_owned;                    /* sprites of the newest frame that belong to a game object */
 
+/* Sharpening (level 1-3: light, medium, strong) of a w x h picture with row pitch
+ * `pitch`, contrast-adaptive: each pixel is pushed away from its four neighbours by an
+ * amount that shrinks where the contrast is already high, so soft edges (scaled layers,
+ * the smooth final stretch) get crisper while hard pixel edges get no halos. Returns the
+ * sharpened copy (row pitch w), valid until the next call. */
+const uint32_t *hd_sharpen(const uint32_t *src, int w, int h, int pitch, int level);
+
 #endif

@@ -21,4 +21,8 @@ void motion_reset(void);
  * gets the number of drawn sprites that belong to an object. */
 unsigned motion_sprite_moves(const HdFrame *f, int dx[80], int dy[80], int *owned);
 
+/* Marks the entries of the VDP's sprite table (`sat`, `count` entries of 8 bytes) that
+ * the player character's object drew in the latest tick that sent them. */
+void motion_player_entries(const uint8_t *sat, int count, bool out[80]);
+
 #endif

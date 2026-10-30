@@ -3,6 +3,7 @@
  * (vdp_opts.extra_width) for widescreen; the game still thinks it is 320 wide. */
 #include "genesis.h"
 #include "hd.h"
+#include "motion.h"
 #include <string.h>
 #include <stdio.h>
 #include "m68k.h"
@@ -30,8 +31,11 @@ static uint16_t vram16(uint32_t a) {
     return (uint16_t)(vdp.vram[a] << 8 | vdp.vram[a + 1]);
 }
 
+static int player_w, player_h;
+
 void vdp_reset(void) {
     memset(&vdp, 0, sizeof vdp);
+    vdp_player_w = vdp_player_h = player_w = player_h = 0;   /* nothing of the last run in previews */
 }
 
 int vdp_screen_width(void)  { return (vdp.reg[12] & 0x81) ? 320 : 256; }
@@ -267,6 +271,71 @@ static void draw_window(uint8_t *out, int w, int extra, int line) {
 }
 
 static inline uint32_t layer_px(uint8_t v);
+static uint32_t rgb(uint16_t c, int mode);
+
+/* ---- The player's outfit ----------------------------------------------------- *
+ * Sprite pixels set bit 7 of their byte when they are the player's and their colour
+ * index has an outfit colour; sprite_px() then takes vdp_outfit's colour instead of CRAM's. */
+#define OUTFIT 0x80
+uint16_t vdp_outfit_pick[64];
+uint8_t  vdp_outfit_ref[64];
+static uint16_t vdp_outfit[64];         /* this frame's colour for each index */
+uint8_t  vdp_player[PLAYER_IMG * PLAYER_IMG];
+uint16_t vdp_player_cram[64];
+int      vdp_player_w, vdp_player_h;
+static uint8_t player_now[PLAYER_IMG * PLAYER_IMG];     /* the frame being drawn */
+static uint16_t player_cram[64];
+static bool player_entry[80];
+static int player_x0, player_y0;
+
+uint16_t vdp_outfit_shade(uint16_t pick, uint16_t now, int ref) {
+    int lum = ((now >> 1) & 7) + ((now >> 5) & 7) + ((now >> 9) & 7);
+    int ch[3] = { (pick >> 1) & 7, (pick >> 5) & 7, (pick >> 9) & 7 };
+    for (int k = 0; k < 3; k++) {
+        int v = ref > 0 ? (ch[k] * lum * 2 + ref) / (ref * 2) : ch[k];
+        ch[k] = v > 7 ? 7 : v;
+    }
+    return (uint16_t)(ch[2] << 9 | ch[1] << 5 | ch[0] << 1);
+}
+
+uint32_t vdp_color_rgb(uint16_t cram) { return rgb(cram, 1); }
+
+/* At the first line: the last frame's picture of the player if he was on screen, his
+ * entries and the box around them in this one, and this frame's outfit colours. */
+static void player_frame_start(void) {
+    if (player_w && player_h) {
+        memcpy(vdp_player, player_now, sizeof vdp_player);
+        memcpy(vdp_player_cram, player_cram, sizeof vdp_player_cram);
+        vdp_player_w = player_w; vdp_player_h = player_h;
+    }
+    memset(player_now, 0, sizeof player_now);
+    memcpy(player_cram, vdp.cram, sizeof player_cram);
+    if (vdp_opts.outfit)
+        for (int k = 0; k < 64; k++)
+            vdp_outfit[k] = vdp_outfit_pick[k] == OUTFIT_KEEP ? OUTFIT_KEEP : vdp_outfit_shade(vdp_outfit_pick[k], vdp.cram[k], vdp_outfit_ref[k]);
+    bool h40 = vdp_screen_width() == 320;
+    uint32_t sat = (vdp.reg[5] & (h40 ? 0x7E : 0x7F)) << 9;
+    motion_player_entries(vdp.vram + sat, h40 ? 80 : 64, player_entry);
+    int x0 = 1 << 20, y0 = 1 << 20, x1 = -(1 << 20), y1 = -(1 << 20);
+    for (int k = 0; k < 80; k++) {
+        if (!player_entry[k]) continue;
+        uint32_t s = sat + k * 8;
+        int y = (vram16(s) & 0x3FF) - 128, size = vram16(s + 2), x = (vram16(s + 6) & 0x1FF) - 128;
+        int w = (((size >> 10) & 3) + 1) * 8, h = (((size >> 8) & 3) + 1) * 8;
+        if (x < x0) x0 = x;
+        if (y < y0) y0 = y;
+        if (x + w > x1) x1 = x + w;
+        if (y + h > y1) y1 = y + h;
+    }
+    player_x0 = x0; player_y0 = y0;
+    player_w = x1 > x0 ? (x1 - x0 > PLAYER_IMG ? PLAYER_IMG : x1 - x0) : 0;
+    player_h = y1 > y0 ? (y1 - y0 > PLAYER_IMG ? PLAYER_IMG : y1 - y0) : 0;
+}
+
+static inline uint32_t sprite_px(uint8_t v) {
+    if ((v & OUTFIT) && (v & 0x0F)) return (uint32_t)vdp_outfit[v & 0x3F] | (uint32_t)(v & 0x7F) << 16;
+    return layer_px((uint8_t)(v & 0x7F));
+}
 
 static void draw_sprites(uint8_t *out, int w, int extra, int line) {
     bool h40 = vdp_screen_width() == 320;
@@ -315,10 +384,17 @@ static void draw_sprites(uint8_t *out, int w, int extra, int line) {
                 uint8_t b = vdp.vram[(tile * 32 + (sy & 7) * 4 + ((cx & 7) >> 1)) & 0xFFFF];
                 int c = (cx & 1) ? (b & 0xF) : (b >> 4);
                 if (!c) continue;
-                if (cap) cap->px[row * 32 + sx] = layer_px((uint8_t)(((attr >> 9) & 0x30) | c | ((attr & 0x8000) ? PRI : 0)));
+                uint8_t v = (uint8_t)(((attr >> 9) & 0x30) | c | ((attr & 0x8000) ? PRI : 0));
+                if (player_entry[link_now]) {
+                    int px = x + sx - player_x0, py = line - player_y0;
+                    if (px >= 0 && py >= 0 && px < player_w && py < player_h && !player_now[py * PLAYER_IMG + px])
+                        player_now[py * PLAYER_IMG + px] = v & 0x3F;
+                    if (vdp_opts.outfit && vdp_outfit[v & 0x3F] != OUTFIT_KEEP) v |= OUTFIT;
+                }
+                if (cap) cap->px[row * 32 + sx] = sprite_px(v);
                 if (i < 0 || i >= w) continue;
                 if (out[i] & 0x0F) { vdp.status |= 0x20; continue; } /* earlier sprite wins */
-                out[i] = (uint8_t)(((attr >> 9) & 0x30) | c | ((attr & 0x8000) ? PRI : 0));
+                out[i] = v;
             }
         }
         if (link == 0 || link >= max_total) break;
@@ -376,6 +452,7 @@ void vdp_render_line(int line, uint32_t *dst) {
     int w = vdp_screen_width() + extra * 2;
     uint16_t backdrop = vdp.cram[vdp.reg[7] & 0x3F];
     bool capture = vdp_opts.hd_capture && line < HD_MAX_H;
+    if (line == 0) player_frame_start();
     if (capture) {
         if (line == 0) {
             hd_frame.w = w; hd_frame.extra = extra; hd_frame.mask_sides = vdp_opts.mask_sides;
@@ -416,12 +493,12 @@ void vdp_render_line(int line, uint32_t *dst) {
     if (capture) {
         hd_frame.flags[line] = HD_LINE_DISPLAY | (sh ? HD_LINE_SH : 0) | ((vdp.reg[11] & 4) ? HD_LINE_COLUMN_VSCROLL : 0);
         for (int i = 0; i < w; i++) {
-            uint32_t pa = layer_px(a[i]), pb = layer_px(b[i]), ps = layer_px(s[i]);
+            uint32_t pa = layer_px(a[i]), pb = layer_px(b[i]), ps = sprite_px(s[i]);
             hd_frame.a[line][i] = pa; hd_frame.b[line][i] = pb; hd_frame.s[line][i] = ps;
             dst[i] = vdp_compose(pa, pb, ps, backdrop, sh);
         }
     } else {
-        for (int i = 0; i < w; i++) dst[i] = vdp_compose(layer_px(a[i]), layer_px(b[i]), layer_px(s[i]), backdrop, sh);
+        for (int i = 0; i < w; i++) dst[i] = vdp_compose(layer_px(a[i]), layer_px(b[i]), sprite_px(s[i]), backdrop, sh);
     }
     if (vdp_opts.mask_sides && extra) {
         memset(dst, 0, (size_t)extra * sizeof *dst);

@@ -41,9 +41,11 @@ void z80_run(int m68k_cycles) {
     cycle_debt += m68k_cycles * 7.0 / 15.0;
     if (bus.z80_reset) { z80_reset_cpu(); return; }
     if (bus.z80_busreq) { cycle_debt = 0; return; } /* 68000 owns the bus: Z80 is halted */
-    unsigned long target = cpu.cyc + (unsigned long)cycle_debt;
-    cycle_debt -= (unsigned long)cycle_debt;
-    while (cpu.cyc < target) z80_step(&cpu);
+    /* Counted from the start: cpu.cyc is 32 bits on Windows and wraps after 2^32 cycles
+     * (20 minutes), where comparing against an end value would stop the Z80 for good. */
+    unsigned long start = cpu.cyc, n = (unsigned long)cycle_debt;
+    cycle_debt -= (double)n;
+    while (cpu.cyc - start < n) z80_step(&cpu);
 }
 
 /* The VDP raises the Z80 interrupt at the start of V blank, for about one line. */

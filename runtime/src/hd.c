@@ -299,6 +299,61 @@ static void compose_rows(int scale, const uint32_t *sprites, const int *ox_a, co
     run_jobs(jobs, n);
 }
 
+/* ---- Sharpening -------------------------------------------------------------------- */
+typedef struct { const uint32_t *src; uint32_t *dst; int w, h, pitch, y0, y1; float peak; } SharpenJob;
+
+static inline int luma(uint32_t p) { return (int)(((p >> 16) & 255) * 77 + ((p >> 8) & 255) * 150 + (p & 255) * 29) >> 8; }
+
+static int sharpen_rows(void *arg) {
+    const SharpenJob *j = arg;
+    for (int y = j->y0; y < j->y1; y++) {
+        const uint32_t *r = j->src + (size_t)y * j->pitch;
+        const uint32_t *up = y > 0 ? r - j->pitch : r, *dn = y < j->h - 1 ? r + j->pitch : r;
+        uint32_t *out = j->dst + (size_t)y * j->w;
+        for (int x = 0; x < j->w; x++) {
+            uint32_t e = r[x], b = up[x], hh = dn[x], d = r[x > 0 ? x - 1 : x], f = r[x < j->w - 1 ? x + 1 : x];
+            int le = luma(e), lb = luma(b), lh = luma(hh), ld = luma(d), lf = luma(f);
+            int mn = le, mx = le;
+            if (lb < mn) mn = lb; if (lh < mn) mn = lh; if (ld < mn) mn = ld; if (lf < mn) mn = lf;
+            if (lb > mx) mx = lb; if (lh > mx) mx = lh; if (ld > mx) mx = ld; if (lf > mx) mx = lf;
+            if (mx == mn) { out[x] = e; continue; }
+            /* How much room there is before clipping, relative to the brightest neighbour (AMD's CAS). */
+            float room = (float)(mn < 255 - mx ? mn : 255 - mx) / (mx > 0 ? mx : 1);
+            float amp = room > 1 ? 1 : sqrtf(room);
+            float wgt = amp * j->peak;      /* negative: the neighbours are subtracted */
+            float norm = 1 / (1 + 4 * wgt);
+            int c[3];
+            for (int k = 0; k < 3; k++) {
+                int sh = 16 - k * 8;
+                float v = (((e >> sh) & 255) + wgt * (((b >> sh) & 255) + ((hh >> sh) & 255) + ((d >> sh) & 255) + ((f >> sh) & 255))) * norm;
+                c[k] = v < 0 ? 0 : v > 255 ? 255 : (int)(v + .5f);
+            }
+            out[x] = (uint32_t)(c[0] << 16 | c[1] << 8 | c[2]);
+        }
+    }
+    return 0;
+}
+
+const uint32_t *hd_sharpen(const uint32_t *src, int w, int h, int pitch, int level) {
+    static uint32_t *buf;
+    static size_t cap;
+    if (level <= 0 || w <= 0 || h <= 0) return src;
+    size_t need = (size_t)w * h;
+    if (need > cap) { free(buf); buf = malloc(need * 4); cap = buf ? need : 0; }
+    if (!buf) return src;
+    static const float peaks[4] = { 0, -1 / 8.f, -1 / 6.5f, -1 / 5.f };
+    float peak = peaks[level > 3 ? 3 : level];
+    SharpenJob sj[16];
+    Job jobs[16];
+    int n = workers();
+    for (int k = 0; k < n; k++) {
+        sj[k] = (SharpenJob){ src, buf, w, h, pitch, h * k / n, h * (k + 1) / n, peak };
+        jobs[k] = (Job){ sharpen_rows, &sj[k] };
+    }
+    run_jobs(jobs, n);
+    return buf;
+}
+
 static int clamp_scale(int scale) { return scale < 1 ? 1 : scale > HD_MAX_SCALE ? HD_MAX_SCALE : scale; }
 
 void hd_compose(int scale) {

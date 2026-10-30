@@ -15,13 +15,16 @@ typedef struct {
     int  internal_scale;                /* 1 = native; 2-4 = layers redrawn at that scale (hd.c) */
     bool smooth_motion;                 /* draw between the game's 30 Hz ticks (hd.c, motion.c) */
     int  filter;                        /* FILTER_* (filter.h): off, scanlines, CRT, LCD */
+    int  sharpen;                       /* sharpening: 0 off, 1 light, 2 medium, 3 strong (hd_sharpen) */
     int  overclock;                     /* 68000 speed in percent (100 = original): removes slowdown */
     int  window_scale;
     bool rewind;                        /* keep a rewind buffer (hold the rewind key to step back) */
     int  rewind_mb;                     /* rewind buffer size; frames cost ~1 KB, so 64 MB is many minutes */
     int  state_slot;                    /* save state slot, 1-9 */
     bool show_launcher;                 /* show the launcher at startup (--no-launcher skips it once) */
-    bool launcher_music;                /* the launcher plays the title theme (M toggles it) */
+    bool launcher_music;                /* the launcher plays the soundtrack (M toggles it) */
+    int  ost_mode;                      /* soundtrack player: OST_MODE_* (launcher.c) */
+    int  ost_track;                     /* the song it played last, or -1 for the title theme */
     int  volume;                        /* 0-100: game sound and launcher music */
     int  bind_key[10];                  /* input.h IN_*: SDL scancode for each action */
     int  bind_pad[10];                  /* input.h IN_*: SDL game controller button for each action */
@@ -29,6 +32,8 @@ typedef struct {
     bool cheat_spirit;                  /* infinite spirit power */
     bool cheat_weapons;                 /* weapons never break */
     char cheat_codes[512];              /* extra RAM codes, "FFxxxx:VV[VV],..." (settings.ini only) */
+    bool outfit;                        /* Ali wears outfit_color (outfit.c) */
+    int  outfit_color[4];               /* CRAM colour for each part of his clothing, -1 = his own */
 } Settings;
 
 extern Settings settings;
@@ -41,7 +46,10 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_CHEATS, OPT_INTERNAL, OPT_SMOOTH,
        OPT_REWIND_ALL,                  /* rewind off or its buffer size, in one option */
        OPT_FILTER, OPT_WINDOW_ALL,      /* fullscreen or a window size, in one option */
-       OPT_OVERCLOCK, OPT_VOLUME };
+       OPT_OVERCLOCK, OPT_VOLUME,
+       OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
+       OPT_SHARPEN };
+enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);
 void settings_option_change(int id, int dir);

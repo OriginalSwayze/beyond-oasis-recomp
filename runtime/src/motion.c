@@ -137,6 +137,21 @@ static const Tick *tick_numbered(unsigned s) {
     return s && t->serial == s ? t : NULL;
 }
 
+#define PLAYER 0xFF19E8                 /* the player character's object */
+
+void motion_player_entries(const uint8_t *sat, int count, bool out[80]) {
+    memset(out, 0, 80 * sizeof *out);
+    const Tick *t = NULL;
+    for (int r = 0; r < 4; r++) if (ring[r].serial && (!t || ring[r].serial > t->serial)) t = &ring[r];
+    if (!t) return;
+    for (int i = 0; i < count && i < t->count; i++) {
+        const uint8_t *e = sat + i * 8, *m = t->raw[i];
+        /* The same entry as the game built it (the link may differ). */
+        if (((e[0] ^ m[0]) & 3) || e[1] != m[1] || e[4] != m[4] || e[5] != m[5] || ((e[6] ^ m[6]) & 1) || e[7] != m[7]) continue;
+        out[i] = t->anchor[i] >= 0 && t->anchors[t->anchor[i]].object == PLAYER;
+    }
+}
+
 unsigned motion_sprite_moves(const HdFrame *f, int dx[80], int dy[80], int *owned) {
     memset(dx, 0, 80 * sizeof *dx);
     memset(dy, 0, 80 * sizeof *dy);
