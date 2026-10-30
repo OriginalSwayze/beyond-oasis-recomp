@@ -37,12 +37,12 @@ static const Item tab_items[TABS][MAX_ROWS] = {
     { { ITEM_OPTION, "Lighting", OPT_LIGHTING }, { ITEM_OPTION, "Spirit effects", OPT_ELEMENTS },
       { ITEM_OPTION, "Item animations", OPT_ITEMS }, { ITEM_OPTION, "Water", OPT_WATER },
       { ITEM_OPTION, "Footsteps", OPT_FOOTSTEPS }, { ITEM_OPTION, "Dynamic lights", OPT_DYNLIGHT },
-      { ITEM_OPTION, "HD-2D look", OPT_HD2D } },
+      { ITEM_OPTION, "HD-2D look", OPT_HD2D }, { ITEM_OPTION, "Swaying foliage", OPT_FOLIAGE } },
     { { ITEM_OPTION, "Volume", OPT_VOLUME }, { ITEM_OPTION, "Audio", OPT_AUDIO },
       { ITEM_ACTION, "Controls", ACT_CONTROLS }, { ITEM_ACTION, "Ali's outfit", ACT_OUTFIT },
       { ITEM_OPTION, "Texture pack", OPT_TEXPACK }, { ITEM_OPTION, "Dump tiles", OPT_DUMP } },
 };
-static const int tab_count[TABS] = { 7, 10, 7, 6 };
+static const int tab_count[TABS] = { 7, 10, 8, 6 };
 
 /* What each option and action does, for the card on the right. */
 static const char *about(const Item *it) {
@@ -72,6 +72,7 @@ static const char *about(const Item *it) {
     case OPT_FOOTSTEPS: return "Ali kicks up what is under his feet as he walks: puffs of dust on sand and stone, bits of grass, splashes and rings in water.";
     case OPT_ELEMENTS: return "The spirits and their magic give off particles by element: embers from fire, drops from water, wisps from shadow, leaves from plants. Ali, the people of Oasis, enemies, items and the HUD give none.";
     case OPT_WATER: return "The sea, rivers and pools roll with slow swells, foam where they meet the shore and anyone standing in them, glint along the crests and reflect the people and things above them.";
+    case OPT_FOLIAGE: return "Tree tops sway in slow waves of wind with gusts, the grass flutters, and now and then a leaf drifts down from the trees. Only the picture moves: paths, walls and what you can walk under stay exactly where they are.";
     case OPT_HD2D: return "A diorama look in the style of modern HD-2D games: the top and bottom of the screen soften like a tilt-shift photo while Ali stays sharp, warm sunbeams drift across daylight scenes, colours get warm highlights and cool shadows with a soft vignette, and on Full, dust motes float in the light. The HUD stays crisp.";
     case OPT_DYNLIGHT: return "The spirits, their magic and, in caves and at night, torches and fires light up their surroundings in their own colours, and Ali, the people and creatures cast soft shadows away from them. Dark scenes dim a little so the lights stand out; daylight stays as it is.";
     case OPT_ITEMS: return "Dropped items float gently above the ground on a soft glow, with a glint now and then, so they are easy to spot. The game itself is unchanged.";

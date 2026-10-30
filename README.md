@@ -60,13 +60,14 @@ Other headless options:
 * `--input-check FILE`: rebind a few keys and buttons (including clashes), save them to FILE, load them back and print every binding
 * `--save-to N`, `--slot N`, `--states-base PREFIX`: save a slot at the end, pick the menu's slot,
   and keep test slots in `PREFIXstates/` instead of the real ones
-* `--hd-shot F.png SCALE`: save the last frame at internal resolution SCALE (2-4), with the time it took
+* `--hd-shot F.png SCALE`: save the last frame at internal resolution SCALE (2-4), with the time it took and the time of compositing alone
+* `--shot-time SECONDS`: the moment `--hd-shot` and `--filter-shot` draw animations at (swaying foliage, water)
 * `--sprite-check EVERY DIR SCALE`: every EVERY frames, compare the frame drawn layer by layer with the same frame drawn sprite by sprite (as smooth motion draws it); prints how many differ by more than 0.5% and saves the worst pair
 * `--smooth-check DIR SCALE`: smooth motion over the last 8 frames at 120 Hz; prints how far each picture is between ticks and how many sprites follow objects, and saves the pictures
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
-* `--lighting N` (0-2), `--elements 0|1`, `--items 0|1`, `--water 0|1`, `--dynlight 0|1`, `--hd2d N` (0-2), `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
+* `--lighting N` (0-2), `--elements 0|1`, `--items 0|1`, `--water 0|1`, `--dynlight 0|1`, `--hd2d N` (0-2), `--foliage 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
 * `--outfit a,b,...`, `--outfit-anims 0,1,...`: Ali's outfit colours and animations for this run (as `outfit_colors` and `outfit_anims` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
@@ -329,6 +330,20 @@ gentle gradients show no rings. A scene's mean brightness tells a cave or a nigh
 daylight. Dark scenes keep about 70% of their own light, eased over a second; in daylight the
 lights show only a little, and the shadows they cast darken the ground slightly
 (`runtime/src/lights.c`). `--test-light X,Y,R,G,B,RADIUS` places a light by hand.
+
+"Swaying foliage" (`foliage`): tree tops sway in slow waves of wind with gusts and the
+grass flutters, while the layers are put together. Plane A holds the trees and the grass;
+plane B is often just a flat fill under it. Tree canopies are plane A's high-priority
+pixels (characters walk under them) in a palette line that is mostly green. Grass is its
+low-priority green pixels: tufts and leaves on the ground. Shifting a flat green area
+changes nothing, so only they visibly move. Each such pixel is taken from a little to the
+side: canopies by up to a game pixel, grass by about half that and quicker. A pixel next to
+a swaying canopy takes the canopy's pixel as it sways over; where the canopy sways away,
+the ground beside it shows. The waves are fixed to the world through the camera, and
+`sin(a + b)` is split into a column part and a row part, so no sine is taken per pixel.
+Sprites, water and priorities are untouched, and so is the game. Now and then a leaf lets go
+of a tree top in the tree's own green and tumbles down (`fx.c`). It needs the layered
+drawing, as item animations and water do, and costs about 1.5 ms at 4x.
 
 "HD-2D look" (Off, Subtle, Full; `hd2d`) gives the diorama look of modern HD-2D games:
 * Depth of field like a tilt-shift photo. A soft copy of the picture (a quarter of the

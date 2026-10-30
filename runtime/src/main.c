@@ -143,6 +143,7 @@ static void apply_settings(void) {
     sound_quality = settings.audio;
     hd_scaler = settings.scaler;
     hd_items = settings.items;
+    hd_foliage = settings.foliage;
     hd_water = settings.water;
     /* Texture packs: load a pack when it changes (it can be many images), dump on request. */
     static char loaded_pack[64] = "";
@@ -160,6 +161,8 @@ static void apply_settings(void) {
 
 /* The finishing steps for this frame (hd_post), with the camera from the game's RAM: the
  * plane A layer struct at $FF1716 holds it (+00 x, +04 y) while a map layer is active. */
+static float shot_time = 1.0f;          /* --shot-time */
+
 static HdPost finishing(int scale, float t) {
     const uint8_t *layer = bus.ram + 0x1716;
     HdPost p = { settings.sharpen, settings.lighting, settings.elements, settings.footsteps, settings.items,
@@ -331,6 +334,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--footsteps") && i + 1 < argc) { settings.footsteps = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--items") && i + 1 < argc) { settings.items = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--water") && i + 1 < argc) { settings.water = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--foliage") && i + 1 < argc) { settings.foliage = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--shot-time") && i + 1 < argc) shot_time = (float)atof(argv[++i]);   /* seconds, for --filter-shot's animations */
         else if (!strcmp(argv[i], "--hd2d") && i + 1 < argc) { settings.hd2d = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--dynlight") && i + 1 < argc) { settings.dynlight = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--test-light") && i + 1 < argc) {
@@ -668,8 +673,9 @@ int main(int argc, char **argv) {
             uint32_t *pixels = malloc((size_t)filter_w * filter_h * 4);
             if (target && pixels) {
                 SDL_SetRenderTarget(sr, target);
-                bool hd = settings.internal_scale > 1 || settings.items || settings.water || hd_texpack;   /* as the window draws it */
-                hd_time = 1.0f;
+                bool hd = settings.internal_scale > 1 || settings.items || settings.water || settings.foliage || hd_texpack;   /* as the window draws it */
+                hd_time = shot_time;
+                { HdPost c = finishing(1, 0); hd_cam_x = c.cam_x; hd_cam_y = c.cam_y; hd_cam_world = c.world; }
                 if (hd && settings.items) hd_compose_sprites(settings.internal_scale);
                 else if (hd) hd_compose(settings.internal_scale);
                 int tw = hd ? hd_w : frame_width(), th = hd ? hd_h : vdp_screen_height();
@@ -743,9 +749,14 @@ int main(int argc, char **argv) {
             free(img);
         }
         if (hd_shot) {
+            { HdPost c = finishing(1, 0); hd_cam_x = c.cam_x; hd_cam_y = c.cam_y; hd_cam_world = c.world; }
+            hd_time = shot_time;
             Uint64 t0 = SDL_GetPerformanceCounter();
             hd_compose(settings.internal_scale);
             double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency();
+            Uint64 t1 = SDL_GetPerformanceCounter();
+            hd_compose(settings.internal_scale);   /* again, with the layers already scaled: compositing alone */
+            printf("compositing alone: %.2f ms\n", (double)(SDL_GetPerformanceCounter() - t1) * 1000 / SDL_GetPerformanceFrequency());
             printf("hd frame %dx%d in %.2f ms\n", hd_w, hd_h, ms);
             png_write(hd_shot, hd_px, hd_w, hd_h, hd_w);
         }
@@ -952,11 +963,12 @@ int main(int argc, char **argv) {
         SDL_RenderClear(ren);
         /* Shadows are drawn while the layers are put together, so they need this path too. */
         /* Item animations move sprites by themselves, so they need the per-sprite path. */
-        bool hd = (settings.internal_scale > 1 || settings.smooth_motion || settings.items || settings.water || hd_texpack) &&
+        bool hd = (settings.internal_scale > 1 || settings.smooth_motion || settings.items || settings.water || settings.foliage || hd_texpack) &&
                   hd_frame.h == vdp_screen_height();
         hd_time = (float)(SDL_GetPerformanceCounter() - start) / freq;
         if (hd) {
             hd_time = (float)(SDL_GetPerformanceCounter() - start) / freq;
+            { HdPost c = finishing(1, 0); hd_cam_x = c.cam_x; hd_cam_y = c.cam_y; hd_cam_world = c.world; }
             if (settings.smooth_motion) hd_compose_at(settings.internal_scale, frac);
             else if (settings.items) hd_compose_sprites(settings.internal_scale);   /* sprites drawn one by one: items float */
             else hd_compose(settings.internal_scale);

@@ -19,7 +19,7 @@
 #include "motion.h"
 #include "lights.h"
 
-enum { EMBER, DROP, WISP, LEAF, DUST, GRASS, RING, MOTE };
+enum { EMBER, DROP, WISP, LEAF, DUST, GRASS, RING, MOTE, FALLING_LEAF };
 
 typedef struct { float x, y, vx, vy; short life, age; uint8_t kind, r, g, b; } Particle;
 
@@ -55,6 +55,7 @@ static void spawn(int kind, float x, float y) {
     case LEAF:  p->vx = (frand() - .5f) * .6f; p->vy = .2f + frand() * .3f; p->life = (short)(70 + next() % 40); break;
     case DUST:  p->vx = (frand() - .5f) * .5f; p->vy = -.15f - frand() * .15f; p->life = (short)(22 + next() % 14); break;
     case GRASS: p->vx = (frand() - .5f) * .9f; p->vy = -.7f - frand() * .5f; p->life = (short)(16 + next() % 8); break;
+    case FALLING_LEAF: p->vx = (frand() - .5f) * .3f; p->vy = .25f + frand() * .2f; p->life = (short)(120 + next() % 80); break;
     case MOTE:  p->vx = (frand() - .5f) * .12f; p->vy = -.03f - frand() * .05f; p->life = (short)(240 + next() % 200); break;
     default:    p->vx = 0; p->vy = 0; p->life = 18; break;
     }
@@ -192,6 +193,7 @@ void fx_game_frame(HdFrame *f, bool world, float cam_x, float cam_y) {
         case GRASS: p->vy += .09f; break;
         case DUST:  p->vx *= .94f; p->vy *= .96f; break;
         case MOTE:  p->vx += sinf(p->age * .02f + i) * .004f; break;
+        case FALLING_LEAF: p->vx = sinf(p->age * .07f + i) * .7f; p->vy = .28f + .12f * cosf(p->age * .07f + i); break;
         default: break;
         }
         p->x += p->vx; p->y += p->vy;
@@ -199,6 +201,23 @@ void fx_game_frame(HdFrame *f, bool world, float cam_x, float cam_y) {
     }
     nparts = n;
     if (settings.footsteps && world) footsteps(f, cam_x, cam_y);
+    /* Swaying foliage: now and then a leaf lets go of a tree top (a high-priority green
+     * pixel of plane A) and drifts down. */
+    if (settings.foliage && world && next() % 9 == 0) {
+        for (int tries = 0; tries < 24; tries++) {
+            int x = (int)(next() % (unsigned)f->w), y = (int)(next() % (unsigned)f->h);
+            uint32_t a = f->a[y][x];
+            uint8_t lb = (uint8_t)(a >> 16);
+            if (!(lb & 0x40) || !(lb & 0x0F) || (lb & HD_WINDOW)) continue;
+            uint32_t c = vdp_color_rgb((uint16_t)a);
+            int r = (int)((c >> 16) & 255), g = (int)((c >> 8) & 255), b = (int)(c & 255);
+            if (g <= r || g < 90) continue;
+            spawn(FALLING_LEAF, x + cam_x, y + cam_y);
+            Particle *p = &parts[nparts - 1];
+            if (p->kind == FALLING_LEAF) { p->r = (uint8_t)r; p->g = (uint8_t)g; p->b = (uint8_t)b; }
+            break;
+        }
+    }
     /* HD-2D, full: dust motes drifting in the light, in daylight. */
     if (settings.hd2d >= 2 && world && lights_darkness() < .4f) {
         int motes = 0;
@@ -258,6 +277,8 @@ static void dot(uint32_t *px, int w, int h, float cx, float cy, float r, int cr,
         }
 }
 
+static float age_in(const Particle *q) { return q->age < 10 ? q->age / 10.f : 1; }
+
 static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
     float s = (float)p->scale;
     for (int i = 0; i < nparts; i++) {
@@ -271,6 +292,12 @@ static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
         case LEAF:  dot(px, w, h, x, y, s * 1.2f, 120, 220, 90, .85f * (life > .2f ? 1 : life * 5), false); break;
         case DUST:  dot(px, w, h, x, y, s * (2 + 4 * (1 - life)), q->r, q->g, q->b, .65f * life, false); break;
         case GRASS: dot(px, w, h, x, y, s * .9f, 90, 200, 70, .9f * life, false); break;
+        case FALLING_LEAF: {           /* the tree's own green, tumbling: wide then thin */
+            float fade = life < .2f ? life * 5 : age_in(q);
+            float flip = fabsf(sinf(q->age * .11f + i));
+            dot(px, w, h, x, y, s * (.5f + .7f * flip), q->r, q->g, q->b, .95f * fade, false);
+            break;
+        }
         case MOTE: {                    /* fades in and out, and twinkles */
             float age = 1 - life, in = age < .1f ? age * 10 : life < .15f ? life / .15f : 1;
             float tw = sinf(q->age * .07f + i * 1.7f);

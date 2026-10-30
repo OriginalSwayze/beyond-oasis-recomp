@@ -436,6 +436,94 @@ typedef struct {
 
 float hd_time;
 bool hd_items;
+bool hd_foliage;
+float hd_cam_x, hd_cam_y;
+bool hd_cam_world;
+
+/* ---- Foliage ------------------------------------------------------------------------- *
+ * Plane A holds the trees and the grass (plane B is often a flat fill under it). Tree
+ * canopies are its high-priority pixels (characters walk under them) in a palette line
+ * that is mostly green; grass is its low-priority green pixels: tufts and leaves on the
+ * ground (shifting a flat green area changes nothing, so only they visibly move). While
+ * the layers are put together, each such pixel is taken from a little to the side: a
+ * canopy by up to a game pixel in slow waves with gusts, grass by about half that,
+ * quicker. A pixel next to a moving canopy takes the canopy's pixel as it sways over, and
+ * where the canopy sways away the ground beside it shows. The waves are fixed to the world
+ * (the camera), sin(a + b) split into a column part and a row part so no sine is taken
+ * per pixel. Sprites, water and priorities are untouched. */
+enum { SWAY_CANOPY = 1, SWAY_GRASS = 2 };
+static uint8_t sway_class[64];          /* per colour index: SWAY_* it can be */
+static float *sway_s1, *sway_c1, *sway_s2, *sway_c2;
+static int sway_w, sway_scale;
+static float sway_gust;
+
+static void make_sway(int scale) {
+    bool line_green[4];
+    for (int l = 0; l < 4; l++) {
+        int n = 0;
+        for (int c = 1; c < 16; c++) {
+            uint16_t v = vdp.cram[l * 16 + c];
+            int r = (v >> 1) & 7, g = (v >> 5) & 7, b = (v >> 9) & 7;
+            n += g > r && g * 4 >= b * 3;
+        }
+        line_green[l] = n >= 5;
+    }
+    for (int i = 0; i < 64; i++) {
+        uint16_t v = vdp.cram[i];
+        int r = (v >> 1) & 7, g = (v >> 5) & 7, b = (v >> 9) & 7;
+        bool green = g > r && g * 4 >= b * 3, dark = r + g + b <= 5;
+        sway_class[i] = (uint8_t)((i & 15) ? (line_green[i >> 4] && (green || dark) ? SWAY_CANOPY : 0) | (green ? SWAY_GRASS : 0) : 0);
+    }
+    if (hd_w > sway_w || scale != sway_scale) {
+        free(sway_s1); free(sway_c1); free(sway_s2); free(sway_c2);
+        sway_s1 = malloc(sizeof(float) * (size_t)hd_w); sway_c1 = malloc(sizeof(float) * (size_t)hd_w);
+        sway_s2 = malloc(sizeof(float) * (size_t)hd_w); sway_c2 = malloc(sizeof(float) * (size_t)hd_w);
+        sway_w = hd_w; sway_scale = scale;
+    }
+    for (int x = 0; x < hd_w; x++) {
+        float wx = (x + .5f) / scale - hd_frame.extra + hd_cam_x;
+        sway_s1[x] = sinf(wx * .045f); sway_c1[x] = cosf(wx * .045f);
+        sway_s2[x] = sinf(wx * .13f); sway_c2[x] = cosf(wx * .13f);
+    }
+    sway_gust = .6f + .25f * sinf(hd_time * .37f) + .15f * sinf(hd_time * .91f + 1.7f);
+}
+
+static inline int sway_kind(uint32_t a) {
+    uint8_t lb = (uint8_t)(a >> 16);
+    if (!(lb & 0x0F) || (lb & HD_WINDOW)) return 0;
+    uint8_t c = sway_class[lb & 0x3F];
+    return lb & 0x40 ? c & SWAY_CANOPY : c & SWAY_GRASS;
+}
+
+/* One row of plane A swayed: dst[x] from row (already offset by dxa), window pixels from row0. */
+static void sway_row(uint32_t *dst, const uint32_t *row, const uint32_t *row0, int dxa, int y, int scale) {
+    float wy = (y + .5f) / scale + hd_cam_y;
+    float p1 = hd_time * 1.6f + wy * .03f, p2 = hd_time * 3.1f - wy * .09f;
+    float rs1 = sinf(p1), rc1 = cosf(p1), rs2 = sinf(p2), rc2 = cosf(p2);
+    float ka = scale * 1.1f * sway_gust, kg = scale * .55f * sway_gust;
+    for (int x = 0; x < hd_w; x++) {
+        int xa = x + dxa;
+        xa = xa < 0 ? 0 : xa >= hd_w ? hd_w - 1 : xa;
+        uint32_t a = row[xa];
+        if ((row0[x] >> 16) & HD_WINDOW) { dst[x] = row0[x]; continue; }
+        float w1 = sway_s1[x] * rc1 + sway_c1[x] * rs1, w2 = sway_s2[x] * rc2 + sway_c2[x] * rs2;
+        int oc = (int)lrintf(ka * (.75f * w1 + .25f * w2)), og = (int)lrintf(kg * (.4f * w1 + .6f * w2));
+        int kind = sway_kind(a);
+        if (oc) {
+            int xs = xa + oc;
+            xs = xs < 0 ? 0 : xs >= hd_w ? hd_w - 1 : xs;
+            uint32_t s = row[xs];
+            if (sway_kind(s) == SWAY_CANOPY || kind == SWAY_CANOPY) { dst[x] = s; continue; }
+        }
+        if (og && kind == SWAY_GRASS) {
+            int xs = xa + og;
+            xs = xs < 0 ? 0 : xs >= hd_w ? hd_w - 1 : xs;
+            uint32_t s = row[xs];
+            if (sway_kind(s) == SWAY_GRASS || !((s >> 16) & 0x40)) { dst[x] = s; continue; }
+        }
+        dst[x] = a;
+    }
+}
 
 /* ---- Water ----------------------------------------------------------------------------- *
  * Water is found by colour at the game's resolution: the plane pixel on top is clearly
@@ -614,8 +702,17 @@ static inline uint32_t compose_tex(uint32_t a, uint32_t b, uint32_t s, uint32_t 
     return t >= 0xFF000000u ? t & 0xFFFFFF : vdp_compose(a, b, s, backdrop, sh);
 }
 
+/* A row for the swayed plane A, one per thread, kept between pictures. */
+static uint32_t *sway_scratch(void) {
+    static _Thread_local uint32_t *row;
+    static _Thread_local int cap;
+    if (cap < hd_w) { free(row); row = malloc(sizeof(uint32_t) * (size_t)hd_w); cap = row ? hd_w : 0; }
+    return row;
+}
+
 static int compose_band(void *arg) {
     const ComposeJob *j = arg;
+    uint32_t *swayed = NULL;
     int scale = j->scale;
     const uint32_t *sprites = j->sprites;
     const int *ox_a = j->ox_a, *oy_a = j->oy_a, *ox_b = j->ox_b, *oy_b = j->oy_b;
@@ -635,7 +732,19 @@ static int compose_band(void *arg) {
         const uint32_t *ra0 = scaled[0] + (size_t)y * hd_w;
         bool tex = hd_texpack && tex_cap;
         const uint32_t *tsrow = tex ? (sprites == sprite_layer ? sprite_tex_layer : tex_layer[2]) + (size_t)y * hd_w : NULL;
-        if (!ox_a) {
+        if (hd_foliage && hd_cam_world && !tex && (swayed || (swayed = sway_scratch()))) {
+            int ya = ox_a ? y + oy_a[line] : y, yb = ox_a ? y + oy_b[line] : y;
+            ya = ya < 0 ? 0 : ya >= hd_h ? hd_h - 1 : ya;
+            yb = yb < 0 ? 0 : yb >= hd_h ? hd_h - 1 : yb;
+            int dxa = ox_a ? ox_a[line] : 0, dxb = ox_b ? ox_b[line] : 0;
+            sway_row(swayed, scaled[0] + (size_t)ya * hd_w, ra0, dxa, y, scale);
+            const uint32_t *rb = scaled[1] + (size_t)yb * hd_w;
+            for (int x = 0; x < hd_w; x++) {
+                int xb = x + dxb;
+                xb = xb < 0 ? 0 : xb >= hd_w ? hd_w - 1 : xb;
+                out[x] = vdp_compose(swayed[x], rb[xb], rs[x], backdrop, sh);
+            }
+        } else if (!ox_a) {
             const uint32_t *rb = scaled[1] + (size_t)y * hd_w;
             if (tex) {
                 const uint32_t *ta = tex_layer[0] + (size_t)y * hd_w, *tb = tex_layer[1] + (size_t)y * hd_w;
@@ -696,6 +805,7 @@ static void compose_part(void *ctx, int y0, int y1) {
 static void compose_rows(int scale, const uint32_t *sprites, const int *ox_a, const int *oy_a,
                          const int *ox_b, const int *oy_b) {
     if (hd_water) make_water(scale, sprites);
+    if (hd_foliage && hd_cam_world) make_sway(scale);
     ComposeJob cj = { scale, 0, 0, sprites, ox_a, oy_a, ox_b, oy_b };
     run_bands(compose_part, &cj, hd_h);
 }

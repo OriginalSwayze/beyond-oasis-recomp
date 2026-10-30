@@ -85,6 +85,11 @@ extern float hd_time;                   /* seconds, for animations drawn with th
 extern bool hd_water;
 /* Dropped items float: their sprites are drawn a little higher, bobbing (fx.c finds them). */
 extern bool hd_items;
+/* Trees and grass sway in the wind (while compositing), in waves fixed to the world: the
+ * game's camera (hd_cam_*, game pixels) places them; hd_cam_world says it is valid. */
+extern bool hd_foliage;
+extern float hd_cam_x, hd_cam_y;
+extern bool hd_cam_world;
 
 /* The finishing steps on the picture before it goes to the GPU (hd_post): dynamic lights,
  * glow, particles, sharpening. */
