@@ -220,6 +220,8 @@ int main(int argc, char **argv) {
     bool test_overrides = false;        /* settings overridden on the command line: don't save them */
     const char *hd_shot = NULL;
     const char *smooth_dir = NULL;      /* --smooth-check DIR SCALE */
+    const char *sprite_dir = NULL;      /* --sprite-check EVERY DIR SCALE */
+    int sprite_every = 0;
     const char *filter_shot = NULL;     /* --filter-shot F.png W H MODE */
     int filter_w = 1920, filter_h = 1080, filter_mode = 0;
     for (int i = 1; i < argc; i++) {
@@ -265,6 +267,15 @@ int main(int argc, char **argv) {
             filter_w = atoi(argv[++i]);
             filter_h = atoi(argv[++i]);
             filter_mode = atoi(argv[++i]);
+        }
+        else if (!strcmp(argv[i], "--sprite-check") && i + 3 < argc) {
+            /* --sprite-check EVERY DIR SCALE: every EVERY frames, compare the frame drawn layer by
+             * layer with the same frame drawn sprite by sprite (as smooth motion does). They
+             * must match except at overlapping sprite edges; the worst frame is saved to DIR. */
+            sprite_every = atoi(argv[++i]);
+            sprite_dir = argv[++i];
+            settings.internal_scale = atoi(argv[++i]);
+            settings.smooth_motion = true;
         }
         else if (!strcmp(argv[i], "--smooth-check") && i + 2 < argc) {
             /* --smooth-check DIR SCALE: smooth motion over the last 8 frames at 120 Hz: prints
@@ -370,6 +381,31 @@ int main(int argc, char **argv) {
             cheats_frame();
             machine_run_frame(framebuffer, FB_W);
             if (vdp_opts.hd_capture) hd_frame_done();
+            if (sprite_every > 0 && f >= 300 && f % sprite_every == 0) {
+                static uint32_t *layers, *worst_a, *worst_b;
+                static int worst = -1, worst_frame, checked, over;
+                hd_compose(settings.internal_scale);
+                size_t n = (size_t)hd_w * hd_h;
+                layers = realloc(layers, n * 4);
+                memcpy(layers, hd_px, n * 4);
+                hd_compose_sprites(settings.internal_scale);
+                int diff = 0;
+                for (size_t k = 0; k < n; k++) diff += layers[k] != hd_px[k];
+                checked++;
+                if (diff > (int)(n / 200)) over++;      /* more than 0.5% of the picture */
+                if (diff > worst) {
+                    worst = diff; worst_frame = f;
+                    worst_a = realloc(worst_a, n * 4); worst_b = realloc(worst_b, n * 4);
+                    memcpy(worst_a, layers, n * 4); memcpy(worst_b, hd_px, n * 4);
+                }
+                if (f + sprite_every >= headless_frames) {
+                    char p[1200];
+                    printf("sprite check: %d frames, %d differ by more than 0.5%%; worst frame %d: %.2f%% of pixels\n",
+                           checked, over, worst_frame, 100.0 * worst / n);
+                    snprintf(p, sizeof p, "%s/layers.png", sprite_dir); png_write(p, worst_a, hd_w, hd_h, hd_w);
+                    snprintf(p, sizeof p, "%s/sprites.png", sprite_dir); png_write(p, worst_b, hd_w, hd_h, hd_w);
+                }
+            }
             if (smooth_dir && f >= headless_frames - 8) {
                 for (int k = 0; k < 2; k++) {
                     char p[1200];

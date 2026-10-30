@@ -22,7 +22,7 @@ enum { HD_LINE_DISPLAY = 1, HD_LINE_SH = 2, HD_LINE_COLUMN_VSCROLL = 4 };
  * ones hidden behind earlier sprites. */
 typedef struct {
     bool drawn;
-    int  rank;                          /* order in the sprite list walk: lower is in front */
+    int  rank;                          /* position in the sprite list walk: lower is in front */
     int  x, y, w, h;                    /* screen position (x from the left of the 320 area) and size */
     uint16_t attr;
     uint32_t px[32 * 32];               /* layer pixels, w x h, row pitch 32; 0 = transparent */
@@ -43,7 +43,7 @@ typedef struct {
     int16_t  hscroll[2][HD_MAX_H];      /* plane A / B horizontal scroll per line */
     int16_t  vscroll[2][HD_MAX_H];
     HdSprite sprites[80];
-    int      sprite_count;              /* sprites walked (rank counter) */
+    int      sprite_count;              /* sprites drawn this frame */
     bool     sprite_mask;               /* a masking sprite (x = 0) was used: draw sprites as captured */
 } HdFrame;
 
@@ -61,6 +61,9 @@ extern int hd_w, hd_h;
 void  hd_frame_done(void);
 void  hd_compose_at(int scale, float frac);
 float hd_motion_t(float frac);
+/* The newest frame drawn sprite by sprite, as smooth motion draws it, with nothing moving
+ * (for checking it against hd_compose()). */
+void  hd_compose_sprites(int scale);
 extern double hd_ms[4];                 /* last hd_compose_at: ms scaling layers, scaling sprites, sprite layer, compositing */
 extern int hd_split;                    /* last in-between picture: largest movement difference of touching sprites */
 

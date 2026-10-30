@@ -335,6 +335,11 @@ static void scale_sprites(int scale) {
     sprites_scale = scale;
 }
 
+static int group_root(int *group, int v) {
+    while (group[v] != v) v = group[v] = group[group[v]];
+    return v;
+}
+
 /* Sprites at their positions for moment t, back to front so earlier sprites win. */
 static void draw_sprite_layer(int scale, float t) {
     memset(sprite_layer, 0, (size_t)hd_w * hd_h * 4);
@@ -346,37 +351,33 @@ static void draw_sprite_layer(int scale, float t) {
         order[b] = v;
     }
     /* How far each sprite moved since the previous update. A character is several
-     * sprites; when its animation changes, some pieces get new tiles and cannot be
-     * paired. Those take the movement of the nearest paired piece, so the character
-     * glides as one instead of coming apart for a frame. */
-    static int mx[80], my[80];
-    static bool moved_known[80];
-    for (int i = 0; i < 80; i++) {
-        moved_known[i] = match[i] >= 0;
-        if (moved_known[i]) {
-            mx[i] = hd_frame.sprites[i].x - before.spr[match[i]].x;
-            my[i] = hd_frame.sprites[i].y - before.spr[match[i]].y;
-        }
-    }
-    /* A character's pieces touch and sit next to each other in the sprite list, so an
-     * unpaired piece first looks for a touching paired piece close in the list, then for
-     * the nearest paired piece. */
-    for (int i = 0; i < 80; i++) {
-        const HdSprite *c = &hd_frame.sprites[i];
-        if (!c->drawn || moved_known[i]) continue;
-        int best = -1, best_score = 1 << 30;
+     * sprites that touch, sit next to each other in the sprite list and share a palette
+     * and priority (which keeps the HUD apart from a character passing behind it). Each
+     * such group moves as one: by the most common movement among its pieces that could
+     * be paired with the previous update, or not at all if none could (when the whole
+     * animation frame changed). So a character never comes apart between frames. */
+    static int mx[80], my[80], group[80];
+    for (int i = 0; i < 80; i++) group[i] = i;
+    for (int i = 0; i < 80; i++)
         for (int k = 0; k < 80; k++) {
-            if (!moved_known[k]) continue;
-            const HdSprite *o = &hd_frame.sprites[k];
-            int dx = (o->x + o->w / 2) - (c->x + c->w / 2), dy = (o->y + o->h / 2) - (c->y + c->h / 2);
-            int d2 = dx * dx + dy * dy;
-            if (d2 > 40 * 40) continue;
-            bool touch = o->x <= c->x + c->w && c->x <= o->x + o->w && o->y <= c->y + c->h && c->y <= o->y + o->h;
-            int score = touch ? abs(o->rank - c->rank) : 1000 + d2;
-            if (score < best_score) { best_score = score; best = k; }
+            const HdSprite *p = &hd_frame.sprites[i], *q = &hd_frame.sprites[k];
+            if (!p->drawn || !q->drawn || q->rank != p->rank + 1 || (p->attr & 0xE000) != (q->attr & 0xE000)) continue;
+            bool touch = p->x <= q->x + q->w && q->x <= p->x + p->w && p->y <= q->y + q->h && q->y <= p->y + p->h;
+            if (touch) group[group_root(group, i)] = group_root(group, k);
         }
-        mx[i] = best >= 0 ? mx[best] : 0;
-        my[i] = best >= 0 ? my[best] : 0;
+    for (int g = 0; g < 80; g++) {
+        if (group_root(group, g) != g) continue;
+        int best_x = 0, best_y = 0, best_votes = 0;
+        for (int i = 0; i < 80; i++) {
+            if (match[i] < 0 || group_root(group, i) != g) continue;
+            int dx = hd_frame.sprites[i].x - before.spr[match[i]].x, dy = hd_frame.sprites[i].y - before.spr[match[i]].y;
+            int votes = 0;
+            for (int k = 0; k < 80; k++)
+                if (match[k] >= 0 && group_root(group, k) == g && hd_frame.sprites[k].x - before.spr[match[k]].x == dx &&
+                    hd_frame.sprites[k].y - before.spr[match[k]].y == dy) votes++;
+            if (votes > best_votes) { best_votes = votes; best_x = dx; best_y = dy; }
+        }
+        for (int i = 0; i < 80; i++) if (group_root(group, i) == g) { mx[i] = best_x; my[i] = best_y; }
     }
     /* For checks: the largest difference in movement between touching pieces next to each
      * other in the sprite list (one character); above 0 it would come apart in between. */
@@ -464,4 +465,10 @@ void hd_compose_at(int scale, float frac) {
      * between whole-layer and per-sprite drawing would flicker where sprites overlap. */
     if (!have_before || before.w != hd_frame.w || before.h != hd_frame.h) { hd_compose(scale); return; }
     compose_between(scale, hd_motion_t(frac));
+}
+
+void hd_compose_sprites(int scale) {
+    scale = clamp_scale(scale);
+    if (!ensure(scale)) return;
+    compose_between(scale, 1);
 }

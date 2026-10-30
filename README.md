@@ -58,6 +58,7 @@ Other headless options:
 * `--save-to N`, `--slot N`, `--states-base PREFIX`: save a slot at the end, pick the menu's slot,
   and keep test slots in `PREFIXstates/` instead of the real ones
 * `--hd-shot F.png SCALE`: save the last frame at internal resolution SCALE (2-4), with the time it took
+* `--sprite-check EVERY DIR SCALE`: every EVERY frames, compare the frame drawn layer by layer with the same frame drawn sprite by sprite (as smooth motion draws it); prints how many differ by more than 0.5% and saves the worst pair
 * `--smooth-check DIR SCALE`: smooth motion over the last 8 frames at 120 Hz; prints how far each picture is between motion updates and the largest movement difference between touching, neighbouring sprites, and saves the pictures
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--filter-shot F.png W H MODE`: draw the last frame at W x H with filter MODE on the GPU (hidden window) and save it
@@ -141,11 +142,15 @@ glides from one motion update to the next instead of jumping:
   shifted back by `(1 - t)` of their scroll change, and every sprite paired with the
   same sprite at the previous update (same tiles, size, attributes, near) is placed
   between its two positions. The window, the HUD and anything that did not move stay put.
-* A character is several sprites. When its animation frame changes, the pieces with new
-  tiles cannot be paired; they move with a touching paired piece next to them in the
-  sprite list (or the nearest one), so the character glides as one instead of coming
-  apart for a frame. Every picture is drawn this way, also when nothing moves, so
+* A character is several sprites that touch, sit next to each other in the sprite list
+  and share a palette and priority (so the HUD stays apart from a character behind it).
+  Each such group moves as one, by the most common movement of its pieces that could be
+  paired, or not at all when its whole animation frame changed. A character never comes
+  apart between frames. Every picture is drawn this way, also when nothing moves, so
   overlapping sprites never switch between two ways of drawing.
+* Sprites are stacked front to back by their position in the sprite list, exactly as
+  the hardware does (`--sprite-check` compares this per-sprite drawing with the layer
+  drawing; they match to within 0.07% of pixels, at overlapping edges).
 * The main loop runs at the display's refresh with vsync: every refresh runs a game frame
   if one is due (60 a second on any display) and draws the moment it is now. So 30 Hz
   steps become 60 Hz motion on a 60 Hz display and 144 Hz motion on a 144 Hz one.

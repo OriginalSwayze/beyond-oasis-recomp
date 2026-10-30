@@ -299,7 +299,10 @@ static void draw_sprites(uint8_t *out, int w, int extra, int line) {
                 cap = &hd_frame.sprites[link_now];
                 if (!cap->drawn) {
                     cap->drawn = true;
-                    cap->rank = hd_frame.sprite_count++;
+                    /* Front-to-back order is the position in the sprite list walk (the
+                     * same on every line), not the line where the sprite first shows. */
+                    cap->rank = n;
+                    hd_frame.sprite_count++;
                     cap->x = x; cap->y = y; cap->w = hcells * 8; cap->h = vcells * 8; cap->attr = attr;
                     memset(cap->px, 0, sizeof cap->px);
                 }
