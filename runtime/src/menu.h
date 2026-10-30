@@ -24,5 +24,10 @@ void menu_close(void);
 bool menu_is_open(void);
 MenuAction menu_event(const SDL_Event *e);
 void menu_render(double time_s);        /* into ui_px (ui_w x ui_h) */
+/* Called for the menu's sounds: 0 move, 1 confirm or change, 2 back, 3 error. */
+extern void (*menu_sound)(int kind);
+/* Opens tab `tab` (0 game, 1 display, 2 effects, 3 more) with row `row` selected (-1: the
+ * tab bar); for screenshots in tests. */
+void menu_select(int tab, int row);
 
 #endif

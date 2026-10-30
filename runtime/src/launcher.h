@@ -2,6 +2,8 @@
 #ifndef LAUNCHER_H
 #define LAUNCHER_H
 
+#include <stdbool.h>
+
 /* Shows the launcher window; saves settings to ini_path. Returns 1 to play, 0 to quit. */
 int launcher_run(const char *ini_path);
 /* Renders one launcher frame, `width` pixels wide, with tab `tab` (0-3) open at time
@@ -11,5 +13,8 @@ int launcher_screenshot(const char *png, int width, int tab, float t);
  * and song changes (for checking it headless). */
 int launcher_music_check(int seconds);
 int launcher_ost_check(int seconds);   /* every song's level per second */
+/* Renders the game's four menu sounds (cursor, confirm, cancel, error) to a file for the
+ * pause menu; the machine needs a reset afterwards. */
+bool launcher_make_menu_sounds(const char *path);
 
 #endif

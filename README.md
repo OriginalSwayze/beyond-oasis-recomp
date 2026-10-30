@@ -70,6 +70,8 @@ Other headless options:
 * `--outfit a,b,c,d`: Ali's outfit colours for this run (as `outfit_colors` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
+* `--menu-tab TAB ROW`: with `--menu-shot`, open tab TAB (0 game, 1 display, 2 effects, 3 more) with row ROW selected (shows its preview card)
+* `--save-preview`: at the end, save the frame for the launcher's previews (`preview_frame.cache`)
 * `--filter-shot F.png W H MODE`: draw the last frame at W x H with filter MODE on the GPU (hidden window) and save it
 * `--volume N`: volume 0-100 for this run
 * `--overclock PERCENT`: run the 68000 at this speed (also below 100, to simulate a heavy scene); headless runs print the spare time, game ticks and late ticks
@@ -133,10 +135,28 @@ click on the track sets it there (in steps of 5%).
 
 ## In-game menu
 
-Esc pauses the game over a blurred copy of the last frame. The menu saves and loads
-the nine slots (each with a thumbnail and the time it was saved), changes the display
-options and rewind on the spot, opens the Controls and Ali's outfit pages, and resets or
-quits (both ask for a second press).
+Esc pauses the game over a blurred, warmed copy of the last frame with embers drifting
+over it. The menu sits on the launcher's stone tablet, with one tab per spirit: GAME
+(resume, save and load the nine slots, cheats, rewind, reset, quit), DISPLAY, EFFECTS and
+MORE (volume, audio, Controls, Ali's outfit). Q / E, Page Up / Down or LB / RB switch tabs;
+the rows slide in, the highlight glides, and a changed value pulses.
+
+The card on the right follows the selected row: the save slot's thumbnail and when it was
+saved; for a picture option, a live before/after on the paused frame (`runtime/src/preview.c`):
+the renderer keeps every frame's layers, so the frame is drawn again without the option and
+with it (its value, or a typical one when it is off), joined by a dividing line that sweeps
+slowly across. Detail options (internal resolution, scaler, sharpening) show 1:1 pixels
+around the middle; scene-wide ones (lighting, ambience) show the whole frame. Every other
+row explains what it changes. The launcher shows the same previews over its scene, on the
+frame the game saved last (`preview_frame.cache`, written when the menu opens and on quit).
+
+Every choice makes the game's own menu sound (cursor, confirm, cancel, error). The game
+cannot be asked to play them while it is paused without changing it, so they are rendered
+once from the ROM, the way the launcher's player does (`menu_sounds.cache`, about half a
+second on the first start), and played straight into the audio queue.
+
+All the enhancements are off by default, so the game looks and sounds as it did on the
+console until you turn something on.
 
 ## Internal resolution
 
@@ -269,7 +289,7 @@ display filters still apply on top. None of them change the game.
 
 ## Audio
 
-"Audio" (Original, Clean, Rich; `audio` in `settings.ini`, Clean by default) changes only
+"Audio" (Original, Clean, Rich; `audio` in `settings.ini`, Original by default) changes only
 the sound that comes out (`runtime/src/sound.cpp`), never the machine's state, so save
 states and replays are the same in every mode:
 

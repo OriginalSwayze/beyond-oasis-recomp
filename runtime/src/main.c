@@ -13,6 +13,7 @@
 #include "input.h"
 #include "controls.h"
 #include "outfit.h"
+#include "preview.h"
 #include "menu.h"
 #include "savestate.h"
 #include "ui.h"
@@ -133,7 +134,7 @@ static void apply_settings(void) {
     vdp_opts.extra_width = settings_extra_width();
     widescreen_patches(vdp_opts.extra_width);
     vdp_opts.no_sprite_limit = settings.no_sprite_limit;
-    vdp_opts.hd_capture = settings.internal_scale > 1 || settings.smooth_motion;
+    vdp_opts.hd_capture = true;         /* the layers are also what the menu's previews draw from */
     machine_opts.overclock = settings.overclock;
     outfit_apply();
     sound_quality = settings.audio;
@@ -149,6 +150,51 @@ static HdPost finishing(int scale, float t) {
     p.cam_x = (float)(int16_t)(layer[0] << 8 | layer[1]);
     p.cam_y = (float)(int16_t)(layer[4] << 8 | layer[5]);
     return p;
+}
+
+/* ---- The pause menu's sounds -------------------------------------------------------- *
+ * The game's own menu sounds, rendered once from the ROM (launcher.c) into
+ * menu_sounds.cache: the pause menu cannot call the sound driver while the game is paused
+ * without changing the game. Played straight into the audio queue, which is empty while
+ * the game is paused. */
+static int16_t *menu_pcm[4];
+static int menu_pcm_frames[4];
+static SDL_AudioDeviceID menu_audio;
+
+static void load_menu_sounds(void) {
+    char path[1100];
+    path_in_base(path, sizeof path, "menu_sounds.cache");
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        if (!launcher_make_menu_sounds(path)) return;
+        f = fopen(path, "rb");
+        if (!f) return;
+    }
+    for (int k = 0; k < 4; k++) {
+        int n = 0;
+        if (fread(&n, 4, 1, f) != 1 || n <= 0 || n > 48000) break;
+        menu_pcm[k] = malloc((size_t)n * 4);
+        if (!menu_pcm[k] || fread(menu_pcm[k], 4, (size_t)n, f) != (size_t)n) { free(menu_pcm[k]); menu_pcm[k] = NULL; break; }
+        menu_pcm_frames[k] = n;
+    }
+    fclose(f);
+}
+
+static void play_menu_sound(int kind) {
+    if (!menu_audio || kind < 0 || kind > 3 || !menu_pcm[kind]) return;
+    int n = menu_pcm_frames[kind], out_n = (int)((int64_t)n * sound_out_rate / 48000);
+    int16_t *buf = malloc((size_t)out_n * 4);
+    if (!buf) return;
+    int v = settings.volume * 256 / 100;
+    for (int i = 0; i < out_n; i++) {           /* to the device's rate, and the volume */
+        int j = (int)((int64_t)i * 48000 / sound_out_rate);
+        if (j >= n) j = n - 1;
+        buf[i * 2] = (int16_t)(menu_pcm[kind][j * 2] * v / 256);
+        buf[i * 2 + 1] = (int16_t)(menu_pcm[kind][j * 2 + 1] * v / 256);
+    }
+    SDL_ClearQueuedAudio(menu_audio);
+    SDL_QueueAudio(menu_audio, buf, (Uint32)out_n * 4);
+    free(buf);
 }
 
 /* Largest rectangle with the game's display aspect that fits the window. */
@@ -205,6 +251,8 @@ int main(int argc, char **argv) {
     const char *menu_shot = NULL;
     int menu_w = 1920, menu_h = 1080;
     bool controls_shot = false, outfit_page_shot = false;
+    int menu_tab = -1, menu_row = 0;    /* --menu-tab TAB ROW, with --menu-shot */
+    bool save_preview = false;          /* --save-preview: keep the last frame for the launcher's previews */
     int save_to = 0;
     int load_from = 0;
     bool rom_from_args = false;         /* a ROM path was given on the command line */
@@ -330,6 +378,8 @@ int main(int argc, char **argv) {
         }
         else if (!strcmp(argv[i], "--controls-shot")) controls_shot = true;   /* with --menu-shot: the Controls page */
         else if (!strcmp(argv[i], "--outfit-shot")) outfit_page_shot = true;  /* with --menu-shot: the outfit page */
+        else if (!strcmp(argv[i], "--save-preview")) save_preview = true;
+        else if (!strcmp(argv[i], "--menu-tab") && i + 2 < argc) { menu_tab = atoi(argv[++i]); menu_row = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--input-check") && i + 1 < argc) {
             /* --input-check FILE: rebind a few keys and buttons, save to FILE, load it back,
              * and print the bindings (never touches settings.ini). */
@@ -386,6 +436,7 @@ int main(int argc, char **argv) {
     }
     /* Headless runs start from blank save RAM, so scripted routes play the same whatever
      * the player has saved (and they never write it back, see below). */
+    if (!headless_frames) load_menu_sounds();   /* before the reset: it runs the ROM to the title */
     if (headless_frames) memset(bus.sram, 0xFF, SRAM_SIZE);
     else load_sram();
     apply_settings();
@@ -604,6 +655,11 @@ int main(int argc, char **argv) {
             printf("hd frame %dx%d in %.2f ms\n", hd_w, hd_h, ms);
             png_write(hd_shot, hd_px, hd_w, hd_h, hd_w);
         }
+        if (save_preview) {
+            HdPost here = finishing(1, 0);
+            preview_set_world(here.world, here.cam_x, here.cam_y);
+            preview_save(base_dir);
+        }
         if (save_to && !savestate_save(save_to, framebuffer, frame_width(), vdp_screen_height(), FB_W))
             fprintf(stderr, "could not save slot %d\n", save_to);
         if (menu_shot) {
@@ -611,6 +667,11 @@ int main(int argc, char **argv) {
             menu_open(framebuffer, frame_width(), vdp_screen_height(), FB_W, r.x, r.y, r.w, r.h, menu_w, menu_h, 1);
             if (controls_shot) controls_open();
             if (outfit_page_shot) outfit_open();
+            if (menu_tab >= 0) {
+                HdPost here = finishing(1, 0);
+                preview_set_world(here.world, here.cam_x, here.cam_y);
+                menu_select(menu_tab, menu_row);
+            }
             menu_render(1.0);
             png_write(menu_shot, ui_px, ui_w, ui_h, ui_w);
         }
@@ -643,6 +704,8 @@ int main(int argc, char **argv) {
     SDL_AudioSpec want = { .freq = 48000, .format = AUDIO_S16SYS, .channels = 2, .samples = 1024 }, have;
     SDL_AudioDeviceID audio = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (audio) { sound_out_rate = have.freq; SDL_PauseAudioDevice(audio, 0); }
+    menu_audio = audio;
+    menu_sound = play_menu_sound;
 
     /* Short messages (save, load, slot) show in the window title for two seconds. */
     char message[128] = "";
@@ -689,6 +752,9 @@ int main(int argc, char **argv) {
                 SDL_GetWindowSize(win, &win_w, &win_h);
                 SDL_Rect r = display_rect(ww, wh);
                 outfit_preview_save(base_dir);  /* Ali as the launcher's outfit page will show him */
+                HdPost here = finishing(1, 0);
+                preview_set_world(here.world, here.cam_x, here.cam_y);
+                preview_save(base_dir);         /* the frame the launcher's previews will show */
                 menu_open(framebuffer, frame_width(), vdp_screen_height(), FB_W, r.x, r.y, r.w, r.h, ww, wh,
                           win_w ? (float)ww / win_w : 1);
             }
@@ -833,6 +899,11 @@ int main(int argc, char **argv) {
     save_coverage();
     save_sram();
     outfit_preview_save(base_dir);
+    if (!menu_is_open()) {
+        HdPost here = finishing(1, 0);
+        preview_set_world(here.world, here.cam_x, here.cam_y);
+    }
+    preview_save(base_dir);
     if (!test_overrides) settings_save(ini);
     SDL_Quit();
     return 0;

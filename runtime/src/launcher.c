@@ -17,6 +17,7 @@
 #include "png.h"
 #include "controls.h"
 #include "outfit.h"
+#include "preview.h"
 #include <SDL.h>
 #include <math.h>
 #include <stdio.h>
@@ -472,6 +473,51 @@ int launcher_music_check(int seconds) {
     return ok ? 0 : 1;
 }
 
+/* Renders the four menu sounds the launcher uses into `path` for the pause menu, which
+ * cannot call the driver while the game is paused: 48 kHz 16-bit stereo, each sound's
+ * frame count first. Runs the ROM to the title like the player (about half a second). */
+bool launcher_make_menu_sounds(const char *path) {
+    if (!rom_ok && !(settings.rom_path[0] && !bus_load_rom(settings.rom_path))) return false;
+    rom_ok = true;
+    int rate = sound_out_rate, quality = sound_quality;
+    sound_out_rate = 48000;
+    sound_quality = 0;
+    bool ok = music_to_title();
+    FILE *f = ok ? fopen(path, "wb") : NULL;
+    if (f) {
+        ost_start();
+        static const uint16_t sfx[4] = { SFX_CURSOR, SFX_CONFIRM, SFX_CANCEL, SFX_ERROR };
+        static int16_t pcm[48000 * 2];
+        for (int k = 0; k < 4; k++) {
+            ost_command(OST_STOP);
+            for (int i = 0; i < 20; i++) { ost_frame(); machine_run_frame(NULL, 320); }
+            ost_command(sfx[k]);
+            int n = 0;
+            for (int i = 0; i < 36; i++) {      /* 0.6 s */
+                ost_frame();
+                machine_run_frame(NULL, 320);
+                if (n + sound_out_count <= 48000) { memcpy(pcm + n * 2, sound_out, (size_t)sound_out_count * 4); n += sound_out_count; }
+            }
+            /* Without the DC offset, faded out over the last 20 ms. */
+            double dc[2] = { 0, 0 };
+            for (int i = 0; i < n; i++) { dc[0] += pcm[i * 2]; dc[1] += pcm[i * 2 + 1]; }
+            for (int i = 0; i < n; i++)
+                for (int c = 0; c < 2; c++) {
+                    double v = pcm[i * 2 + c] - dc[c] / n;
+                    if (i > n - 960) v *= (n - i) / 960.0;
+                    pcm[i * 2 + c] = (int16_t)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
+                }
+            fwrite(&n, 4, 1, f);
+            fwrite(pcm, 4, (size_t)n, f);
+        }
+        ost_end();
+        fclose(f);
+    }
+    sound_out_rate = rate;
+    sound_quality = quality;
+    return f != NULL;
+}
+
 /* Plays every song for up to `seconds` and prints its level per second (in tenths of the
  * loudest second), to tell songs from jingles and empty entries. */
 int launcher_ost_check(int seconds) {
@@ -588,6 +634,7 @@ static struct {
     int tab_from;
     float hl_y, hl_x;                   /* the highlight, gliding to the selected item */
     float changed_t0;                   /* when a value last changed (it pulses) */
+    float selected_t0;                  /* when the selection last moved (the preview fades in) */
     int changed_item;
     float flash;                        /* the spirits' flare on a choice, fading */
     float t;
@@ -621,6 +668,7 @@ static int hit_test(float mx, float my) {
 static void select_item(int item) {
     if (item == ui.selected) return;
     ui.selected = item;
+    ui.selected_t0 = ui.t;
     music_sfx(SFX_CURSOR);
 }
 
@@ -639,6 +687,7 @@ static void open_tab(int tab) {
     ui.tab_from = ui.tab;
     ui.tab = tab;
     ui.tab_t0 = ui.t;
+    ui.selected_t0 = ui.t;
     if (ui.selected >= 0 && ui.selected < 100 && ui.selected >= tab_count[tab]) ui.selected = tab_count[tab] - 1;
     ui.flash = 1;
     music_sfx(SFX_CURSOR);
@@ -836,6 +885,19 @@ static void draw_ui(float t) {
     const char *keys = "\xE2\x86\x91\xE2\x86\x93 select    \xE2\x86\x90\xE2\x86\x92 change    Q E  tabs    [ ]  track    M  music    Esc  quit";
     ui_draw_text(keys, "Segoe UI", 12, 400, 1, PANEL_X, TABLET_Y + TABLET_H - 44, rgb_hex(0x7C7262), rgb_hex(0x7C7262), 1);
 
+    /* A picture option: its before/after on the last frame the game saved, over the scene. */
+    if (on_row && tab_rows[ui.tab][ui.selected].kind == ROW_OPTION && preview_supported(tab_rows[ui.tab][ui.selected].id) &&
+        preview_ready()) {
+        float a = ease_out((t - ui.selected_t0) / .3f);
+        float px = 40, py = 226, pw = 556, ph = pw * 9 / 16.f;
+        ui_fill_rect(0, 0, TABLET_X - 20, UI_BASE_H, rgb(0, 0, 0), .45f * a);
+        ui_panel(px - 14, py - 46, pw + 28, ph + 66, 14, rgb_hex(0x1C1712), rgb_hex(0x0E0B09), .92f * a, rgb_hex(0xD9B567), .45f * a);
+        ui_draw_text("PREVIEW  \xC2\xB7  YOUR LAST GAME FRAME", "Segoe UI Semibold", 12, 600, 3, px, py - 30,
+                     spirits[ui.tab].light, spirits[ui.tab].light, a);
+        if (a > .05f) preview_draw(tab_rows[ui.tab][ui.selected].id, px, py, pw, ph, t);
+        ui_panel(px - 1, py - 1, pw + 2, ph + 2, 4, rgb(0, 0, 0), rgb(0, 0, 0), 0, rgb_hex(0xD9B567), .5f * a);
+    }
+
     /* Under the armlet, on every tab: what is playing. */
     if (pv.ready && pv.on) {
         char name[64], line[96];
@@ -883,8 +945,9 @@ static void update_rom_status(void) {
 static void init_common(void) {
     char *bp = SDL_GetBasePath();
     snprintf(cache_path, sizeof cache_path, "%slauncher_art.cache", bp ? bp : "");
+    art_prepare();                      /* (may run the intro, which draws over hd_frame) */
+    preview_load(bp ? bp : "");
     if (bp) SDL_free(bp);
-    art_prepare();
     update_rom_status();
 }
 

@@ -154,9 +154,22 @@ static void build_backdrop(void) {
                 float sun = expf(-(ux - SUN_X) * (ux - SUN_X) / (2 * 260.f * 260.f));
                 c = add(d, rgb(1, .55f, .28f), crest * (.3f + .7f * sun));
             }
-            /* The tablet: dark sandstone with a soft shadow under it. */
-            float td = ui_rrect_dist(ux, uy, TABLET_X, TABLET_Y, TABLET_W, TABLET_H, 14);
-            float shadow = ui_rrect_dist(ux, uy, TABLET_X + 8, TABLET_Y + 16, TABLET_W, TABLET_H, 14);
+            float dither = (hashf((uint32_t)(y * ui_w + x)) - .5f) / 255.f;
+            backdrop[y * ui_w + x] = pack(add(c, rgb(1, 1, 1), dither));
+        }
+    scene_tablet(backdrop, TABLET_X, TABLET_Y, TABLET_W, TABLET_H, .96f);
+}
+
+void scene_tablet(uint32_t *dst, float tx, float ty, float tw, float th, float opacity) {
+    int x0 = (int)ui_x(tx - 4), x1 = (int)ui_x(tx + tw + 40), y0 = (int)ui_y(ty - 4), y1 = (int)ui_y(ty + th + 48);
+    x0 = x0 < 0 ? 0 : x0; y0 = y0 < 0 ? 0 : y0; x1 = x1 > ui_w ? ui_w : x1; y1 = y1 > ui_h ? ui_h : y1;
+    for (int y = y0; y < y1; y++)
+        for (int x = x0; x < x1; x++) {
+            float ux = (x - ui_ox) / ui_s, uy = (y - ui_oy) / ui_s;
+            Rgb c = unpack(dst[y * ui_w + x]);
+            /* Dark sandstone with a soft shadow under it. */
+            float td = ui_rrect_dist(ux, uy, tx, ty, tw, th, 14);
+            float shadow = ui_rrect_dist(ux, uy, tx + 8, ty + 16, tw, th, 14);
             c = scale(c, 1 - .55f * (1 - smooth(-4, 30, shadow)));
             if (td < .5f) {
                 float grain = hashf((uint32_t)((int)(ux * 1.3f) * 7919 + (int)(uy * 1.3f) * 104729)) - .5f;
@@ -164,23 +177,22 @@ static void build_backdrop(void) {
                 Rgb stone = mix(rgb_hex(0x1C1712), rgb_hex(0x2A2219), strata * .6f + .2f);
                 stone = add(stone, rgb(1, .9f, .7f), grain * .025f);
                 /* Warmer near the top, where the sun's light reaches. */
-                stone = add(stone, rgb(.9f, .5f, .2f), .06f * (1 - smooth(TABLET_Y, TABLET_Y + 300, uy)));
+                stone = add(stone, rgb(.9f, .5f, .2f), .06f * (1 - smooth(ty, ty + 300, uy)));
                 float cov = clampf(.5f - td * ui_s, 0, 1);
-                c = mix(c, stone, cov * .96f);
+                c = mix(c, stone, cov * opacity);
                 /* Gold trim: an outer line, an inner one, and the bevel between. */
                 float line1 = 1 - smooth(.5f, 1.6f, fabsf(td + 4));
                 float line2 = 1 - smooth(.3f, 1.1f, fabsf(td + 11));
                 float bevel = smooth(-3, 0, td) * .3f;
-                Rgb gold = mix(rgb_hex(0x6B4A1A), rgb_hex(0xE9C46A), clampf(1 - (uy - TABLET_Y) / TABLET_H * .6f, 0, 1));
+                Rgb gold = mix(rgb_hex(0x6B4A1A), rgb_hex(0xE9C46A), clampf(1 - (uy - ty) / th * .6f, 0, 1));
                 c = mix(c, gold, line1 * .9f + line2 * .6f);
                 c = add(c, rgb(1, .8f, .5f), bevel * cov * .2f);
             }
             float dither = (hashf((uint32_t)(y * ui_w + x)) - .5f) / 255.f;
-            backdrop[y * ui_w + x] = pack(add(c, rgb(1, 1, 1), dither));
+            dst[y * ui_w + x] = pack(add(c, rgb(1, 1, 1), dither));
         }
-    /* Ornaments at the tablet's corners: small gold diamonds. */
-    float corners[4][2] = { { TABLET_X + 11, TABLET_Y + 11 }, { TABLET_X + TABLET_W - 11, TABLET_Y + 11 },
-                            { TABLET_X + 11, TABLET_Y + TABLET_H - 11 }, { TABLET_X + TABLET_W - 11, TABLET_Y + TABLET_H - 11 } };
+    /* Ornaments at the corners: small gold diamonds. */
+    float corners[4][2] = { { tx + 11, ty + 11 }, { tx + tw - 11, ty + 11 }, { tx + 11, ty + th - 11 }, { tx + tw - 11, ty + th - 11 } };
     for (int k = 0; k < 4; k++) {
         int px = (int)ui_x(corners[k][0]), py = (int)ui_y(corners[k][1]), r = (int)(7 * ui_s);
         for (int y = -r; y <= r; y++)
@@ -188,7 +200,7 @@ static void build_backdrop(void) {
                 float d = (fabsf((float)x) + fabsf((float)y)) / r;
                 if (d > 1 || px + x < 0 || py + y < 0 || px + x >= ui_w || py + y >= ui_h) continue;
                 Rgb g = mix(rgb_hex(0xF6DC8E), rgb_hex(0x8A6224), d);
-                uint32_t *p = &backdrop[(py + y) * ui_w + px + x];
+                uint32_t *p = &dst[(py + y) * ui_w + px + x];
                 *p = pack(mix(unpack(*p), g, clampf((1 - d) * 3, 0, 1)));
             }
     }

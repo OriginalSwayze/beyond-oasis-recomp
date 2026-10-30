@@ -24,7 +24,6 @@ Settings settings = {
     .state_slot = 1,
     .show_launcher = true,
     .launcher_music = true,
-    .audio = 1,
     .ost_track = -1,
     .volume = 100,
 };
@@ -89,7 +88,7 @@ void settings_load(const char *path) {
     if (settings.ost_mode < 0 || settings.ost_mode >= OST_MODE_COUNT) settings.ost_mode = OST_MODE_ALL;
     if (settings.sharpen < 0 || settings.sharpen > 3) settings.sharpen = 0;
     if (settings.lighting < 0 || settings.lighting > 2) settings.lighting = 0;
-    if (settings.audio < 0 || settings.audio > 2) settings.audio = 1;
+    if (settings.audio < 0 || settings.audio > 2) settings.audio = 0;
     if (settings.ost_track < -1 || settings.ost_track > 0xFF) settings.ost_track = -1;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
     if (settings.state_slot < 1 || settings.state_slot > 9) settings.state_slot = 1;
