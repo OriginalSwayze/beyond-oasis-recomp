@@ -312,4 +312,5 @@ void machine_run_frame(uint32_t *fb, int pitch) {
         }
         run(HBLANK_CYCLES);
     }
+    sound_end_frame();
 }

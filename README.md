@@ -66,6 +66,7 @@ Other headless options:
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
+* `--lighting N` (0-2), `--ambience 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run
 * `--outfit a,b,c,d`: Ali's outfit colours for this run (as `outfit_colors` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
@@ -240,6 +241,47 @@ At 100% the machine is unchanged (`--verify` and native/interpreter logs match).
 
 Moments that were CPU-bound, like area loading, also get shorter. Save states work at
 any speed, but replays are only identical at the speed they were recorded at.
+
+## Scaler, lighting and ambience
+
+"Scaler" (Edge, Smooth; `scaler=edge|smooth` in `settings.ini`) picks how the layers are
+scaled for the internal resolution. Edge is Scale2x / Scale3x. Smooth uses Hyllian's xBR
+rules: it looks at a 5x5 neighbourhood to tell along which diagonal an edge runs and
+rounds each corner on the right side of it, so curves and shallow slopes come out cleaner.
+The usual xBR blends colours at edges; this one takes a whole neighbouring source pixel
+instead, so every output pixel is still a real layer pixel and the layers, priorities and
+transparency composite exactly as before. Corners whose two candidate neighbours equal the
+pixel itself are skipped, and the layers are split into bands over all cores: a 4x frame
+takes about 4 ms, like Edge.
+
+"Lighting" (Off, Soft, Bright; `lighting`) makes light glow: near-white and vivid, bright
+pixels (fire, magic, gems, the HUD's gold) are gathered into a picture an eighth the size,
+blurred at two sizes and laid over the picture with a screen blend. Sunlit ground is
+bright but neither, so daylight scenes do not wash out.
+
+"Ambience" (`ambience`) adds a soft vignette, and in the game world dust motes drifting
+in the air; they are placed in the world (the camera position is read from the plane A
+layer struct at $FF1716), so they stay put as the camera moves. Menus and story scenes get
+the vignette only.
+
+These, and sharpening, run on the picture before it goes to the GPU (`hd_post`), so the
+display filters still apply on top. None of them change the game.
+
+## Audio
+
+"Audio" (Original, Clean, Rich; `audio` in `settings.ini`, Clean by default) changes only
+the sound that comes out (`runtime/src/sound.cpp`), never the machine's state, so save
+states and replays are the same in every mode:
+
+* Clean: the YM2612's 53 kHz output is resampled to the device rate with a 16-tap
+  windowed-sinc filter instead of straight lines, so nothing above the output's Nyquist
+  frequency folds back as noise; each PSG square wave is averaged over every sample
+  instead of read at one instant, which keeps its high notes from aliasing; a DC blocker
+  removes the offset the FM DAC holds (about 2500 of 32767), and the mix keeps headroom
+  and ends in a soft limiter instead of clipping (the original clips about 1400 times a
+  second in the village at full volume).
+* Rich: Clean, with the stereo widened a little and a light room reverb (four comb and
+  two all-pass filters per side, after Freeverb) mixed in quietly.
 
 ## Sharpening
 

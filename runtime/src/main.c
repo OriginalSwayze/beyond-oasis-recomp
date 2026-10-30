@@ -136,6 +136,19 @@ static void apply_settings(void) {
     vdp_opts.hd_capture = settings.internal_scale > 1 || settings.smooth_motion;
     machine_opts.overclock = settings.overclock;
     outfit_apply();
+    sound_quality = settings.audio;
+    hd_scaler = settings.scaler;
+}
+
+/* The finishing steps for this frame (hd_post), with the camera from the game's RAM: the
+ * plane A layer struct at $FF1716 holds it (+00 x, +04 y) while a map layer is active. */
+static HdPost finishing(int scale, float t) {
+    const uint8_t *layer = bus.ram + 0x1716;
+    HdPost p = { settings.sharpen, settings.lighting, settings.ambience, false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
+    p.world = (layer[0x27] & 1) && !vdp_opts.mask_sides;
+    p.cam_x = (float)(int16_t)(layer[0] << 8 | layer[1]);
+    p.cam_y = (float)(int16_t)(layer[4] << 8 | layer[5]);
+    return p;
 }
 
 /* Largest rectangle with the game's display aspect that fits the window. */
@@ -233,6 +246,10 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) { settings.widescreen = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--overclock") && i + 1 < argc) { settings.overclock = atoi(argv[++i]); test_overrides = true; }   /* percent */
         else if (!strcmp(argv[i], "--sharpen") && i + 1 < argc) { settings.sharpen = atoi(argv[++i]) & 3; test_overrides = true; }   /* 0-3 */
+        else if (!strcmp(argv[i], "--lighting") && i + 1 < argc) { settings.lighting = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
+        else if (!strcmp(argv[i], "--ambience") && i + 1 < argc) { settings.ambience = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--scaler") && i + 1 < argc) { settings.scaler = atoi(argv[++i]) != 0; test_overrides = true; }   /* 0 edge, 1 smooth */
+        else if (!strcmp(argv[i], "--audio") && i + 1 < argc) { settings.audio = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--volume") && i + 1 < argc) { settings.volume = atoi(argv[++i]); test_overrides = true; }   /* 0-100 */
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) { settings.filter = atoi(argv[++i]) % FILTER_COUNT; test_overrides = true; }   /* 0 off, 1 scanlines, 2 CRT, 3 LCD */
         else if (!strcmp(argv[i], "--no-launcher")) no_launcher = true;
@@ -542,8 +559,8 @@ int main(int argc, char **argv) {
                 if (hd) hd_compose(settings.internal_scale);
                 int tw = hd ? hd_w : frame_width(), th = hd ? hd_h : vdp_screen_height();
                 SDL_Texture *t = SDL_CreateTexture(sr, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STATIC, tw, th);
-                if (settings.sharpen) SDL_UpdateTexture(t, NULL, hd_sharpen(hd ? hd_px : framebuffer, tw, th, hd ? hd_w : FB_W, settings.sharpen), tw * 4);
-                else SDL_UpdateTexture(t, NULL, hd ? hd_px : framebuffer, (hd ? hd_w : FB_W) * 4);
+                HdPost post = finishing(hd ? hd_w / frame_width() : 1, 1.0f);
+                SDL_UpdateTexture(t, NULL, hd_post(hd ? hd_px : framebuffer, tw, th, hd ? hd_w : FB_W, &post), tw * 4);
                 SDL_SetRenderDrawColor(sr, 0, 0, 0, 255);
                 SDL_RenderClear(sr);
                 Uint64 t0 = SDL_GetPerformanceCounter();
@@ -789,11 +806,14 @@ int main(int argc, char **argv) {
                 hd_tex_w = hd_w; hd_tex_h = hd_h;
             }
             hd_tex_now ^= 1;
-            SDL_UpdateTexture(hd_tex[hd_tex_now], NULL, hd_sharpen(hd_px, hd_w, hd_h, hd_w, settings.sharpen), hd_w * 4);
+            HdPost post = finishing(hd_w / frame_width(), (float)(SDL_GetPerformanceCounter() - start) / freq);
+            SDL_UpdateTexture(hd_tex[hd_tex_now], NULL, hd_post(hd_px, hd_w, hd_h, hd_w, &post), hd_w * 4);
             filter_draw(ren, hd_tex[hd_tex_now], NULL, dst, frame_width(), vdp_screen_height(), settings.filter);
         } else {
             SDL_Rect src = { 0, 0, frame_width(), vdp_screen_height() };
-            if (settings.sharpen) SDL_UpdateTexture(tex, &src, hd_sharpen(framebuffer, src.w, src.h, FB_W, settings.sharpen), src.w * 4);
+            HdPost post = finishing(1, (float)(SDL_GetPerformanceCounter() - start) / freq);
+            const uint32_t *img = hd_post(framebuffer, src.w, src.h, FB_W, &post);
+            if (img != framebuffer) SDL_UpdateTexture(tex, &src, img, src.w * 4);
             else SDL_UpdateTexture(tex, NULL, framebuffer, FB_W * 4);
             filter_draw(ren, tex, &src, dst, frame_width(), vdp_screen_height(), settings.filter);
         }

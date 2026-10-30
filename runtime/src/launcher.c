@@ -253,6 +253,7 @@ static bool music_to_title(void) {
  * the frame's level without its DC offset (the FM DAC can hold a constant level). */
 static int music_frame(float volume, double *level) {
     ost_frame();
+    sound_quality = settings.audio;     /* the Audio setting applies to the player too */
     machine_run_frame(NULL, 320);
     double sum = 0, sum2 = 0;
     int n = sound_out_count * 2;
@@ -529,7 +530,7 @@ typedef struct { RowKind kind; const char *label; int id; const char *about; } R
 
 #define TABS 4
 static const char *const tab_names[TABS] = { "DISPLAY", "ENHANCE", "GAME", "MUSIC" };
-static const Row tab_rows[TABS][6] = {
+static const Row tab_rows[TABS][8] = {
     { { ROW_OPTION, "Widescreen", OPT_WIDESCREEN, "Shows more of the world at the sides, streamed by the game's own map code." },
       { ROW_OPTION, "Aspect ratio", OPT_ASPECT, "The shape of the widescreen picture." },
       { ROW_OPTION, "Integer scaling", OPT_INTEGER, "Whole-number scaling only: every pixel the same size." },
@@ -537,7 +538,10 @@ static const Row tab_rows[TABS][6] = {
       { ROW_OPTION, "Filter", OPT_FILTER, "Scanlines, a curved CRT tube or an LCD grid over the picture." },
       { ROW_OPTION, "Sharpening", OPT_SHARPEN, "Crisper edges after scaling, without halos (contrast-adaptive)." } },
     { { ROW_OPTION, "Internal resolution", OPT_INTERNAL, "Redraws each layer at a higher resolution with smoothed edges." },
+      { ROW_OPTION, "Scaler", OPT_SCALER, "Edge rounds corners; Smooth follows curves and slopes (xBR)." },
       { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
+      { ROW_OPTION, "Lighting", OPT_LIGHTING, "Fire, magic and bright light glow into their surroundings." },
+      { ROW_OPTION, "Ambience", OPT_AMBIENCE, "Dust drifting in the air of the world, and a soft vignette." },
       { ROW_OPTION, "Sprite flicker fix", OPT_FLICKER, "Lifts the hardware's sprites-per-line limit, so nothing flickers." },
       { ROW_OPTION, "Slowdown fix", OPT_OVERCLOCK, "A faster 68000, so busy scenes no longer slow down." },
       { ROW_OPTION, "Rewind", OPT_REWIND_ALL, "Hold the rewind key to step back in time." } },
@@ -547,9 +551,10 @@ static const Row tab_rows[TABS][6] = {
       { ROW_OUTFIT, "Ali's outfit", 0, "Pick the colours of his clothes, with a preview before you apply them." },
       { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER, "Off starts the game directly (show_launcher=1 in settings.ini brings it back)." } },
     { { ROW_OPTION, "Launcher music", OPT_MUSIC, NULL }, { ROW_TRACK, "Track", 0, NULL },
-      { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL } },
+      { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL },
+      { ROW_OPTION, "Audio", OPT_AUDIO, NULL } },
 };
-static const int tab_count[TABS] = { 6, 5, 5, 4 };
+static const int tab_count[TABS] = { 6, 8, 5, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define PANEL_X (TABLET_X + 40)
@@ -560,7 +565,7 @@ static const int tab_count[TABS] = { 6, 5, 5, 4 };
 #define TAB_W   ((TABLET_W - 52) / TABS)
 #define ROWS_Y  (TAB_Y + TAB_H + 26)
 #define ROW_H   44
-#define CARD_Y  (ROWS_Y + 4 * ROW_H + 18)
+#define CARD_Y  (ROWS_Y + 5 * ROW_H + 14)
 #define CARD_H  160
 #define BTN_Y   (TABLET_Y + TABLET_H - 118)
 #define BTN_H   54

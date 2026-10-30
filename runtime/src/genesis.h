@@ -119,6 +119,11 @@ extern int16_t sound_out[SOUND_OUT_MAX * 2];
 extern int     sound_out_count;         /* stereo frames ready in sound_out */
 extern int     sound_out_rate;
 extern bool    sound_fm_enabled, sound_psg_enabled;
+/* Output quality: 0 as before (linear resampling); 1 clean: band-limited resampling,
+ * anti-aliased PSG, no DC offset; 2 rich: clean with wider stereo and a light room reverb.
+ * Only the sound that comes out changes, never the machine's state. */
+extern int     sound_quality;
+void    sound_end_frame(void);          /* machine.c, after each frame: the output effects */
 void    sound_reset(void);
 void    sound_advance(int m68k_cycles);
 void    ym_write(int port, uint8_t v);

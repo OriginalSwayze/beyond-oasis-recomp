@@ -67,6 +67,26 @@ void  hd_compose_sprites(int scale);
 extern double hd_ms[4];                 /* last hd_compose_at: ms scaling layers, scaling sprites, sprite layer, compositing */
 extern int hd_owned;                    /* sprites of the newest frame that belong to a game object */
 
+/* Scaler for the layers: 0 edge (Scale2x / Scale3x), 1 smooth (xBR rules, picking whole
+ * source pixels like Scale2x so layers, priorities and transparency stay exact). */
+extern int hd_scaler;
+
+/* The finishing steps on the picture before it goes to the GPU (hd_post): lighting,
+ * ambience, sharpening. */
+typedef struct {
+    int   sharpen;                      /* 0-3 */
+    int   lighting;                     /* 0 off, 1 soft, 2 bright: bright pixels glow */
+    bool  ambience;                     /* dust in the air (only with `world`) and a vignette */
+    bool  world;                        /* the picture shows the game world (not a menu or story scene) */
+    float cam_x, cam_y;                 /* the game's camera, in game pixels (dust stays put in the world) */
+    float t;                            /* seconds, for the dust's drift */
+    int   scale;                        /* picture pixels per game pixel */
+    int   extra;                        /* widescreen game pixels on each side */
+} HdPost;
+/* Returns the finished picture (row pitch w): src itself when nothing is on, else a copy
+ * valid until the next call. */
+const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPost *p);
+
 /* Sharpening (level 1-3: light, medium, strong) of a w x h picture with row pitch
  * `pitch`, contrast-adaptive: each pixel is pushed away from its four neighbours by an
  * amount that shrinks where the contrast is already high, so soft edges (scaled layers,

@@ -24,6 +24,7 @@ Settings settings = {
     .state_slot = 1,
     .show_launcher = true,
     .launcher_music = true,
+    .audio = 1,
     .ost_track = -1,
     .volume = 100,
 };
@@ -66,6 +67,10 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "volume")) settings.volume = atoi(v);
         else if (!strcmp(k, "ost_mode")) settings.ost_mode = atoi(v);
         else if (!strcmp(k, "sharpen")) settings.sharpen = atoi(v);
+        else if (!strcmp(k, "scaler")) settings.scaler = !strcmp(v, "smooth");
+        else if (!strcmp(k, "lighting")) settings.lighting = atoi(v);
+        else if (!strcmp(k, "ambience")) settings.ambience = parse_bool(v);
+        else if (!strcmp(k, "audio")) settings.audio = atoi(v);
         else if (!strcmp(k, "ost_track")) settings.ost_track = atoi(v);
         else if (input_ini_load(k, v)) {}
         else if (outfit_ini_load(k, v)) {}
@@ -83,6 +88,8 @@ void settings_load(const char *path) {
     if (settings.volume < 0 || settings.volume > 100) settings.volume = 100;
     if (settings.ost_mode < 0 || settings.ost_mode >= OST_MODE_COUNT) settings.ost_mode = OST_MODE_ALL;
     if (settings.sharpen < 0 || settings.sharpen > 3) settings.sharpen = 0;
+    if (settings.lighting < 0 || settings.lighting > 2) settings.lighting = 0;
+    if (settings.audio < 0 || settings.audio > 2) settings.audio = 1;
     if (settings.ost_track < -1 || settings.ost_track > 0xFF) settings.ost_track = -1;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
     if (settings.state_slot < 1 || settings.state_slot > 9) settings.state_slot = 1;
@@ -111,6 +118,10 @@ void settings_save(const char *path) {
     fprintf(f, "volume=%d\n", settings.volume);
     fprintf(f, "ost_mode=%d\n", settings.ost_mode);
     fprintf(f, "sharpen=%d\n", settings.sharpen);
+    fprintf(f, "scaler=%s\n", settings.scaler ? "smooth" : "edge");
+    fprintf(f, "lighting=%d\n", settings.lighting);
+    fprintf(f, "ambience=%d\n", settings.ambience);
+    fprintf(f, "audio=%d\n", settings.audio);
     fprintf(f, "ost_track=%d\n", settings.ost_track);
     fprintf(f, "cheat_health=%d\n", settings.cheat_health);
     fprintf(f, "cheat_spirit=%d\n", settings.cheat_spirit);
@@ -167,6 +178,10 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_MUSIC:      snprintf(out, n, "%s", settings.launcher_music ? "On" : "Off"); break;
     case OPT_OST_MODE:   snprintf(out, n, "%s", ost_modes[settings.ost_mode]); break;
     case OPT_SHARPEN:    snprintf(out, n, "%s", sharpen_names[settings.sharpen]); break;
+    case OPT_SCALER:     snprintf(out, n, "%s", settings.scaler ? "Smooth (xBR)" : "Edge"); break;
+    case OPT_LIGHTING:   snprintf(out, n, "%s", settings.lighting == 2 ? "Bright" : settings.lighting ? "Soft" : "Off"); break;
+    case OPT_AMBIENCE:   snprintf(out, n, "%s", settings.ambience ? "On" : "Off"); break;
+    case OPT_AUDIO:      snprintf(out, n, "%s", settings.audio == 2 ? "Rich" : settings.audio ? "Clean" : "Original"); break;
     case OPT_OVERCLOCK:
         if (settings.overclock <= 100) snprintf(out, n, "Off");
         else snprintf(out, n, "%d%% CPU", settings.overclock);
@@ -259,6 +274,10 @@ void settings_option_change(int id, int dir) {
     case OPT_MUSIC:    settings.launcher_music = !settings.launcher_music; break;
     case OPT_OST_MODE: settings.ost_mode = settings_cycle(settings.ost_mode, OST_MODE_COUNT, dir); break;
     case OPT_SHARPEN:  settings.sharpen = settings_cycle(settings.sharpen, 4, dir); break;
+    case OPT_SCALER:   settings.scaler = !settings.scaler; break;
+    case OPT_LIGHTING: settings.lighting = settings_cycle(settings.lighting, 3, dir); break;
+    case OPT_AMBIENCE: settings.ambience = !settings.ambience; break;
+    case OPT_AUDIO:    settings.audio = settings_cycle(settings.audio, 3, dir); break;
     case OPT_CHEAT_HEALTH:  settings.cheat_health = !settings.cheat_health; break;
     case OPT_CHEAT_SPIRIT:  settings.cheat_spirit = !settings.cheat_spirit; break;
     case OPT_CHEAT_WEAPONS: settings.cheat_weapons = !settings.cheat_weapons; break;

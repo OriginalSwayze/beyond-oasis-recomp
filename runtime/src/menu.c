@@ -23,18 +23,21 @@ static const Item items[] = {
     { ITEM_HEADER, "DISPLAY", 0 },
     { ITEM_OPTION, "Widescreen", OPT_WIDESCREEN },
     { ITEM_OPTION, "Aspect ratio", OPT_ASPECT },
-    { ITEM_OPTION, "Fullscreen", OPT_FULLSCREEN },
     { ITEM_OPTION, "Integer scaling", OPT_INTEGER },
     { ITEM_OPTION, "Internal resolution", OPT_INTERNAL },
+    { ITEM_OPTION, "Scaler", OPT_SCALER },
     { ITEM_OPTION, "Smooth motion", OPT_SMOOTH },
     { ITEM_OPTION, "Filter", OPT_FILTER },
     { ITEM_OPTION, "Sharpening", OPT_SHARPEN },
+    { ITEM_OPTION, "Lighting", OPT_LIGHTING },
+    { ITEM_OPTION, "Ambience", OPT_AMBIENCE },
     { ITEM_OPTION, "Sprite flicker fix", OPT_FLICKER },
     { ITEM_OPTION, "Slowdown fix", OPT_OVERCLOCK },
     { ITEM_HEADER, "GAME", 0 },
     { ITEM_OPTION, "Cheats", OPT_CHEATS },
     { ITEM_OPTION, "Rewind", OPT_REWIND },
     { ITEM_OPTION, "Volume", OPT_VOLUME },
+    { ITEM_OPTION, "Audio", OPT_AUDIO },
     { ITEM_ACTION, "Controls", ACT_CONTROLS },
     { ITEM_ACTION, "Ali's outfit", ACT_OUTFIT },
     { ITEM_ACTION, "Reset game", ACT_RESET },
@@ -50,8 +53,8 @@ static const Item items[] = {
 #define LIST_X  (PANEL_X + 40)
 #define LIST_R  (PANEL_X + PANEL_W - 36)
 #define LIST_Y  (PANEL_Y + 90)
-#define ROW_H   23
-#define HEAD_H  22
+#define ROW_H   21
+#define HEAD_H  21
 #define VOLUME_W 140                    /* the volume slider's track, left of its value */
 #define VOLUME_X (LIST_R - 20 - 46 - 26 - VOLUME_W)
 #define CARD_X  662

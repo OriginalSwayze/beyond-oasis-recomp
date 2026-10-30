@@ -16,6 +16,10 @@ typedef struct {
     bool smooth_motion;                 /* draw between the game's 30 Hz ticks (hd.c, motion.c) */
     int  filter;                        /* FILTER_* (filter.h): off, scanlines, CRT, LCD */
     int  sharpen;                       /* sharpening: 0 off, 1 light, 2 medium, 3 strong (hd_sharpen) */
+    int  scaler;                        /* layer scaler: 0 edge (Scale2x/3x), 1 smooth (xBR rules) */
+    int  lighting;                      /* glow of bright pixels: 0 off, 1 soft, 2 bright (hd_post) */
+    bool ambience;                      /* dust in the air and a vignette (hd_post) */
+    int  audio;                         /* sound output: 0 original, 1 clean, 2 rich (sound_quality) */
     int  overclock;                     /* 68000 speed in percent (100 = original): removes slowdown */
     int  window_scale;
     bool rewind;                        /* keep a rewind buffer (hold the rewind key to step back) */
@@ -48,7 +52,7 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_FILTER, OPT_WINDOW_ALL,      /* fullscreen or a window size, in one option */
        OPT_OVERCLOCK, OPT_VOLUME,
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
-       OPT_SHARPEN };
+       OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AMBIENCE, OPT_AUDIO };
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);
