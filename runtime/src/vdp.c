@@ -374,6 +374,7 @@ static void draw_sprites(uint8_t *out, int w, int extra, int line) {
                     cap->rank = n;
                     hd_frame.sprite_count++;
                     cap->x = x; cap->y = y; cap->w = hcells * 8; cap->h = vcells * 8; cap->attr = attr;
+                    cap->player = player_entry[link_now];
                     memset(cap->px, 0, sizeof cap->px);
                 }
             }

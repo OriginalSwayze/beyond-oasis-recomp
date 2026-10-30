@@ -14,7 +14,7 @@
 #include "settings.h"
 #include "ui.h"
 
-typedef struct { int scale, scaler, sharpen, lighting; bool ambience, lights, shadows, cinematic; } Look;
+typedef struct { int scale, scaler, sharpen, lighting, weather; bool ambience, lights, shadows, cinematic, water; } Look;
 
 static struct { bool world; float cam_x, cam_y, focus_x, focus_y; } where;
 
@@ -59,8 +59,8 @@ bool preview_ready(void) { return hd_frame.h > 0 && hd_frame.w > 0; }
 
 /* ---- Which looks to compare ------------------------------------------------------------ */
 static Look look_now(void) {
-    return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, settings.ambience,
-                   settings.lights, settings.shadows, settings.cinematic };
+    return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, settings.weather, settings.ambience,
+                   settings.lights, settings.shadows, settings.cinematic, settings.water };
 }
 
 /* The look without the option and with it, whether to show it 1:1, and the label of the
@@ -110,6 +110,15 @@ static bool looks_for(int option, Look *off, Look *on, bool *zoom, char *label, 
         settings.shadows = true;
         *zoom = true;
         break;
+    case OPT_WATER:
+        off->water = false; on->water = true;
+        settings.water = true;
+        break;
+    case OPT_WEATHER:
+        off->weather = 0;
+        on->weather = settings.weather ? settings.weather : WEATHER_BREEZE;
+        settings.weather = on->weather;
+        break;
     default:
         return false;
     }
@@ -130,14 +139,19 @@ typedef struct { uint32_t *px; int w, h; } Picture;
 
 static void render_look(const Look *l, Picture *out) {
     int keep_scaler = hd_scaler;
-    bool keep_shadows = hd_shadows;
+    bool keep_shadows = hd_shadows, keep_water = hd_water;
+    float keep_time = hd_time;
     hd_scaler = l->scaler;
     hd_shadows = l->shadows;
+    hd_water = l->water;
+    hd_time = 2.0f;
     hd_compose(l->scale);
     hd_scaler = keep_scaler;
     hd_shadows = keep_shadows;
+    hd_water = keep_water;
+    hd_time = keep_time;
     int scale = hd_w / (hd_frame.w > 0 ? hd_frame.w : 1);
-    HdPost post = { l->sharpen, l->lighting, l->ambience, l->lights, l->cinematic, where.world, where.cam_x, where.cam_y, 2.0f, scale < 1 ? 1 : scale, hd_frame.extra };
+    HdPost post = { l->sharpen, l->lighting, l->ambience, l->lights, l->cinematic, l->weather, false, where.world, where.cam_x, where.cam_y, 2.0f, scale < 1 ? 1 : scale, hd_frame.extra };
     const uint32_t *img = hd_post(hd_px, hd_w, hd_h, hd_w, &post);
     free(out->px);
     out->px = malloc((size_t)hd_w * hd_h * 4);

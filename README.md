@@ -66,7 +66,7 @@ Other headless options:
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
-* `--lighting N` (0-2), `--ambience 0|1`, `--lights 0|1`, `--shadows 0|1`, `--cinematic 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
+* `--lighting N` (0-2), `--ambience 0|1`, `--lights 0|1`, `--shadows 0|1`, `--cinematic 0|1`, `--water 0|1`, `--weather N` (0-4), `--elements 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
 * `--outfit a,b,c,d`: Ali's outfit colours for this run (as `outfit_colors` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
@@ -298,6 +298,27 @@ not. It is drawn while the layers are put together, so it also works at native r
 white stay put), cooler shadows and warmer highlights by brightness, 18% more colour, fine
 film grain that changes every picture, and red and blue a pixel or two apart towards the
 edges, like a lens. It runs in integer arithmetic from lookup tables.
+
+"Water" (`water`): water is found by colour at the game's resolution (the plane pixel on
+top clearly blue, in runs at least five pixels wide, so blue details on land are left
+out). Under no sprite, it rolls with soft horizontal swells, sparkles at points fixed in
+the world (from the plane's scroll), and reflects the sprites above it: mirrored at the
+water's edge, or at a character's feet when one stands in it, rippling, fading with the
+distance and tinted by the water. Like the shadows it is drawn while the layers are put
+together. The opening beach is the test scene.
+
+"Weather" (Off, Breeze, Sandstorm, Rain, Mist; `weather`), only in the game world:
+pollen and slow shafts of light; streaks of sand and a warm haze; falling streaks, splashes
+on the ground and a cooler, darker light; soft banks of fog drifting through the world.
+Everything is placed in world coordinates from the game's camera, so it stays put as the
+camera moves (`runtime/src/fx.c`).
+
+"Spirit effects" (`elements`): after each game frame, the bright, vivid pixels of the
+sprites that are neither the player character's nor the HUD's give off particles by colour:
+fire colours embers that rise and fade, light blue drops that splash up and fall, violet
+wisps that drift, bright green leaves that flutter down. That is how the spirits, the
+magic and the flames are drawn, so they come alive while Ali's own colours (his hair, his
+boots) and the HUD give none. A camera jump (a new scene) or loading a state clears them.
 
 These, and sharpening, run on the picture before it goes to the GPU (`hd_post`), so the
 display filters still apply on top. None of them change the game. The rows are split into

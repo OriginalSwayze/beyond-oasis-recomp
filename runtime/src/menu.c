@@ -36,11 +36,12 @@ static const Item tab_items[TABS][MAX_ROWS] = {
       { ITEM_OPTION, "Sprite flicker fix", OPT_FLICKER }, { ITEM_OPTION, "Slowdown fix", OPT_OVERCLOCK } },
     { { ITEM_OPTION, "Lighting", OPT_LIGHTING }, { ITEM_OPTION, "Light sources", OPT_LIGHTS },
       { ITEM_OPTION, "Shadows", OPT_SHADOWS }, { ITEM_OPTION, "Cinematic", OPT_CINEMATIC },
-      { ITEM_OPTION, "Ambience", OPT_AMBIENCE } },
+      { ITEM_OPTION, "Ambience", OPT_AMBIENCE }, { ITEM_OPTION, "Water", OPT_WATER },
+      { ITEM_OPTION, "Weather", OPT_WEATHER }, { ITEM_OPTION, "Spirit effects", OPT_ELEMENTS } },
     { { ITEM_OPTION, "Volume", OPT_VOLUME }, { ITEM_OPTION, "Audio", OPT_AUDIO },
       { ITEM_ACTION, "Controls", ACT_CONTROLS }, { ITEM_ACTION, "Ali's outfit", ACT_OUTFIT } },
 };
-static const int tab_count[TABS] = { 7, 10, 5, 4 };
+static const int tab_count[TABS] = { 7, 10, 8, 4 };
 
 /* What each option and action does, for the card on the right. */
 static const char *about(const Item *it) {
@@ -68,6 +69,9 @@ static const char *about(const Item *it) {
     case OPT_AMBIENCE: return "A soft vignette at the edges, and dust drifting in the air of the world that stays in place as the camera moves.";
     case OPT_LIGHTS: return "Fire, magic and glowing things cast coloured light on the ground and walls around them. In dark places the rest dims a little so they stand out.";
     case OPT_SHADOWS: return "Characters cast a soft shadow on the ground and walls behind them, as if lit from the top left. The HUD casts none.";
+    case OPT_WATER: return "The sea, rivers and pools shimmer with slow swells, sparkle in the light and reflect the people and things above them.";
+    case OPT_WEATHER: return "Weather in the world: a breeze with pollen and shafts of light, a sandstorm, rain with splashes, or drifting mist. Menus and story scenes stay clear.";
+    case OPT_ELEMENTS: return "The spirits, magic and fire give off particles: embers from fire, drops from water, wisps from shadow, leaves from plants. Ali and the HUD give none.";
     case OPT_CINEMATIC: return "A film look: a gentle tone curve, cooler shadows and warmer highlights, fine grain and a hint of lens colour at the edges.";
     case OPT_CHEATS: return "Infinite health, spirit power, and weapons that never break.";
     case OPT_REWIND: return "Hold the rewind key to step back in time.";

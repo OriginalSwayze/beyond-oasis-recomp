@@ -589,7 +589,10 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Light sources", OPT_LIGHTS, "Fire and magic light up the ground around them; dark places dim a little." },
       { ROW_OPTION, "Shadows", OPT_SHADOWS, "Characters cast soft shadows, as if lit from the top left." },
       { ROW_OPTION, "Cinematic", OPT_CINEMATIC, "A film tone curve and grade, fine grain and lens colour at the edges." },
-      { ROW_OPTION, "Ambience", OPT_AMBIENCE, "Dust drifting in the air of the world, and a soft vignette." } },
+      { ROW_OPTION, "Ambience", OPT_AMBIENCE, "Dust drifting in the air of the world, and a soft vignette." },
+      { ROW_OPTION, "Water", OPT_WATER, "Water shimmers, sparkles and reflects what stands above it." },
+      { ROW_OPTION, "Weather", OPT_WEATHER, "A breeze, a sandstorm, rain or mist in the world (not in menus or story scenes)." },
+      { ROW_OPTION, "Spirit effects", OPT_ELEMENTS, "Spirits, magic and fire give off embers, drops, wisps or leaves." } },
     { { ROW_ROM, "ROM", 0, "Your Beyond Oasis (USA) cartridge file." },
       { ROW_OPTION, "Cheats", OPT_CHEATS, "Infinite health, spirit power and unbreakable weapons." },
       { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
@@ -603,7 +606,7 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL },
       { ROW_OPTION, "Audio", OPT_AUDIO, NULL } },
 };
-static const int tab_count[TABS] = { 8, 5, 9, 5 };
+static const int tab_count[TABS] = { 8, 8, 9, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define PANEL_X (TABLET_X + 40)

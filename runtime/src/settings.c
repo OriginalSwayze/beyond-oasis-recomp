@@ -28,6 +28,8 @@ Settings settings = {
     .volume = 100,
 };
 
+static const char *weather_keys[WEATHER_COUNT] = { "off", "breeze", "sand", "rain", "mist" };
+static const char *weather_names[WEATHER_COUNT] = { "Off", "Breeze", "Sandstorm", "Rain", "Mist" };
 static const char *filter_keys[FILTER_COUNT] = { "off", "scanlines", "crt", "lcd" };
 static const char *filter_names[FILTER_COUNT] = { "Off", "Scanlines", "CRT", "LCD" };
 
@@ -72,6 +74,9 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "lights")) settings.lights = parse_bool(v);
         else if (!strcmp(k, "shadows")) settings.shadows = parse_bool(v);
         else if (!strcmp(k, "cinematic")) settings.cinematic = parse_bool(v);
+        else if (!strcmp(k, "water")) settings.water = parse_bool(v);
+        else if (!strcmp(k, "weather")) { for (int i = 0; i < WEATHER_COUNT; i++) if (!strcmp(v, weather_keys[i])) settings.weather = i; }
+        else if (!strcmp(k, "elements")) settings.elements = parse_bool(v);
         else if (!strcmp(k, "audio")) settings.audio = atoi(v);
         else if (!strcmp(k, "ost_track")) settings.ost_track = atoi(v);
         else if (input_ini_load(k, v)) {}
@@ -91,6 +96,7 @@ void settings_load(const char *path) {
     if (settings.ost_mode < 0 || settings.ost_mode >= OST_MODE_COUNT) settings.ost_mode = OST_MODE_ALL;
     if (settings.sharpen < 0 || settings.sharpen > 3) settings.sharpen = 0;
     if (settings.lighting < 0 || settings.lighting > 2) settings.lighting = 0;
+    if (settings.weather < 0 || settings.weather >= WEATHER_COUNT) settings.weather = 0;
     if (settings.audio < 0 || settings.audio > 2) settings.audio = 0;
     if (settings.ost_track < -1 || settings.ost_track > 0xFF) settings.ost_track = -1;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
@@ -126,6 +132,9 @@ void settings_save(const char *path) {
     fprintf(f, "lights=%d\n", settings.lights);
     fprintf(f, "shadows=%d\n", settings.shadows);
     fprintf(f, "cinematic=%d\n", settings.cinematic);
+    fprintf(f, "water=%d\n", settings.water);
+    fprintf(f, "weather=%s\n", weather_keys[settings.weather]);
+    fprintf(f, "elements=%d\n", settings.elements);
     fprintf(f, "audio=%d\n", settings.audio);
     fprintf(f, "ost_track=%d\n", settings.ost_track);
     fprintf(f, "cheat_health=%d\n", settings.cheat_health);
@@ -189,6 +198,9 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_LIGHTS:     snprintf(out, n, "%s", settings.lights ? "On" : "Off"); break;
     case OPT_SHADOWS:    snprintf(out, n, "%s", settings.shadows ? "On" : "Off"); break;
     case OPT_CINEMATIC:  snprintf(out, n, "%s", settings.cinematic ? "On" : "Off"); break;
+    case OPT_WATER:      snprintf(out, n, "%s", settings.water ? "On" : "Off"); break;
+    case OPT_WEATHER:    snprintf(out, n, "%s", weather_names[settings.weather]); break;
+    case OPT_ELEMENTS:   snprintf(out, n, "%s", settings.elements ? "On" : "Off"); break;
     case OPT_AUDIO:      snprintf(out, n, "%s", settings.audio == 2 ? "Rich" : settings.audio ? "Clean" : "Original"); break;
     case OPT_OVERCLOCK:
         if (settings.overclock <= 100) snprintf(out, n, "Off");
@@ -288,6 +300,9 @@ void settings_option_change(int id, int dir) {
     case OPT_LIGHTS:   settings.lights = !settings.lights; break;
     case OPT_SHADOWS:  settings.shadows = !settings.shadows; break;
     case OPT_CINEMATIC: settings.cinematic = !settings.cinematic; break;
+    case OPT_WATER:    settings.water = !settings.water; break;
+    case OPT_WEATHER:  settings.weather = settings_cycle(settings.weather, WEATHER_COUNT, dir); break;
+    case OPT_ELEMENTS: settings.elements = !settings.elements; break;
     case OPT_AUDIO:    settings.audio = settings_cycle(settings.audio, 3, dir); break;
     case OPT_CHEAT_HEALTH:  settings.cheat_health = !settings.cheat_health; break;
     case OPT_CHEAT_SPIRIT:  settings.cheat_spirit = !settings.cheat_spirit; break;

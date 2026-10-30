@@ -25,6 +25,7 @@ typedef struct {
     int  rank;                          /* position in the sprite list walk: lower is in front */
     int  x, y, w, h;                    /* screen position (x from the left of the 320 area) and size */
     uint16_t attr;
+    bool player;                        /* drawn by the player character's object */
     uint32_t px[32 * 32];               /* layer pixels, w x h, row pitch 32; 0 = transparent */
 } HdSprite;
 
@@ -73,6 +74,9 @@ extern int hd_scaler;
 
 /* Characters cast soft shadows onto the planes (drawn while compositing the layers). */
 extern bool hd_shadows;
+/* Water shimmers, sparkles and reflects the sprites above it (also while compositing). */
+extern bool hd_water;
+extern float hd_time;                   /* seconds, for the water's motion */
 
 /* The finishing steps on the picture before it goes to the GPU (hd_post): lighting,
  * ambience, sharpening. */
@@ -82,6 +86,8 @@ typedef struct {
     bool  ambience;                     /* dust in the air (only with `world`) and a vignette */
     bool  lights;                       /* fire and magic light their surroundings; dark scenes dim */
     bool  cinematic;                    /* film tone curve, colour grade, grain, lens fringing */
+    int   weather;                      /* WEATHER_* (settings.h), in the game world */
+    bool  elements;                     /* particles from spirits and magic (fx.c) */
     bool  world;                        /* the picture shows the game world (not a menu or story scene) */
     float cam_x, cam_y;                 /* the game's camera, in game pixels (dust stays put in the world) */
     float t;                            /* seconds, for the dust's drift */

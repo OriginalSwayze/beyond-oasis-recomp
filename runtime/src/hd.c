@@ -8,6 +8,7 @@
  * and line scrolls are kept because every line was captured with its own colours. */
 #include "hd.h"
 #include "motion.h"
+#include "fx.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -411,6 +412,111 @@ static void make_shadows(int scale, const uint32_t *sprites) {
     memcpy(m, t, (size_t)w * h);
 }
 
+/* ---- Water ----------------------------------------------------------------------------- *
+ * Water is found by colour at the game's resolution: the plane pixel on top is clearly
+ * blue (its blue well above its red and green), in runs at least five pixels wide so blue
+ * details on land are left out. Under no sprite, a water pixel ripples in brightness,
+ * sparkles at points fixed in the world (from the plane's scroll), and reflects the
+ * sprites above it: mirrored at the water's top edge, or at a character's feet when one
+ * stands in it, rippling, fading with the distance and tinted by the water. */
+bool hd_water;
+float hd_time;
+static uint8_t *water_map;              /* per game pixel: 0 land, else the rows up to the edge (capped) */
+static int8_t *water_wx;                /* per game pixel: which plane (for its scroll) */
+static int water_w, water_h;
+static int8_t wave_lut[256];
+
+static inline bool is_water_colour(uint16_t c) {
+    int r = (c >> 1) & 7, g = (c >> 5) & 7, b = (c >> 9) & 7;
+    return b >= 3 && b >= r + 2 && b >= g + 1;
+}
+
+/* The plane pixel the VDP would show (ignoring sprites); *plane gets 0 for A, 1 for B. */
+static inline uint32_t plane_top(int line, int x, int *plane) {
+    uint32_t a = hd_frame.a[line][x], b = hd_frame.b[line][x];
+    bool ao = (a >> 16) & 0x0F, bo = (b >> 16) & 0x0F, ah = (a >> 16) & 0x40, bh = (b >> 16) & 0x40;
+    if (ao && (ah || !(bo && bh))) { *plane = 0; return a; }
+    *plane = 1;
+    return bo ? b : 0;
+}
+
+static void make_water(int scale, const uint32_t *sprites) {
+    int w = hd_frame.w, h = hd_frame.h;
+    if (w != water_w || h != water_h) {
+        free(water_map); free(water_wx);
+        water_map = malloc((size_t)w * h);
+        water_wx = malloc((size_t)w * h);
+        water_w = w; water_h = h;
+        for (int i = 0; i < 256; i++) wave_lut[i] = (int8_t)(sinf(i * 6.2831853f / 256) * 127);
+    }
+    if (!water_map || !water_wx) return;
+    for (int y = 0; y < h; y++) {
+        uint8_t *m = water_map + (size_t)y * w;
+        int8_t *pl = water_wx + (size_t)y * w;
+        for (int x = 0; x < w; x++) {
+            int plane;
+            uint32_t p = plane_top(y, x, &plane);
+            uint32_t s = sprites[(size_t)(y * scale + scale / 2) * hd_w + x * scale + scale / 2];
+            m[x] = ((p >> 16) & 0x0F) && is_water_colour((uint16_t)p) && !((s >> 16) & 0x0F);
+            pl[x] = (int8_t)plane;
+        }
+        /* Runs of at least five, so blue details on land are not water. */
+        for (int x = 0; x < w;) {
+            if (!m[x]) { x++; continue; }
+            int e = x;
+            while (e < w && m[e]) e++;
+            if (e - x < 5) for (int k = x; k < e; k++) m[k] = 0;
+            x = e;
+        }
+    }
+    /* Rows up to the edge above (a sprite in the water is an edge too), 1-60. */
+    for (int x = 0; x < w; x++) {
+        int run = 0;
+        for (int y = 0; y < h; y++) {
+            uint8_t *m = &water_map[(size_t)y * w + x];
+            run = *m ? run + 1 : 0;
+            *m = (uint8_t)(run > 60 ? 60 : run);
+        }
+    }
+}
+
+static inline uint32_t water_pixel(uint32_t c, int x, int y, int line, int scale, const uint32_t *sprites) {
+    int nx = x / scale;
+    int d = water_map[(size_t)line * water_w + nx];
+    int t = (int)(hd_time * 90);
+    /* Soft horizontal swells that wobble sideways as they roll: -127..127. */
+    int wobble = wave_lut[(nx * 3 + t / 3) & 255] / 6;
+    int wave = wave_lut[(line * 19 + wobble + t) & 255];
+    int r = (int)((c >> 16) & 255), g = (int)((c >> 8) & 255), b = (int)(c & 255);
+    /* Ripples: brightness rising and falling along the water. */
+    int k = 256 + wave / 12;
+    r = r * k >> 8; g = g * k >> 8; b = b * k >> 8;
+    /* Reflections of the sprites above the edge. */
+    int sy = y - (2 * d - 1) * scale, sx = x + wave * scale / 160;
+    if (sy >= 0 && sx >= 0 && sx < hd_w && d < 48) {
+        uint32_t sp = sprites[(size_t)sy * hd_w + sx];
+        uint8_t lb = (uint8_t)(sp >> 16);
+        if ((lb & 0x0F) && !(lb & 0x40)) {
+            uint32_t rc = vdp_color_rgb((uint16_t)sp);
+            int a = 100 * (48 - d) / 48;                        /* out of 256: about 40% at the edge */
+            int rr = (int)((rc >> 16) & 255) * 3 / 4, rg = (int)((rc >> 8) & 255) * 3 / 4, rb = (int)(rc & 255) * 3 / 4 + 30;
+            r += (rr - r) * a >> 8; g += (rg - g) * a >> 8; b += ((rb > 255 ? 255 : rb) - b) * a >> 8;
+        }
+    }
+    /* Sparkles at points fixed in the world: plane coordinates from the scroll. */
+    int plane = water_wx[(size_t)line * water_w + nx];
+    int wx = nx - hd_frame.extra - hd_frame.hscroll[plane][line], wy = line + hd_frame.vscroll[plane][line];
+    if (((x % scale) == scale / 2 || scale == 1) && ((y % scale) == scale / 2 || scale == 1)) {
+        uint32_t hsh = hash32((uint32_t)(wx & 1023) * 73856093u ^ (uint32_t)(wy & 1023) * 19349663u);
+        if ((hsh & 63) == 0) {
+            int ph = wave_lut[(int)((hd_time * (40 + (hsh >> 8 & 31))) + (hsh >> 16)) & 255];
+            if (ph > 90) { int s = (ph - 90) * 6; r += s; g += s; b += s; }
+        }
+    }
+    r = r > 255 ? 255 : r; g = g > 255 ? 255 : g; b = b > 255 ? 255 : b;
+    return (uint32_t)(r << 16 | g << 8 | b);
+}
+
 static inline uint32_t shade(uint32_t c, int s) {     /* s: 0-255 shadow */
     int k = 256 - s * 100 / 255;                        /* up to about 40% darker */
     return (uint32_t)((((c >> 16) & 255) * k >> 8) << 16 | (((c >> 8) & 255) * k >> 8) << 8 | ((c & 255) * k >> 8));
@@ -453,6 +559,13 @@ static int compose_band(void *arg) {
                 out[x] = vdp_compose(a, rb[xb], rs[x], backdrop, sh);
             }
         }
+        if (hd_water && water_map) {
+            const uint8_t *wm = water_map + (size_t)line * water_w;
+            for (int x = 0; x < hd_w; x++) {
+                int nx = x / scale;
+                if (nx < water_w && wm[nx] && !((rs[x] >> 16) & 0x0F)) out[x] = water_pixel(out[x], x, y, line, scale, sprites);
+            }
+        }
         if (hd_shadows && shadow_map) {
             const uint8_t *sm = shadow_map + (size_t)line * shadow_w;
             for (int x = 0; x < hd_w; x++) {
@@ -477,6 +590,7 @@ static void compose_part(void *ctx, int y0, int y1) {
 static void compose_rows(int scale, const uint32_t *sprites, const int *ox_a, const int *oy_a,
                          const int *ox_b, const int *oy_b) {
     if (hd_shadows) make_shadows(scale, sprites);
+    if (hd_water) make_water(scale, sprites);
     ComposeJob cj = { scale, 0, 0, sprites, ox_a, oy_a, ox_b, oy_b };
     run_bands(compose_part, &cj, hd_h);
 }
@@ -822,7 +936,8 @@ const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPo
     post_cinematic = p->cinematic;
     post_seed = hash32((uint32_t)(p->t * 1000));
     bool motes = p->ambience && p->world;
-    if (post_light || post_vignette || motes || post_lights || post_cinematic) {
+    bool world_fx = p->world && (p->weather || p->elements);
+    if (post_light || post_vignette || motes || post_lights || post_cinematic || world_fx) {
         size_t need = (size_t)w * h;
         if (need > cap) { free(buf); buf = malloc(need * 4); cap = buf ? need : 0; }
         if (buf) {
@@ -839,6 +954,7 @@ const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPo
             PostJob pj = { src, buf, w, h, pitch, 0, 0 };
             run_bands(post_part, &pj, h);
             if (motes) draw_motes(buf, w, h, p);
+            if (world_fx) fx_draw(buf, w, h, p);
             src = buf;
             pitch = w;
         }

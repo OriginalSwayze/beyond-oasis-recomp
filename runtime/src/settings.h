@@ -22,6 +22,9 @@ typedef struct {
     bool lights;                        /* light sources light their surroundings (hd_post) */
     bool shadows;                       /* characters cast soft shadows (hd_shadows) */
     bool cinematic;                     /* film tone, grade, grain, lens fringing (hd_post) */
+    bool water;                         /* water shimmers, sparkles and reflects (hd_water) */
+    int  weather;                       /* WEATHER_* (fx.c) */
+    bool elements;                      /* particles from spirits and magic (fx.c) */
     int  audio;                         /* sound output: 0 original, 1 clean, 2 rich (sound_quality) */
     int  overclock;                     /* 68000 speed in percent (100 = original): removes slowdown */
     int  window_scale;
@@ -56,7 +59,8 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_OVERCLOCK, OPT_VOLUME,
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
        OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AMBIENCE, OPT_AUDIO,
-       OPT_LIGHTS, OPT_SHADOWS, OPT_CINEMATIC };
+       OPT_LIGHTS, OPT_SHADOWS, OPT_CINEMATIC, OPT_WATER, OPT_WEATHER, OPT_ELEMENTS };
+enum { WEATHER_OFF, WEATHER_BREEZE, WEATHER_SAND, WEATHER_RAIN, WEATHER_MIST, WEATHER_COUNT };
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);
