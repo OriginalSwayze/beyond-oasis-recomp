@@ -591,7 +591,8 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Item animations", OPT_ITEMS, "Dropped items float on a soft glow and glint, easy to spot." },
       { ROW_OPTION, "Water", OPT_WATER, "Water swells, foams at the shore, glints and reflects what stands above it." },
       { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." },
-      { ROW_OPTION, "Dynamic lights", OPT_DYNLIGHT, "Spirits, magic and torches light the scene; characters cast soft shadows." } },
+      { ROW_OPTION, "Dynamic lights", OPT_DYNLIGHT, "Spirits, magic and torches light the scene; characters cast soft shadows." },
+      { ROW_OPTION, "HD-2D look", OPT_HD2D, "Tilt-shift focus, drifting sunbeams, warm grading and floating motes." } },
     { { ROW_ROM, "ROM", 0, "Your Beyond Oasis (USA) cartridge file." },
       { ROW_OPTION, "Cheats", OPT_CHEATS, "Infinite health, spirit power and unbreakable weapons." },
       { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
@@ -605,7 +606,7 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL },
       { ROW_OPTION, "Audio", OPT_AUDIO, NULL } },
 };
-static const int tab_count[TABS] = { 9, 6, 9, 5 };
+static const int tab_count[TABS] = { 9, 7, 9, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define PANEL_X (TABLET_X + 40)

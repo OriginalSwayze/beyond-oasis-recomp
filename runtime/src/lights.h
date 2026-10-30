@@ -17,6 +17,7 @@
  * past the characters onto the light map and works out how dark the scene is. t: seconds. */
 void lights_game_frame(const HdFrame *f, bool world, float t);
 void lights_clear(void);                /* after a load, reset or scene change */
+float lights_darkness(void);            /* how dark the scene is, eased: 0 daylight, 1 a dark cave or night */
 
 /* The light map of the newest game frame, or NULL when it would change nothing. Each cell
  * holds 4 floats: the light's colour and strength (r, g, b, 0 and up) and how much of the

@@ -40,7 +40,7 @@ static uint8_t occ[LIGHT_MAP_H][LIGHT_MAP_W];       /* opaque character pixels i
 static float trans[RAYS][MAX_STEPS];
 static int map_w, map_h, nlights;
 static bool ready;
-static float ambient = 1;
+static float ambient = 1, scene_dark;
 static Light test_light;
 
 void lights_clear(void) { ambient = 1; ready = false; }
@@ -279,7 +279,13 @@ static void build(const HdFrame *f, const Light *lights, float amb) {
     ready = true;
 }
 
+float lights_darkness(void) { return scene_dark; }
+
 void lights_game_frame(const HdFrame *f, bool world, float t) {
+    if (world && (settings.dynlight || settings.hd2d)) {
+        float d = darkness(f);
+        scene_dark += (d - scene_dark) * .06f;
+    }
     if (!settings.dynlight || !world) { ready = false; ambient = 1; nlights = 0; return; }
     map_w = (f->w + LIGHT_CELL - 1) / LIGHT_CELL;
     map_h = (f->h + LIGHT_CELL - 1) / LIGHT_CELL;

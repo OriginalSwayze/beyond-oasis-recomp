@@ -17,8 +17,9 @@
 #include "settings.h"
 #include "genesis.h"
 #include "motion.h"
+#include "lights.h"
 
-enum { EMBER, DROP, WISP, LEAF, DUST, GRASS, RING };
+enum { EMBER, DROP, WISP, LEAF, DUST, GRASS, RING, MOTE };
 
 typedef struct { float x, y, vx, vy; short life, age; uint8_t kind, r, g, b; } Particle;
 
@@ -54,6 +55,7 @@ static void spawn(int kind, float x, float y) {
     case LEAF:  p->vx = (frand() - .5f) * .6f; p->vy = .2f + frand() * .3f; p->life = (short)(70 + next() % 40); break;
     case DUST:  p->vx = (frand() - .5f) * .5f; p->vy = -.15f - frand() * .15f; p->life = (short)(22 + next() % 14); break;
     case GRASS: p->vx = (frand() - .5f) * .9f; p->vy = -.7f - frand() * .5f; p->life = (short)(16 + next() % 8); break;
+    case MOTE:  p->vx = (frand() - .5f) * .12f; p->vy = -.03f - frand() * .05f; p->life = (short)(240 + next() % 200); break;
     default:    p->vx = 0; p->vy = 0; p->life = 18; break;
     }
 }
@@ -189,6 +191,7 @@ void fx_game_frame(HdFrame *f, bool world, float cam_x, float cam_y) {
         case LEAF:  p->vx = sinf(p->age * .12f + i) * .6f; break;
         case GRASS: p->vy += .09f; break;
         case DUST:  p->vx *= .94f; p->vy *= .96f; break;
+        case MOTE:  p->vx += sinf(p->age * .02f + i) * .004f; break;
         default: break;
         }
         p->x += p->vx; p->y += p->vy;
@@ -196,6 +199,12 @@ void fx_game_frame(HdFrame *f, bool world, float cam_x, float cam_y) {
     }
     nparts = n;
     if (settings.footsteps && world) footsteps(f, cam_x, cam_y);
+    /* HD-2D, full: dust motes drifting in the light, in daylight. */
+    if (settings.hd2d >= 2 && world && lights_darkness() < .4f) {
+        int motes = 0;
+        for (int i = 0; i < nparts; i++) motes += parts[i].kind == MOTE;
+        for (; motes < 26; motes++) spawn(MOTE, cam_x + frand() * f->w, cam_y + frand() * f->h);
+    }
     if ((settings.items || settings.elements || settings.dynlight) && world) find_items(f, cam_x, cam_y);
     else nitems = 0;
     if (!settings.elements || !world) return;
@@ -262,6 +271,12 @@ static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
         case LEAF:  dot(px, w, h, x, y, s * 1.2f, 120, 220, 90, .85f * (life > .2f ? 1 : life * 5), false); break;
         case DUST:  dot(px, w, h, x, y, s * (2 + 4 * (1 - life)), q->r, q->g, q->b, .65f * life, false); break;
         case GRASS: dot(px, w, h, x, y, s * .9f, 90, 200, 70, .9f * life, false); break;
+        case MOTE: {                    /* fades in and out, and twinkles */
+            float age = 1 - life, in = age < .1f ? age * 10 : life < .15f ? life / .15f : 1;
+            float tw = sinf(q->age * .07f + i * 1.7f);
+            dot(px, w, h, x, y, s * .7f, 255, 244, 210, in * (.25f + .3f * tw * tw), true);
+            break;
+        }
         default: {                      /* a ring on the water, widening */
             float rr = s * (2 + 7 * (1 - life));
             for (int a = 0; a < 24; a++) {

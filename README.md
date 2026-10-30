@@ -66,7 +66,7 @@ Other headless options:
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
-* `--lighting N` (0-2), `--elements 0|1`, `--items 0|1`, `--water 0|1`, `--dynlight 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
+* `--lighting N` (0-2), `--elements 0|1`, `--items 0|1`, `--water 0|1`, `--dynlight 0|1`, `--hd2d N` (0-2), `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
 * `--outfit a,b,...`, `--outfit-anims 0,1,...`: Ali's outfit colours and animations for this run (as `outfit_colors` and `outfit_anims` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
@@ -329,6 +329,21 @@ gentle gradients show no rings. A scene's mean brightness tells a cave or a nigh
 daylight. Dark scenes keep about 70% of their own light, eased over a second; in daylight the
 lights show only a little, and the shadows they cast darken the ground slightly
 (`runtime/src/lights.c`). `--test-light X,Y,R,G,B,RADIUS` places a light by hand.
+
+"HD-2D look" (Off, Subtle, Full; `hd2d`) gives the diorama look of modern HD-2D games:
+* Depth of field like a tilt-shift photo. A soft copy of the picture (a quarter of the
+  game's resolution, box-blurred twice) is blended in towards the top and bottom of the
+  screen, away from the band around Ali. The HUD's sprites and the window plane stay
+  sharp, pixel by pixel.
+* Light shafts in daylight: warm beams falling from the upper left, drifting slowly. They
+  come from a one-dimensional pattern across the beams, shifted by half the camera's
+  movement so they sit a little behind the scene, and fade out as the scene darkens.
+* Grading: a gentle S-curve, warm highlights, cool shadows, a little more colour and a
+  soft vignette, with an ordered dither so the soft parts show no contour bands.
+* On Full, dust motes drift and twinkle in daylight.
+
+It costs about 2 ms per picture at 4x. Pair it with Lighting and Dynamic lights for the
+full effect.
 
 These, and sharpening, run on the picture before it goes to the GPU (`hd_post`), so the
 display filters still apply on top. None of them change the game. The rows are split into

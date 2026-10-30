@@ -95,6 +95,8 @@ typedef struct {
     bool  footsteps;                    /* dust, grass and splashes where Ali walks (fx.c) */
     bool  items;                        /* dropped items bob and sparkle (fx.c) */
     bool  dynlight;                     /* the light map of lights.c: lights and soft shadows */
+    int   hd2d;                         /* HD-2D look: 0 off, 1 subtle, 2 full */
+    float focus_y;                      /* the row in focus for the depth of field (Ali's middle), game pixels */
     bool  world;                        /* the picture shows the game world (not a menu or story scene) */
     float cam_x, cam_y;                 /* the game's camera, in game pixels (particles stay put in the world) */
     float t;                            /* seconds, for animations */

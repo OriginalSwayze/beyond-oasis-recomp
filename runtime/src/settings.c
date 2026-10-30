@@ -77,6 +77,7 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "items")) settings.items = parse_bool(v);
         else if (!strcmp(k, "water")) settings.water = parse_bool(v);
         else if (!strcmp(k, "dynamic_lights")) settings.dynlight = parse_bool(v);
+        else if (!strcmp(k, "hd2d")) settings.hd2d = atoi(v);
         else if (!strcmp(k, "texture_pack")) snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", v);
         else if (!strcmp(k, "dump_tiles")) settings.dump_tiles = parse_bool(v);
         else if (!strcmp(k, "audio")) settings.audio = atoi(v);
@@ -98,6 +99,7 @@ void settings_load(const char *path) {
     if (settings.ost_mode < 0 || settings.ost_mode >= OST_MODE_COUNT) settings.ost_mode = OST_MODE_ALL;
     if (settings.sharpen < 0 || settings.sharpen > 3) settings.sharpen = 0;
     if (settings.lighting < 0 || settings.lighting > 2) settings.lighting = 0;
+    if (settings.hd2d < 0 || settings.hd2d > 2) settings.hd2d = 0;
     if (settings.audio < 0 || settings.audio > 2) settings.audio = 0;
     if (settings.ost_track < -1 || settings.ost_track > 0xFF) settings.ost_track = -1;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
@@ -134,6 +136,7 @@ void settings_save(const char *path) {
     fprintf(f, "items=%d\n", settings.items);
     fprintf(f, "water=%d\n", settings.water);
     fprintf(f, "dynamic_lights=%d\n", settings.dynlight);
+    fprintf(f, "hd2d=%d\n", settings.hd2d);
     fprintf(f, "texture_pack=%s\n", settings.texture_pack);
     fprintf(f, "dump_tiles=%d\n", settings.dump_tiles);
     fprintf(f, "audio=%d\n", settings.audio);
@@ -200,6 +203,7 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_ITEMS:      snprintf(out, n, "%s", settings.items ? "On" : "Off"); break;
     case OPT_WATER:      snprintf(out, n, "%s", settings.water ? "On" : "Off"); break;
     case OPT_DYNLIGHT:   snprintf(out, n, "%s", settings.dynlight ? "On" : "Off"); break;
+    case OPT_HD2D:       snprintf(out, n, "%s", settings.hd2d == 2 ? "Full" : settings.hd2d ? "Subtle" : "Off"); break;
     case OPT_TEXPACK:    snprintf(out, n, "%s", settings.texture_pack[0] ? settings.texture_pack : "None"); break;
     case OPT_DUMP:       snprintf(out, n, "%s", settings.dump_tiles ? "On" : "Off"); break;
     case OPT_AUDIO:      snprintf(out, n, "%s", settings.audio == 2 ? "Rich" : settings.audio ? "Clean" : "Original"); break;
@@ -309,6 +313,7 @@ void settings_option_change(int id, int dir) {
     case OPT_ITEMS:    settings.items = !settings.items; break;
     case OPT_WATER:    settings.water = !settings.water; break;
     case OPT_DYNLIGHT: settings.dynlight = !settings.dynlight; break;
+    case OPT_HD2D:     settings.hd2d = settings_cycle(settings.hd2d, 3, dir); break;
     case OPT_DUMP:     settings.dump_tiles = !settings.dump_tiles; break;
     case OPT_TEXPACK: {                 /* None, then each folder in texture_packs/ */
         static char names[32][64];

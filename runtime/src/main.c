@@ -163,8 +163,9 @@ static void apply_settings(void) {
 static HdPost finishing(int scale, float t) {
     const uint8_t *layer = bus.ram + 0x1716;
     HdPost p = { settings.sharpen, settings.lighting, settings.elements, settings.footsteps, settings.items,
-                 settings.dynlight, false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
+                 settings.dynlight, settings.hd2d, 0, false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
     p.world = (layer[0x27] & 1) && !vdp_opts.mask_sides;
+    p.focus_y = vdp_player_w ? vdp_player_y + vdp_player_h / 2.f : vdp_screen_height() / 2.f;
     p.cam_x = (float)(int16_t)(layer[0] << 8 | layer[1]);
     p.cam_y = (float)(int16_t)(layer[4] << 8 | layer[5]);
     return p;
@@ -330,6 +331,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--footsteps") && i + 1 < argc) { settings.footsteps = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--items") && i + 1 < argc) { settings.items = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--water") && i + 1 < argc) { settings.water = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--hd2d") && i + 1 < argc) { settings.hd2d = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--dynlight") && i + 1 < argc) { settings.dynlight = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--test-light") && i + 1 < argc) {
             /* --test-light X,Y,R,G,B,RADIUS: a light at X,Y frame pixels, colour 0-1, every frame. */

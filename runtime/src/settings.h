@@ -23,6 +23,7 @@ typedef struct {
     bool items;                         /* dropped items bob, glow and sparkle (fx.c) */
     bool water;                         /* water shimmers, foams, glints and reflects (hd_water) */
     bool dynlight;                      /* dynamic lights with ray-traced soft shadows (lights.c) */
+    int  hd2d;                          /* HD-2D look: 0 off, 1 subtle, 2 full (depth of field, light shafts, grading, motes) */
     char texture_pack[64];              /* folder in texture_packs/, empty for none (texpack.h) */
     bool dump_tiles;                    /* write every tile shown to texture_packs/dump/ */
     int  audio;                         /* sound output: 0 original, 1 clean, 2 rich (sound_quality) */
@@ -59,7 +60,7 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_FILTER, OPT_WINDOW_ALL,      /* fullscreen or a window size, in one option */
        OPT_OVERCLOCK, OPT_VOLUME,
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
-       OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AUDIO, OPT_ELEMENTS, OPT_FOOTSTEPS, OPT_ITEMS, OPT_WATER, OPT_DYNLIGHT,
+       OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AUDIO, OPT_ELEMENTS, OPT_FOOTSTEPS, OPT_ITEMS, OPT_WATER, OPT_DYNLIGHT, OPT_HD2D,
        OPT_TEXPACK, OPT_DUMP };
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
