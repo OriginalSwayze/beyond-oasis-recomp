@@ -19,6 +19,9 @@ typedef struct {
     int  scaler;                        /* layer scaler: 0 edge (Scale2x/3x), 1 smooth (xBR rules) */
     int  lighting;                      /* glow of bright pixels: 0 off, 1 soft, 2 bright (hd_post) */
     bool ambience;                      /* dust in the air and a vignette (hd_post) */
+    bool lights;                        /* light sources light their surroundings (hd_post) */
+    bool shadows;                       /* characters cast soft shadows (hd_shadows) */
+    bool cinematic;                     /* film tone, grade, grain, lens fringing (hd_post) */
     int  audio;                         /* sound output: 0 original, 1 clean, 2 rich (sound_quality) */
     int  overclock;                     /* 68000 speed in percent (100 = original): removes slowdown */
     int  window_scale;
@@ -52,7 +55,8 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_FILTER, OPT_WINDOW_ALL,      /* fullscreen or a window size, in one option */
        OPT_OVERCLOCK, OPT_VOLUME,
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
-       OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AMBIENCE, OPT_AUDIO };
+       OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AMBIENCE, OPT_AUDIO,
+       OPT_LIGHTS, OPT_SHADOWS, OPT_CINEMATIC };
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);

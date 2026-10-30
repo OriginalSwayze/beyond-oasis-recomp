@@ -282,7 +282,7 @@ uint8_t  vdp_outfit_ref[64];
 static uint16_t vdp_outfit[64];         /* this frame's colour for each index */
 uint8_t  vdp_player[PLAYER_IMG * PLAYER_IMG];
 uint16_t vdp_player_cram[64];
-int      vdp_player_w, vdp_player_h;
+int      vdp_player_w, vdp_player_h, vdp_player_x, vdp_player_y;
 static uint8_t player_now[PLAYER_IMG * PLAYER_IMG];     /* the frame being drawn */
 static uint16_t player_cram[64];
 static bool player_entry[80];
@@ -307,6 +307,7 @@ static void player_frame_start(void) {
         memcpy(vdp_player, player_now, sizeof vdp_player);
         memcpy(vdp_player_cram, player_cram, sizeof vdp_player_cram);
         vdp_player_w = player_w; vdp_player_h = player_h;
+        vdp_player_x = player_x0; vdp_player_y = player_y0;
     }
     memset(player_now, 0, sizeof player_now);
     memcpy(player_cram, vdp.cram, sizeof player_cram);

@@ -139,18 +139,24 @@ static void apply_settings(void) {
     outfit_apply();
     sound_quality = settings.audio;
     hd_scaler = settings.scaler;
+    hd_shadows = settings.shadows;
 }
 
 /* The finishing steps for this frame (hd_post), with the camera from the game's RAM: the
  * plane A layer struct at $FF1716 holds it (+00 x, +04 y) while a map layer is active. */
 static HdPost finishing(int scale, float t) {
     const uint8_t *layer = bus.ram + 0x1716;
-    HdPost p = { settings.sharpen, settings.lighting, settings.ambience, false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
+    HdPost p = { settings.sharpen, settings.lighting, settings.ambience, settings.lights, settings.cinematic, false, 0, 0, t,
+                 scale < 1 ? 1 : scale, vdp_opts.extra_width };
     p.world = (layer[0x27] & 1) && !vdp_opts.mask_sides;
     p.cam_x = (float)(int16_t)(layer[0] << 8 | layer[1]);
     p.cam_y = (float)(int16_t)(layer[4] << 8 | layer[5]);
     return p;
 }
+
+/* Ali's middle on screen (frame pixels), for the previews' close-ups; -1 if unknown. */
+static float ali_x(void) { return vdp_player_w ? vdp_player_x + vdp_opts.extra_width + vdp_player_w / 2.f : -1; }
+static float ali_y(void) { return vdp_player_w ? vdp_player_y + vdp_player_h / 2.f : -1; }
 
 /* ---- The pause menu's sounds -------------------------------------------------------- *
  * The game's own menu sounds, rendered once from the ROM (launcher.c) into
@@ -296,6 +302,9 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--sharpen") && i + 1 < argc) { settings.sharpen = atoi(argv[++i]) & 3; test_overrides = true; }   /* 0-3 */
         else if (!strcmp(argv[i], "--lighting") && i + 1 < argc) { settings.lighting = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--ambience") && i + 1 < argc) { settings.ambience = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--lights") && i + 1 < argc) { settings.lights = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--shadows") && i + 1 < argc) { settings.shadows = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--cinematic") && i + 1 < argc) { settings.cinematic = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--scaler") && i + 1 < argc) { settings.scaler = atoi(argv[++i]) != 0; test_overrides = true; }   /* 0 edge, 1 smooth */
         else if (!strcmp(argv[i], "--audio") && i + 1 < argc) { settings.audio = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--volume") && i + 1 < argc) { settings.volume = atoi(argv[++i]); test_overrides = true; }   /* 0-100 */
@@ -611,7 +620,11 @@ int main(int argc, char **argv) {
                 int tw = hd ? hd_w : frame_width(), th = hd ? hd_h : vdp_screen_height();
                 SDL_Texture *t = SDL_CreateTexture(sr, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STATIC, tw, th);
                 HdPost post = finishing(hd ? hd_w / frame_width() : 1, 1.0f);
-                SDL_UpdateTexture(t, NULL, hd_post(hd ? hd_px : framebuffer, tw, th, hd ? hd_w : FB_W, &post), tw * 4);
+                hd_post(hd ? hd_px : framebuffer, tw, th, hd ? hd_w : FB_W, &post);   /* once to set up, then timed */
+                Uint64 p0 = SDL_GetPerformanceCounter();
+                const uint32_t *finished = hd_post(hd ? hd_px : framebuffer, tw, th, hd ? hd_w : FB_W, &post);
+                printf("finishing steps: %.2f ms at %dx%d\n", (SDL_GetPerformanceCounter() - p0) * 1000.0 / SDL_GetPerformanceFrequency(), tw, th);
+                SDL_UpdateTexture(t, NULL, finished, tw * 4);
                 SDL_SetRenderDrawColor(sr, 0, 0, 0, 255);
                 SDL_RenderClear(sr);
                 Uint64 t0 = SDL_GetPerformanceCounter();
@@ -657,7 +670,7 @@ int main(int argc, char **argv) {
         }
         if (save_preview) {
             HdPost here = finishing(1, 0);
-            preview_set_world(here.world, here.cam_x, here.cam_y);
+            preview_set_world(here.world, here.cam_x, here.cam_y, ali_x(), ali_y());
             preview_save(base_dir);
         }
         if (save_to && !savestate_save(save_to, framebuffer, frame_width(), vdp_screen_height(), FB_W))
@@ -669,7 +682,7 @@ int main(int argc, char **argv) {
             if (outfit_page_shot) outfit_open();
             if (menu_tab >= 0) {
                 HdPost here = finishing(1, 0);
-                preview_set_world(here.world, here.cam_x, here.cam_y);
+                preview_set_world(here.world, here.cam_x, here.cam_y, ali_x(), ali_y());
                 menu_select(menu_tab, menu_row);
             }
             menu_render(1.0);
@@ -753,7 +766,7 @@ int main(int argc, char **argv) {
                 SDL_Rect r = display_rect(ww, wh);
                 outfit_preview_save(base_dir);  /* Ali as the launcher's outfit page will show him */
                 HdPost here = finishing(1, 0);
-                preview_set_world(here.world, here.cam_x, here.cam_y);
+                preview_set_world(here.world, here.cam_x, here.cam_y, ali_x(), ali_y());
                 preview_save(base_dir);         /* the frame the launcher's previews will show */
                 menu_open(framebuffer, frame_width(), vdp_screen_height(), FB_W, r.x, r.y, r.w, r.h, ww, wh,
                           win_w ? (float)ww / win_w : 1);
@@ -856,7 +869,8 @@ int main(int argc, char **argv) {
         SDL_Rect dst = display_rect(ww, wh);
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
-        bool hd = (settings.internal_scale > 1 || settings.smooth_motion) && hd_frame.h == vdp_screen_height();
+        /* Shadows are drawn while the layers are put together, so they need this path too. */
+        bool hd = (settings.internal_scale > 1 || settings.smooth_motion || settings.shadows) && hd_frame.h == vdp_screen_height();
         if (hd) {
             if (settings.smooth_motion) hd_compose_at(settings.internal_scale, frac);
             else hd_compose(settings.internal_scale);
@@ -901,7 +915,7 @@ int main(int argc, char **argv) {
     outfit_preview_save(base_dir);
     if (!menu_is_open()) {
         HdPost here = finishing(1, 0);
-        preview_set_world(here.world, here.cam_x, here.cam_y);
+        preview_set_world(here.world, here.cam_x, here.cam_y, ali_x(), ali_y());
     }
     preview_save(base_dir);
     if (!test_overrides) settings_save(ini);

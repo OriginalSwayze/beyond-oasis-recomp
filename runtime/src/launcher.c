@@ -575,24 +575,27 @@ typedef enum { ROW_OPTION, ROW_ROM, ROW_CONTROLS, ROW_TRACK, ROW_OUTFIT } RowKin
 typedef struct { RowKind kind; const char *label; int id; const char *about; } Row;
 
 #define TABS 4
-static const char *const tab_names[TABS] = { "DISPLAY", "ENHANCE", "GAME", "MUSIC" };
-static const Row tab_rows[TABS][8] = {
+static const char *const tab_names[TABS] = { "DISPLAY", "EFFECTS", "GAME", "MUSIC" };
+static const Row tab_rows[TABS][9] = {
     { { ROW_OPTION, "Widescreen", OPT_WIDESCREEN, "Shows more of the world at the sides, streamed by the game's own map code." },
       { ROW_OPTION, "Aspect ratio", OPT_ASPECT, "The shape of the widescreen picture." },
       { ROW_OPTION, "Integer scaling", OPT_INTEGER, "Whole-number scaling only: every pixel the same size." },
       { ROW_OPTION, "Window", OPT_WINDOW_ALL, "Fullscreen, or a window of this many times the game's size." },
       { ROW_OPTION, "Filter", OPT_FILTER, "Scanlines, a curved CRT tube or an LCD grid over the picture." },
-      { ROW_OPTION, "Sharpening", OPT_SHARPEN, "Crisper edges after scaling, without halos (contrast-adaptive)." } },
-    { { ROW_OPTION, "Internal resolution", OPT_INTERNAL, "Redraws each layer at a higher resolution with smoothed edges." },
-      { ROW_OPTION, "Scaler", OPT_SCALER, "Edge rounds corners; Smooth follows curves and slopes (xBR)." },
-      { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
-      { ROW_OPTION, "Lighting", OPT_LIGHTING, "Fire, magic and bright light glow into their surroundings." },
-      { ROW_OPTION, "Ambience", OPT_AMBIENCE, "Dust drifting in the air of the world, and a soft vignette." },
-      { ROW_OPTION, "Sprite flicker fix", OPT_FLICKER, "Lifts the hardware's sprites-per-line limit, so nothing flickers." },
-      { ROW_OPTION, "Slowdown fix", OPT_OVERCLOCK, "A faster 68000, so busy scenes no longer slow down." },
-      { ROW_OPTION, "Rewind", OPT_REWIND_ALL, "Hold the rewind key to step back in time." } },
+      { ROW_OPTION, "Sharpening", OPT_SHARPEN, "Crisper edges after scaling, without halos (contrast-adaptive)." },
+      { ROW_OPTION, "Internal resolution", OPT_INTERNAL, "Redraws each layer at a higher resolution with smoothed edges." },
+      { ROW_OPTION, "Scaler", OPT_SCALER, "Edge rounds corners; Smooth follows curves and slopes (xBR)." } },
+    { { ROW_OPTION, "Lighting", OPT_LIGHTING, "Fire, magic and bright light glow into their surroundings." },
+      { ROW_OPTION, "Light sources", OPT_LIGHTS, "Fire and magic light up the ground around them; dark places dim a little." },
+      { ROW_OPTION, "Shadows", OPT_SHADOWS, "Characters cast soft shadows, as if lit from the top left." },
+      { ROW_OPTION, "Cinematic", OPT_CINEMATIC, "A film tone curve and grade, fine grain and lens colour at the edges." },
+      { ROW_OPTION, "Ambience", OPT_AMBIENCE, "Dust drifting in the air of the world, and a soft vignette." } },
     { { ROW_ROM, "ROM", 0, "Your Beyond Oasis (USA) cartridge file." },
       { ROW_OPTION, "Cheats", OPT_CHEATS, "Infinite health, spirit power and unbreakable weapons." },
+      { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
+      { ROW_OPTION, "Sprite flicker fix", OPT_FLICKER, "Lifts the hardware's sprites-per-line limit, so nothing flickers." },
+      { ROW_OPTION, "Slowdown fix", OPT_OVERCLOCK, "A faster 68000, so busy scenes no longer slow down." },
+      { ROW_OPTION, "Rewind", OPT_REWIND_ALL, "Hold the rewind key to step back in time." },
       { ROW_CONTROLS, "Controls", 0, "Keyboard keys and controller buttons for every action." },
       { ROW_OUTFIT, "Ali's outfit", 0, "Pick the colours of his clothes, with a preview before you apply them." },
       { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER, "Off starts the game directly (show_launcher=1 in settings.ini brings it back)." } },
@@ -600,7 +603,7 @@ static const Row tab_rows[TABS][8] = {
       { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL },
       { ROW_OPTION, "Audio", OPT_AUDIO, NULL } },
 };
-static const int tab_count[TABS] = { 6, 8, 5, 5 };
+static const int tab_count[TABS] = { 8, 5, 9, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define PANEL_X (TABLET_X + 40)
@@ -610,7 +613,7 @@ static const int tab_count[TABS] = { 6, 8, 5, 5 };
 #define TAB_X0  (TABLET_X + 26)
 #define TAB_W   ((TABLET_W - 52) / TABS)
 #define ROWS_Y  (TAB_Y + TAB_H + 26)
-#define ROW_H   44
+#define ROW_H   40
 #define CARD_Y  (ROWS_Y + 5 * ROW_H + 14)
 #define CARD_H  160
 #define BTN_Y   (TABLET_Y + TABLET_H - 118)

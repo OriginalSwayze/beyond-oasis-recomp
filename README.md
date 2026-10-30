@@ -66,7 +66,7 @@ Other headless options:
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
-* `--lighting N` (0-2), `--ambience 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run
+* `--lighting N` (0-2), `--ambience 0|1`, `--lights 0|1`, `--shadows 0|1`, `--cinematic 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
 * `--outfit a,b,c,d`: Ali's outfit colours for this run (as `outfit_colors` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
@@ -284,8 +284,26 @@ in the air; they are placed in the world (the camera position is read from the p
 layer struct at $FF1716), so they stay put as the camera moves. Menus and story scenes get
 the vignette only.
 
+"Light sources" (`lights`): vivid, bright pixels (fire, magic, glowing crystals) are
+gathered into a small light map, blurred wide, and the surfaces around them take their
+colour. A scene's average brightness decides the ambient: in a dark scene (a cave, a
+night) everything else dims to about 80% so the lights stand out; daylight stays as it is.
+
+"Shadows" (`shadows`): the low-priority sprites (characters and objects; the HUD is high
+priority) make a mask at the game's resolution, moved 2 pixels right and 3 down as if lit
+from the top left and blurred; plane pixels under it are darkened by up to 40%, sprites are
+not. It is drawn while the layers are put together, so it also works at native resolution.
+
+"Cinematic" (`cinematic`): an S-curve for a little more contrast in the midtones (black and
+white stay put), cooler shadows and warmer highlights by brightness, 18% more colour, fine
+film grain that changes every picture, and red and blue a pixel or two apart towards the
+edges, like a lens. It runs in integer arithmetic from lookup tables.
+
 These, and sharpening, run on the picture before it goes to the GPU (`hd_post`), so the
-display filters still apply on top. None of them change the game.
+display filters still apply on top. None of them change the game. The rows are split into
+small bands that the threads take as they come free (on CPUs with fast and slow cores,
+equal shares wait for the slow ones), and the light maps are made once per game frame, not
+for every in-between picture: with all of them on, a 4x picture takes about 4 ms more.
 
 ## Audio
 

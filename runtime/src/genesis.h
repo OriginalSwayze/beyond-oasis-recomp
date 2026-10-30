@@ -74,6 +74,7 @@ extern uint8_t  vdp_outfit_ref[64];
 extern uint8_t  vdp_player[PLAYER_IMG * PLAYER_IMG];
 extern uint16_t vdp_player_cram[64];
 extern int      vdp_player_w, vdp_player_h;   /* 0 until he has been on screen */
+extern int      vdp_player_x, vdp_player_y;   /* where that picture was on screen (x from the left of the 320 area) */
 uint16_t vdp_outfit_shade(uint16_t pick, uint16_t now, int ref);   /* the colour an index gets */
 uint32_t vdp_color_rgb(uint16_t cram);                             /* 0x00RRGGBB */
 

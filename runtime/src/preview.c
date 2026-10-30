@@ -14,14 +14,17 @@
 #include "settings.h"
 #include "ui.h"
 
-typedef struct { int scale, scaler, sharpen, lighting; bool ambience; } Look;
+typedef struct { int scale, scaler, sharpen, lighting; bool ambience, lights, shadows, cinematic; } Look;
 
-static struct { bool world; float cam_x, cam_y; } where;
+static struct { bool world; float cam_x, cam_y, focus_x, focus_y; } where;
 
-void preview_set_world(bool world, float cam_x, float cam_y) { where.world = world; where.cam_x = cam_x; where.cam_y = cam_y; }
+void preview_set_world(bool world, float cam_x, float cam_y, float focus_x, float focus_y) {
+    where.world = world; where.cam_x = cam_x; where.cam_y = cam_y;
+    where.focus_x = focus_x; where.focus_y = focus_y;
+}
 
 /* ---- The saved frame ------------------------------------------------------------------- */
-#define FRAME_MAGIC 0x56455250u          /* "PREV" */
+#define FRAME_MAGIC 0x32455250u          /* "PRE2" */
 
 static void frame_path(char *out, size_t n, const char *dir) { snprintf(out, n, "%spreview_frame.cache", dir ? dir : ""); }
 
@@ -56,7 +59,8 @@ bool preview_ready(void) { return hd_frame.h > 0 && hd_frame.w > 0; }
 
 /* ---- Which looks to compare ------------------------------------------------------------ */
 static Look look_now(void) {
-    return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, settings.ambience };
+    return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, settings.ambience,
+                   settings.lights, settings.shadows, settings.cinematic };
 }
 
 /* The look without the option and with it, whether to show it 1:1, and the label of the
@@ -93,6 +97,19 @@ static bool looks_for(int option, Look *off, Look *on, bool *zoom, char *label, 
         off->ambience = false; on->ambience = true;
         settings.ambience = true;
         break;
+    case OPT_LIGHTS:
+        off->lights = false; on->lights = true;
+        settings.lights = true;
+        break;
+    case OPT_CINEMATIC:
+        off->cinematic = false; on->cinematic = true;
+        settings.cinematic = true;
+        break;
+    case OPT_SHADOWS:
+        off->shadows = false; on->shadows = true;
+        settings.shadows = true;
+        *zoom = true;
+        break;
     default:
         return false;
     }
@@ -113,11 +130,14 @@ typedef struct { uint32_t *px; int w, h; } Picture;
 
 static void render_look(const Look *l, Picture *out) {
     int keep_scaler = hd_scaler;
+    bool keep_shadows = hd_shadows;
     hd_scaler = l->scaler;
+    hd_shadows = l->shadows;
     hd_compose(l->scale);
     hd_scaler = keep_scaler;
+    hd_shadows = keep_shadows;
     int scale = hd_w / (hd_frame.w > 0 ? hd_frame.w : 1);
-    HdPost post = { l->sharpen, l->lighting, l->ambience, where.world, where.cam_x, where.cam_y, 2.0f, scale < 1 ? 1 : scale, hd_frame.extra };
+    HdPost post = { l->sharpen, l->lighting, l->ambience, l->lights, l->cinematic, where.world, where.cam_x, where.cam_y, 2.0f, scale < 1 ? 1 : scale, hd_frame.extra };
     const uint32_t *img = hd_post(hd_px, hd_w, hd_h, hd_w, &post);
     free(out->px);
     out->px = malloc((size_t)hd_w * hd_h * 4);
@@ -157,7 +177,11 @@ void preview_draw(int option, float x, float y, float w, float h, float t) {
         uw = frame_aspect > card ? card / frame_aspect : 1;
         vh = frame_aspect > card ? 1 : frame_aspect / card;
     }
-    u0 = .5f - uw / 2; v0 = .52f - vh / 2;
+    float cu = .5f, cv = .52f;
+    if (zoomed && where.focus_x >= 0) { cu = where.focus_x / fw; cv = where.focus_y / fh; }   /* on Ali */
+    u0 = cu - uw / 2; v0 = cv - vh / 2;
+    if (u0 < 0) u0 = 0;
+    if (u0 + uw > 1) u0 = 1 - uw;
     if (v0 < 0) v0 = 0;
     if (v0 + vh > 1) v0 = 1 - vh;
     /* Skip the widescreen sides when they are masked. */

@@ -71,12 +71,17 @@ extern int hd_owned;                    /* sprites of the newest frame that belo
  * source pixels like Scale2x so layers, priorities and transparency stay exact). */
 extern int hd_scaler;
 
+/* Characters cast soft shadows onto the planes (drawn while compositing the layers). */
+extern bool hd_shadows;
+
 /* The finishing steps on the picture before it goes to the GPU (hd_post): lighting,
  * ambience, sharpening. */
 typedef struct {
     int   sharpen;                      /* 0-3 */
     int   lighting;                     /* 0 off, 1 soft, 2 bright: bright pixels glow */
     bool  ambience;                     /* dust in the air (only with `world`) and a vignette */
+    bool  lights;                       /* fire and magic light their surroundings; dark scenes dim */
+    bool  cinematic;                    /* film tone curve, colour grade, grain, lens fringing */
     bool  world;                        /* the picture shows the game world (not a menu or story scene) */
     float cam_x, cam_y;                 /* the game's camera, in game pixels (dust stays put in the world) */
     float t;                            /* seconds, for the dust's drift */

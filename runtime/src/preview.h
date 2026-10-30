@@ -6,8 +6,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Where the frame was in the game world (dust and weather stay put in it). */
-void preview_set_world(bool world, float cam_x, float cam_y);
+/* Where the frame was in the game world (dust and weather stay put in it), and the point
+ * close-ups centre on (Ali, in frame pixels; negative for the middle of the screen). */
+void preview_set_world(bool world, float cam_x, float cam_y, float focus_x, float focus_y);
 
 /* The game saves its frame (the renderer's layers, hd_frame) next to the executable for
  * the launcher; the launcher loads it. */

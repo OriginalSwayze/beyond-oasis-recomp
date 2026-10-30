@@ -69,6 +69,9 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "scaler")) settings.scaler = !strcmp(v, "smooth");
         else if (!strcmp(k, "lighting")) settings.lighting = atoi(v);
         else if (!strcmp(k, "ambience")) settings.ambience = parse_bool(v);
+        else if (!strcmp(k, "lights")) settings.lights = parse_bool(v);
+        else if (!strcmp(k, "shadows")) settings.shadows = parse_bool(v);
+        else if (!strcmp(k, "cinematic")) settings.cinematic = parse_bool(v);
         else if (!strcmp(k, "audio")) settings.audio = atoi(v);
         else if (!strcmp(k, "ost_track")) settings.ost_track = atoi(v);
         else if (input_ini_load(k, v)) {}
@@ -120,6 +123,9 @@ void settings_save(const char *path) {
     fprintf(f, "scaler=%s\n", settings.scaler ? "smooth" : "edge");
     fprintf(f, "lighting=%d\n", settings.lighting);
     fprintf(f, "ambience=%d\n", settings.ambience);
+    fprintf(f, "lights=%d\n", settings.lights);
+    fprintf(f, "shadows=%d\n", settings.shadows);
+    fprintf(f, "cinematic=%d\n", settings.cinematic);
     fprintf(f, "audio=%d\n", settings.audio);
     fprintf(f, "ost_track=%d\n", settings.ost_track);
     fprintf(f, "cheat_health=%d\n", settings.cheat_health);
@@ -180,6 +186,9 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_SCALER:     snprintf(out, n, "%s", settings.scaler ? "Smooth (xBR)" : "Edge"); break;
     case OPT_LIGHTING:   snprintf(out, n, "%s", settings.lighting == 2 ? "Bright" : settings.lighting ? "Soft" : "Off"); break;
     case OPT_AMBIENCE:   snprintf(out, n, "%s", settings.ambience ? "On" : "Off"); break;
+    case OPT_LIGHTS:     snprintf(out, n, "%s", settings.lights ? "On" : "Off"); break;
+    case OPT_SHADOWS:    snprintf(out, n, "%s", settings.shadows ? "On" : "Off"); break;
+    case OPT_CINEMATIC:  snprintf(out, n, "%s", settings.cinematic ? "On" : "Off"); break;
     case OPT_AUDIO:      snprintf(out, n, "%s", settings.audio == 2 ? "Rich" : settings.audio ? "Clean" : "Original"); break;
     case OPT_OVERCLOCK:
         if (settings.overclock <= 100) snprintf(out, n, "Off");
@@ -276,6 +285,9 @@ void settings_option_change(int id, int dir) {
     case OPT_SCALER:   settings.scaler = !settings.scaler; break;
     case OPT_LIGHTING: settings.lighting = settings_cycle(settings.lighting, 3, dir); break;
     case OPT_AMBIENCE: settings.ambience = !settings.ambience; break;
+    case OPT_LIGHTS:   settings.lights = !settings.lights; break;
+    case OPT_SHADOWS:  settings.shadows = !settings.shadows; break;
+    case OPT_CINEMATIC: settings.cinematic = !settings.cinematic; break;
     case OPT_AUDIO:    settings.audio = settings_cycle(settings.audio, 3, dir); break;
     case OPT_CHEAT_HEALTH:  settings.cheat_health = !settings.cheat_health; break;
     case OPT_CHEAT_SPIRIT:  settings.cheat_spirit = !settings.cheat_spirit; break;
