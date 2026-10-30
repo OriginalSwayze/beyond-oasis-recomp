@@ -650,8 +650,7 @@ static struct {
     int changed_item;
     float flash;                        /* the spirits' flare on a choice, fading */
     float t;
-    float mouse_x, mouse_y, mouse_t;    /* the mouse (layout units) and when it last moved, for the light */
-} ui = { .mouse_t = -1 };
+} ui;
 
 static bool play_enabled(void) { return rom_ok; }
 static char rom_status[96];
@@ -893,7 +892,7 @@ static void draw_ui(float t) {
     }
 
     float lx, ly;
-    foil_light(t, ui.mouse_x, ui.mouse_y, ui.mouse_t, &lx, &ly);
+    foil_light(t, 0, 0, -1, &lx, &ly);   /* drifting on its own, not following the mouse */
     ui_button(PLAY_X, BTN_Y, PLAY_W, BTN_H, "PLAY", 20, true, ui.selected == ITEM_PLAY, play_enabled(), lx, ly, t);
     ui_button(QUIT_X, BTN_Y, QUIT_W, BTN_H, "QUIT", 20, false, ui.selected == ITEM_QUIT, true, lx, ly, t);
     const char *keys = "\xE2\x86\x91\xE2\x86\x93 select    \xE2\x86\x90\xE2\x86\x92 change    Q E  tabs    [ ]  track    M  music    Esc  quit";
@@ -912,7 +911,7 @@ static void draw_ui(float t) {
             foil_finish(&card);
         }
         float lx, ly;
-        foil_light(t, ui.mouse_x, ui.mouse_y, ui.mouse_t, &lx, &ly);
+        foil_light(t, 0, 0, -1, &lx, &ly);   /* drifting on its own, not following the mouse */
         if (a > .99f) foil_draw(&card, lx, ly, t);
         else ui_panel(px - 18, py - 50, pw + 36, ph + 74, 14, rgb_hex(0x14131A), rgb_hex(0x0A090D), .92f * a, rgb_hex(0xD9B567), .45f * a);
         ui_draw_text("PREVIEW  \xC2\xB7  YOUR LAST GAME FRAME", "Segoe UI Semibold", 12, 600, 3, px, py - 30,
@@ -979,7 +978,7 @@ static void build_tablet(void) {
 static void render(float t) {
     ui.t = t;
     float lx, ly;
-    foil_light(t, ui.mouse_x, ui.mouse_y, ui.mouse_t, &lx, &ly);
+    foil_light(t, 0, 0, -1, &lx, &ly);   /* drifting on its own, not following the mouse */
     if (foil_backdrop(t)) {
         foil_shadow(CASE_X + 10, CASE_Y + 18, CASE_W, CASE_H, 18);
         foil_shadow(TABLET_X + 8, TABLET_Y + 14, TABLET_W, TABLET_H, 20);
@@ -1147,7 +1146,6 @@ int launcher_run(const char *ini_path) {
             case SDL_CONTROLLERDEVICEADDED: if (!pad) pad = SDL_GameControllerOpen(e.cdevice.which); break;
             case SDL_MOUSEMOTION: {
                 /* Mouse positions are in window points, which match the 1280x720 layout. */
-                ui.mouse_x = (float)e.motion.x; ui.mouse_y = (float)e.motion.y; ui.mouse_t = ui.t;
                 int h = hit_test(e.motion.x, e.motion.y);
                 if (h >= HIT_TAB0) { if (ui.tab == h - HIT_TAB0) select_item(ITEM_TABS); }
                 else if (h >= -1 && h < 200) select_item(h);
