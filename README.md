@@ -66,7 +66,7 @@ Other headless options:
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
-* `--lighting N` (0-2), `--ambience 0|1`, `--lights 0|1`, `--shadows 0|1`, `--cinematic 0|1`, `--water 0|1`, `--weather N` (0-4), `--elements 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
+* `--lighting N` (0-2), `--ambience 0|1`, `--lights 0|1`, `--shadows 0|1`, `--cinematic 0|1`, `--water 0|1`, `--weather N` (0-4), `--elements 0|1`, `--footsteps 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
 * `--outfit a,b,c,d`: Ali's outfit colours for this run (as `outfit_colors` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
@@ -155,17 +155,19 @@ cannot be asked to play them while it is paused without changing it, so they are
 once from the ROM, the way the launcher's player does (`menu_sounds.cache`, about half a
 second on the first start), and played straight into the audio queue.
 
-All the enhancements are off by default, so the game looks and sounds as it did on the
-console until you turn something on.
+All the enhancements are off by default (on a fresh install also widescreen, internal
+resolution, smooth motion and the sprite flicker fix), so the game looks and sounds as it
+did on the console until you turn something on.
 
 ## Internal resolution
 
 "Internal resolution" (launcher and pause menu, `internal_scale` in `settings.ini`,
-default 3x) redraws the game at 2x, 3x or 4x of its 320x224 picture. The VDP keeps each
+default Native) redraws the game at 2x, 3x, 4x or 6x of its 320x224 picture (6x, 2544x1344,
+is for 1440p and 4K screens: about 10 ms a picture with Edge, 15 with Smooth, on a fast CPU). The VDP keeps each
 line's three layers (plane B, plane A with the window, sprites) with their colours and
 priorities. `hd.c` scales each layer on its own with Scale2x or Scale3x (4x is 2x twice),
 then composites them at that size with the VDP's own rules, priorities and
-shadow/highlight included.
+shadow/highlight included. 6x is 3x and then 2x.
 
 These scalers only copy whole source pixels, so outlines and diagonals get smoothed while
 colours stay exact and layers never bleed into each other. Mid-frame palette changes and
@@ -319,6 +321,11 @@ fire colours embers that rise and fade, light blue drops that splash up and fall
 wisps that drift, bright green leaves that flutter down. That is how the spirits, the
 magic and the flames are drawn, so they come alive while Ali's own colours (his hair, his
 boots) and the HUD give none. A camera jump (a new scene) or loading a state clears them.
+
+"Footsteps" (`footsteps`): while Ali walks (his sprites' box, from the renderer, moving in
+the world), every few frames the ground under his feet decides what he kicks up: water
+splashes (a widening ring and drops), grass gives bits of green that hop away, anything
+else a puff of dust in the ground's own colour.
 
 These, and sharpening, run on the picture before it goes to the GPU (`hd_post`), so the
 display filters still apply on top. None of them change the game. The rows are split into

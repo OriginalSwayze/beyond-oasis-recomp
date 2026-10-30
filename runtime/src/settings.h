@@ -12,7 +12,7 @@ typedef struct {
     bool fullscreen;
     bool integer_scale;
     bool no_sprite_limit;
-    int  internal_scale;                /* 1 = native; 2-4 = layers redrawn at that scale (hd.c) */
+    int  internal_scale;                /* 1 = native; 2, 3, 4 or 6 = layers redrawn at that scale (hd.c) */
     bool smooth_motion;                 /* draw between the game's 30 Hz ticks (hd.c, motion.c) */
     int  filter;                        /* FILTER_* (filter.h): off, scanlines, CRT, LCD */
     int  sharpen;                       /* sharpening: 0 off, 1 light, 2 medium, 3 strong (hd_sharpen) */
@@ -25,6 +25,7 @@ typedef struct {
     bool water;                         /* water shimmers, sparkles and reflects (hd_water) */
     int  weather;                       /* WEATHER_* (fx.c) */
     bool elements;                      /* particles from spirits and magic (fx.c) */
+    bool footsteps;                     /* dust, grass and splashes where Ali walks (fx.c) */
     int  audio;                         /* sound output: 0 original, 1 clean, 2 rich (sound_quality) */
     int  overclock;                     /* 68000 speed in percent (100 = original): removes slowdown */
     int  window_scale;
@@ -59,7 +60,7 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_OVERCLOCK, OPT_VOLUME,
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
        OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AMBIENCE, OPT_AUDIO,
-       OPT_LIGHTS, OPT_SHADOWS, OPT_CINEMATIC, OPT_WATER, OPT_WEATHER, OPT_ELEMENTS };
+       OPT_LIGHTS, OPT_SHADOWS, OPT_CINEMATIC, OPT_WATER, OPT_WEATHER, OPT_ELEMENTS, OPT_FOOTSTEPS };
 enum { WEATHER_OFF, WEATHER_BREEZE, WEATHER_SAND, WEATHER_RAIN, WEATHER_MIST, WEATHER_COUNT };
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */

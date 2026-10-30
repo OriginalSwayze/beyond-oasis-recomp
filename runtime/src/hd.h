@@ -13,7 +13,7 @@
 
 #define HD_MAX_W (320 + MAX_EXTRA_WIDTH * 2)
 #define HD_MAX_H 240
-#define HD_MAX_SCALE 4
+#define HD_MAX_SCALE 6                  /* 6x: 2544 x 1344, for 1440p and 4K screens */
 
 enum { HD_LINE_DISPLAY = 1, HD_LINE_SH = 2, HD_LINE_COLUMN_VSCROLL = 4 };
 #define HD_WINDOW 0x80                  /* layer byte bit: plane A pixel from the window (does not scroll) */
@@ -88,6 +88,7 @@ typedef struct {
     bool  cinematic;                    /* film tone curve, colour grade, grain, lens fringing */
     int   weather;                      /* WEATHER_* (settings.h), in the game world */
     bool  elements;                     /* particles from spirits and magic (fx.c) */
+    bool  footsteps;                    /* dust, grass and splashes where Ali walks (fx.c) */
     bool  world;                        /* the picture shows the game world (not a menu or story scene) */
     float cam_x, cam_y;                 /* the game's camera, in game pixels (dust stays put in the world) */
     float t;                            /* seconds, for the dust's drift */

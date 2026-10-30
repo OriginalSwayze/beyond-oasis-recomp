@@ -149,7 +149,7 @@ static void apply_settings(void) {
 static HdPost finishing(int scale, float t) {
     const uint8_t *layer = bus.ram + 0x1716;
     HdPost p = { settings.sharpen, settings.lighting, settings.ambience, settings.lights, settings.cinematic,
-                 settings.weather, settings.elements, false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
+                 settings.weather, settings.elements, settings.footsteps, false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
     p.world = (layer[0x27] & 1) && !vdp_opts.mask_sides;
     p.cam_x = (float)(int16_t)(layer[0] << 8 | layer[1]);
     p.cam_y = (float)(int16_t)(layer[4] << 8 | layer[5]);
@@ -316,6 +316,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--water") && i + 1 < argc) { settings.water = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--weather") && i + 1 < argc) { settings.weather = atoi(argv[++i]) % WEATHER_COUNT; test_overrides = true; }
         else if (!strcmp(argv[i], "--elements") && i + 1 < argc) { settings.elements = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--footsteps") && i + 1 < argc) { settings.footsteps = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--scaler") && i + 1 < argc) { settings.scaler = atoi(argv[++i]) != 0; test_overrides = true; }   /* 0 edge, 1 smooth */
         else if (!strcmp(argv[i], "--audio") && i + 1 < argc) { settings.audio = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--volume") && i + 1 < argc) { settings.volume = atoi(argv[++i]); test_overrides = true; }   /* 0-100 */

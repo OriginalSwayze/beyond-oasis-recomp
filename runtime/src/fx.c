@@ -17,10 +17,11 @@
 #include <string.h>
 
 #include "settings.h"
+#include "genesis.h"
 
-enum { EMBER, DROP, WISP, LEAF };
+enum { EMBER, DROP, WISP, LEAF, DUST, GRASS, RING };
 
-typedef struct { float x, y, vx, vy; short life, age; uint8_t kind; } Particle;
+typedef struct { float x, y, vx, vy; short life, age; uint8_t kind, r, g, b; } Particle;
 
 #define MAX_PARTICLES 600
 static Particle parts[MAX_PARTICLES];
@@ -52,8 +53,48 @@ static void spawn(int kind, float x, float y) {
     case EMBER: p->vx = (frand() - .5f) * .5f; p->vy = -.5f - frand() * .7f; p->life = (short)(40 + next() % 30); break;
     case DROP:  p->vx = (frand() - .5f) * 1.2f; p->vy = -.8f - frand() * .6f; p->life = (short)(30 + next() % 20); break;
     case WISP:  p->vx = (frand() - .5f) * .4f; p->vy = -.2f - frand() * .3f; p->life = (short)(60 + next() % 40); break;
-    default:    p->vx = (frand() - .5f) * .6f; p->vy = .2f + frand() * .3f; p->life = (short)(70 + next() % 40); break;
+    case LEAF:  p->vx = (frand() - .5f) * .6f; p->vy = .2f + frand() * .3f; p->life = (short)(70 + next() % 40); break;
+    case DUST:  p->vx = (frand() - .5f) * .5f; p->vy = -.15f - frand() * .15f; p->life = (short)(22 + next() % 14); break;
+    case GRASS: p->vx = (frand() - .5f) * .9f; p->vy = -.7f - frand() * .5f; p->life = (short)(16 + next() % 8); break;
+    default:    p->vx = 0; p->vy = 0; p->life = 18; break;
     }
+}
+
+/* ---- Footsteps ---------------------------------------------------------------------------- *
+ * Where Ali walks (his sprites' box, from the renderer), the ground under his feet decides
+ * what he kicks up: water splashes (a ring and drops), grass gives bits of green that hop
+ * away, anything else a puff of dust in the ground's own colour. */
+static float feet_x, feet_y;
+static bool have_feet;
+static int step_clock;
+
+static uint32_t ground_at(const HdFrame *f, int x, int y) {
+    if (x < 0 || y < 0 || x >= f->w || y >= f->h) return 0;
+    uint32_t a = f->a[y][x], b = f->b[y][x];
+    bool ao = (a >> 16) & 0x0F, ah = (a >> 16) & 0x40, bo = (b >> 16) & 0x0F, bh = (b >> 16) & 0x40;
+    uint32_t top = ao && (ah || !(bo && bh)) ? a : bo ? b : 0;
+    return top ? vdp_color_rgb((uint16_t)top) : 0;
+}
+
+static void footsteps(const HdFrame *f, float cam_x, float cam_y) {
+    if (!vdp_player_w) { have_feet = false; return; }
+    float sx = vdp_player_x + vdp_player_w / 2.f + f->extra, sy = vdp_player_y + vdp_player_h - 3.f;
+    float wx = sx + cam_x, wy = sy + cam_y;
+    bool moving = have_feet && fabsf(wx - feet_x) + fabsf(wy - feet_y) > .4f && fabsf(wx - feet_x) + fabsf(wy - feet_y) < 12;
+    feet_x = wx; feet_y = wy; have_feet = true;
+    if (!moving || ++step_clock % 7) return;
+    uint32_t c = ground_at(f, (int)sx, (int)sy + 2);
+    if (!c) return;
+    int r = (int)((c >> 16) & 255), g = (int)((c >> 8) & 255), b = (int)(c & 255);
+    int kind = b > r + 40 && b > g + 10 ? RING : g > r + 25 && g > b + 25 ? GRASS : DUST;
+    int n = kind == RING ? 1 : 3;
+    for (int k = 0; k < n; k++) {
+        if (nparts >= MAX_PARTICLES) return;
+        spawn(kind, wx + (frand() - .5f) * 6, wy + (frand() - .5f) * 2);
+        Particle *p = &parts[nparts - 1];
+        p->r = (uint8_t)(r + (255 - r) / 3); p->g = (uint8_t)(g + (255 - g) / 3); p->b = (uint8_t)(b + (255 - b) / 3);
+    }
+    if (kind == RING) for (int k = 0; k < 3; k++) spawn(DROP, wx + (frand() - .5f) * 6, wy);
 }
 
 void fx_game_frame(const HdFrame *f, bool world, float cam_x, float cam_y) {
@@ -69,12 +110,16 @@ void fx_game_frame(const HdFrame *f, bool world, float cam_x, float cam_y) {
         case EMBER: p->vx += (frand() - .5f) * .08f; break;
         case DROP:  p->vy += .07f; break;
         case WISP:  p->vx += sinf(p->age * .15f + i) * .02f; break;
-        default:    p->vx = sinf(p->age * .12f + i) * .6f; break;
+        case LEAF:  p->vx = sinf(p->age * .12f + i) * .6f; break;
+        case GRASS: p->vy += .09f; break;
+        case DUST:  p->vx *= .94f; p->vy *= .96f; break;
+        default: break;
         }
         p->x += p->vx; p->y += p->vy;
         parts[n++] = *p;
     }
     nparts = n;
+    if (settings.footsteps && world) footsteps(f, cam_x, cam_y);
     if (!settings.elements || !world) return;
     for (int i = 0; i < 80; i++) {
         const HdSprite *s = &f->sprites[i];
@@ -250,12 +295,21 @@ static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
     for (int i = 0; i < nparts; i++) {
         const Particle *q = &parts[i];
         float life = 1 - (float)q->age / q->life;
-        float x = (q->x - p->cam_x + p->extra) * s, y = (q->y - p->cam_y) * s;
+        float x = (q->x - p->cam_x) * s, y = (q->y - p->cam_y) * s;    /* made from picture positions: the sides are in */
         switch (q->kind) {
         case EMBER: dot(px, w, h, x, y, s * 1.3f, 255, (int)(120 + 100 * life), 40, .9f * life, true); break;
         case DROP:  dot(px, w, h, x, y, s * 1.0f, 150, 220, 255, .8f * life, true); break;
         case WISP:  dot(px, w, h, x, y, s * 2.4f, 170, 110, 255, .35f * life, true); break;
-        default:    dot(px, w, h, x, y, s * 1.2f, 120, 220, 90, .85f * (life > .2f ? 1 : life * 5), false); break;
+        case LEAF:  dot(px, w, h, x, y, s * 1.2f, 120, 220, 90, .85f * (life > .2f ? 1 : life * 5), false); break;
+        case DUST:  dot(px, w, h, x, y, s * (2 + 4 * (1 - life)), q->r, q->g, q->b, .65f * life, false); break;
+        case GRASS: dot(px, w, h, x, y, s * .9f, 90, 200, 70, .9f * life, false); break;
+        default: {                      /* a ring on the water, widening */
+            float rr = s * (2 + 7 * (1 - life));
+            for (int a = 0; a < 24; a++) {
+                float ang = a * .2618f;
+                dot(px, w, h, x + cosf(ang) * rr, y + sinf(ang) * rr * .45f, s * .6f, 220, 235, 255, .5f * life, false);
+            }
+        }
         }
     }
 }
@@ -263,5 +317,5 @@ static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
 void fx_draw(uint32_t *px, int w, int h, const HdPost *p) {
     if (!p->world) return;
     if (p->weather) draw_weather(px, w, h, p);
-    if (p->elements) draw_particles(px, w, h, p);
+    if (nparts) draw_particles(px, w, h, p);
 }

@@ -142,9 +142,10 @@ static void xbr(const uint32_t *src, int pitch, int w, int h, int n, uint32_t *d
 static void scale_any(const uint32_t *src, int pitch, int w, int h, int scale, uint32_t *dst, uint32_t *tmp) {
     if (scale == 1) for (int y = 0; y < h; y++) memcpy(dst + (size_t)y * w, src + (size_t)y * pitch, (size_t)w * 4);
     else if (hd_scaler == 1) {
-        (void)tmp;
-        xbr(src, pitch, w, h, scale, dst);
+        if (scale == 6) { xbr(src, pitch, w, h, 3, tmp); xbr(tmp, w * 3, w * 3, h * 3, 2, dst); }
+        else xbr(src, pitch, w, h, scale, dst);
     }
+    else if (scale == 6) { scale3x(src, pitch, w, h, tmp); scale2x(tmp, w * 3, w * 3, h * 3, dst); }
     else if (scale == 3) scale3x(src, pitch, w, h, dst);
     else if (scale == 4) { scale2x(src, pitch, w, h, tmp); scale2x(tmp, w * 2, w * 2, h * 2, dst); }
     else scale2x(src, pitch, w, h, dst);
@@ -321,29 +322,41 @@ static int scale_job(void *arg) {
 
 static int scaled_with = -1;            /* hd_scaler the cached layers were made with */
 
-typedef struct { const uint32_t *src; uint32_t *dst; int scale, y0, y1; } XbrJob;
+typedef struct { const uint32_t *src; uint32_t *dst; int pitch, w, h, scale, y0, y1; } XbrJob;
 
 static int xbr_job(void *arg) {
     XbrJob *j = arg;
-    xbr_rows(j->src, HD_MAX_W, hd_frame.w, hd_frame.h, j->scale, j->dst, j->y0, j->y1);
+    xbr_rows(j->src, j->pitch, j->w, j->h, j->scale, j->dst, j->y0, j->y1);
     return 0;
+}
+
+/* One xBR pass over the three layers, every layer in bands over all cores. */
+static void xbr_pass(const uint32_t *const src[3], int pitch, int w, int h, int n, uint32_t *const dst[3]) {
+    XbrJob xj[3 * MAX_WORKERS];
+    Job jobs[3 * MAX_WORKERS];
+    int per = (workers() + 2) / 3, count = 0;
+    if (per < 1) per = 1;
+    for (int l = 0; l < 3; l++)
+        for (int k = 0; k < per; k++, count++) {
+            xj[count] = (XbrJob){ src[l], dst[l], pitch, w, h, n, h * k / per, h * (k + 1) / per };
+            jobs[count] = (Job){ xbr_job, &xj[count] };
+        }
+    for (int at = 0; at < count; at += MAX_WORKERS) run_jobs(jobs + at, count - at > MAX_WORKERS ? MAX_WORKERS : count - at);
 }
 
 static void scale_planes(int scale) {
     if (scaled_gen == hd_serial && scaled_scale == scale && scaled_with == hd_scaler) return;
     scaled_with = hd_scaler;
-    if (hd_scaler == 1) {               /* the heavier scaler: every layer in bands over all cores */
-        XbrJob xj[3 * MAX_WORKERS];
-        Job jobs[3 * MAX_WORKERS];
+    if (hd_scaler == 1 && scale > 1) {  /* the heavier scaler: every layer in bands over all cores */
         const uint32_t *layers[3] = { &hd_frame.a[0][0], &hd_frame.b[0][0], &hd_frame.s[0][0] };
-        int per = (workers() + 2) / 3, n = 0;
-        if (per < 1) per = 1;
-        for (int l = 0; l < 3; l++)
-            for (int k = 0; k < per; k++, n++) {
-                xj[n] = (XbrJob){ layers[l], scaled[l], scale, hd_frame.h * k / per, hd_frame.h * (k + 1) / per };
-                jobs[n] = (Job){ xbr_job, &xj[n] };
-            }
-        for (int at = 0; at < n; at += MAX_WORKERS) run_jobs(jobs + at, n - at > MAX_WORKERS ? MAX_WORKERS : n - at);
+        int w = hd_frame.w, h = hd_frame.h;
+        if (scale == 6) {               /* 3x, then 2x of that */
+            const uint32_t *mid[3] = { temp[0], temp[1], temp[2] };
+            xbr_pass(layers, HD_MAX_W, w, h, 3, temp);
+            xbr_pass(mid, w * 3, w * 3, h * 3, 2, scaled);
+        } else {
+            xbr_pass(layers, HD_MAX_W, w, h, scale, scaled);
+        }
         scaled_gen = hd_serial;
         scaled_scale = scale;
         return;
@@ -936,7 +949,7 @@ const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPo
     post_cinematic = p->cinematic;
     post_seed = hash32((uint32_t)(p->t * 1000));
     bool motes = p->ambience && p->world;
-    bool world_fx = p->world && (p->weather || p->elements);
+    bool world_fx = p->world && (p->weather || p->elements || p->footsteps);
     if (post_light || post_vignette || motes || post_lights || post_cinematic || world_fx) {
         size_t need = (size_t)w * h;
         if (need > cap) { free(buf); buf = malloc(need * 4); cap = buf ? need : 0; }

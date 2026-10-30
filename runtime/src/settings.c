@@ -9,13 +9,13 @@
 
 Settings settings = {
     .rom_path = "",
-    .widescreen = true,
+    .widescreen = false,
     .aspect_w = 16, .aspect_h = 9,
     .fullscreen = false,
     .integer_scale = false,
-    .no_sprite_limit = true,
-    .internal_scale = 3,
-    .smooth_motion = true,
+    .no_sprite_limit = false,
+    .internal_scale = 1,
+    .smooth_motion = false,
     .filter = FILTER_OFF,
     .overclock = 100,
     .window_scale = 4,
@@ -77,6 +77,7 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "water")) settings.water = parse_bool(v);
         else if (!strcmp(k, "weather")) { for (int i = 0; i < WEATHER_COUNT; i++) if (!strcmp(v, weather_keys[i])) settings.weather = i; }
         else if (!strcmp(k, "elements")) settings.elements = parse_bool(v);
+        else if (!strcmp(k, "footsteps")) settings.footsteps = parse_bool(v);
         else if (!strcmp(k, "audio")) settings.audio = atoi(v);
         else if (!strcmp(k, "ost_track")) settings.ost_track = atoi(v);
         else if (input_ini_load(k, v)) {}
@@ -89,7 +90,7 @@ void settings_load(const char *path) {
     fclose(f);
     if (settings.aspect_w <= 0 || settings.aspect_h <= 0) { settings.aspect_w = 16; settings.aspect_h = 9; }
     if (settings.window_scale < 1 || settings.window_scale > 10) settings.window_scale = 4;
-    if (settings.internal_scale < 1 || settings.internal_scale > 4) settings.internal_scale = 3;
+    if (settings.internal_scale < 1 || settings.internal_scale > 6 || settings.internal_scale == 5) settings.internal_scale = 1;
     if (settings.filter < 0 || settings.filter >= FILTER_COUNT) settings.filter = FILTER_OFF;
     if (settings.overclock < 100 || settings.overclock > 400) settings.overclock = 100;
     if (settings.volume < 0 || settings.volume > 100) settings.volume = 100;
@@ -135,6 +136,7 @@ void settings_save(const char *path) {
     fprintf(f, "water=%d\n", settings.water);
     fprintf(f, "weather=%s\n", weather_keys[settings.weather]);
     fprintf(f, "elements=%d\n", settings.elements);
+    fprintf(f, "footsteps=%d\n", settings.footsteps);
     fprintf(f, "audio=%d\n", settings.audio);
     fprintf(f, "ost_track=%d\n", settings.ost_track);
     fprintf(f, "cheat_health=%d\n", settings.cheat_health);
@@ -201,6 +203,7 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_WATER:      snprintf(out, n, "%s", settings.water ? "On" : "Off"); break;
     case OPT_WEATHER:    snprintf(out, n, "%s", weather_names[settings.weather]); break;
     case OPT_ELEMENTS:   snprintf(out, n, "%s", settings.elements ? "On" : "Off"); break;
+    case OPT_FOOTSTEPS:  snprintf(out, n, "%s", settings.footsteps ? "On" : "Off"); break;
     case OPT_AUDIO:      snprintf(out, n, "%s", settings.audio == 2 ? "Rich" : settings.audio ? "Clean" : "Original"); break;
     case OPT_OVERCLOCK:
         if (settings.overclock <= 100) snprintf(out, n, "Off");
@@ -216,6 +219,7 @@ void settings_option_text(int id, char *out, size_t n) {
         break;
     case OPT_INTERNAL:
         if (settings.internal_scale <= 1) snprintf(out, n, "Native");
+        else if (settings.internal_scale == 6) snprintf(out, n, "6\xC3\x97 (4K)");
         else snprintf(out, n, "%d\xC3\x97", settings.internal_scale);
         break;
     case OPT_REWIND:     snprintf(out, n, "%s", settings.rewind ? "On" : "Off"); break;
@@ -282,7 +286,13 @@ void settings_option_change(int id, int dir) {
         if (cur) settings.rewind_mb = rewind_sizes[cur - 1];
         break;
     }
-    case OPT_INTERNAL:   settings.internal_scale = settings_cycle(settings.internal_scale - 1, 4, dir) + 1; break;
+    case OPT_INTERNAL: {                /* Native, 2x, 3x, 4x, 6x */
+        static const int scales[5] = { 1, 2, 3, 4, 6 };
+        int at = 0;
+        for (int k = 0; k < 5; k++) if (scales[k] == settings.internal_scale) at = k;
+        settings.internal_scale = scales[settings_cycle(at, 5, dir)];
+        break;
+    }
     case OPT_REWIND:     settings.rewind = !settings.rewind; break;
     case OPT_REWIND_MB: {
         int cur = 1;
@@ -303,6 +313,7 @@ void settings_option_change(int id, int dir) {
     case OPT_WATER:    settings.water = !settings.water; break;
     case OPT_WEATHER:  settings.weather = settings_cycle(settings.weather, WEATHER_COUNT, dir); break;
     case OPT_ELEMENTS: settings.elements = !settings.elements; break;
+    case OPT_FOOTSTEPS: settings.footsteps = !settings.footsteps; break;
     case OPT_AUDIO:    settings.audio = settings_cycle(settings.audio, 3, dir); break;
     case OPT_CHEAT_HEALTH:  settings.cheat_health = !settings.cheat_health; break;
     case OPT_CHEAT_SPIRIT:  settings.cheat_spirit = !settings.cheat_spirit; break;

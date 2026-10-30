@@ -583,7 +583,7 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Window", OPT_WINDOW_ALL, "Fullscreen, or a window of this many times the game's size." },
       { ROW_OPTION, "Filter", OPT_FILTER, "Scanlines, a curved CRT tube or an LCD grid over the picture." },
       { ROW_OPTION, "Sharpening", OPT_SHARPEN, "Crisper edges after scaling, without halos (contrast-adaptive)." },
-      { ROW_OPTION, "Internal resolution", OPT_INTERNAL, "Redraws each layer at a higher resolution with smoothed edges." },
+      { ROW_OPTION, "Internal resolution", OPT_INTERNAL, "Redraws each layer at a higher resolution; 6x (4K) needs a fast CPU." },
       { ROW_OPTION, "Scaler", OPT_SCALER, "Edge rounds corners; Smooth follows curves and slopes (xBR)." } },
     { { ROW_OPTION, "Lighting", OPT_LIGHTING, "Fire, magic and bright light glow into their surroundings." },
       { ROW_OPTION, "Light sources", OPT_LIGHTS, "Fire and magic light up the ground around them; dark places dim a little." },
@@ -592,7 +592,8 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Ambience", OPT_AMBIENCE, "Dust drifting in the air of the world, and a soft vignette." },
       { ROW_OPTION, "Water", OPT_WATER, "Water shimmers, sparkles and reflects what stands above it." },
       { ROW_OPTION, "Weather", OPT_WEATHER, "A breeze, a sandstorm, rain or mist in the world (not in menus or story scenes)." },
-      { ROW_OPTION, "Spirit effects", OPT_ELEMENTS, "Spirits, magic and fire give off embers, drops, wisps or leaves." } },
+      { ROW_OPTION, "Spirit effects", OPT_ELEMENTS, "Spirits, magic and fire give off embers, drops, wisps or leaves." },
+      { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." } },
     { { ROW_ROM, "ROM", 0, "Your Beyond Oasis (USA) cartridge file." },
       { ROW_OPTION, "Cheats", OPT_CHEATS, "Infinite health, spirit power and unbreakable weapons." },
       { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
@@ -606,7 +607,7 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL },
       { ROW_OPTION, "Audio", OPT_AUDIO, NULL } },
 };
-static const int tab_count[TABS] = { 8, 8, 9, 5 };
+static const int tab_count[TABS] = { 8, 9, 9, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define PANEL_X (TABLET_X + 40)
