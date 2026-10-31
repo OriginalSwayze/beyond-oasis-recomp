@@ -1,8 +1,8 @@
 /* Elemental particles and footsteps.
  *
  * Elements: each game frame the sprites of the spirits and their magic are looked at pixel
- * by pixel (not Ali's, the people's, the items' or the HUD's: motion.c tells which object
- * drew each sprite); bright and vivid pixels of four colours give off particles: fire
+ * by pixel (not Ali's, the enemies', the people's, the items' or the HUD's: motion.c tells
+ * which object drew each sprite); bright and vivid pixels of four colours give off particles: fire
  * colours embers that rise and fade, light blue and cyan drops that splash up and fall,
  * violet wisps that drift, bright green leaves that flutter down. Particles live in world
  * coordinates (screen plus the game's camera), so they stay where they were made. */
@@ -99,6 +99,9 @@ static void footsteps(const HdFrame *f, float cam_x, float cam_y) {
  * $003C: villagers, birds, the lizard) and has stayed in place for a third of a second. */
 #define MAIN_LIST 0xFF19E8
 #define MAIN_END  (0xFF19E8 + 21 * 0xBC)
+/* The spirit's slots of the main list: a summon waits for slot 1 ($FF1AA4) to be free;
+ * the enemies and people start at slot 4. */
+#define SPIRIT_END (0xFF19E8 + 4 * 0xBC)
 
 typedef struct { uint32_t obj; float wx, wy; int still; bool seen; } Track;
 static Track tracks[24];
@@ -148,20 +151,15 @@ static void find_items(HdFrame *f, float cam_x, float cam_y) {
 }
 
 /* The sprites that may give off elemental particles: the spirits and their magic, not Ali,
- * the people, items or the HUD. */
+ * the enemies, people, items or the HUD. */
 static bool elemental(const HdFrame *f, int i) {
     const HdSprite *s = &f->sprites[i];
     if (!s->drawn || s->player || s->item || (s->attr & 0x8000)) return false;
     uint32_t obj;
     uint16_t kind;
     if (!motion_entry_owner(i, &obj, &kind)) return false;
-    if (obj >= MAIN_LIST && obj < MAIN_END) {
-        if (kind == 0x0032 || kind == 0x003C) return false;     /* villagers and creatures */
-        /* Small, still things in the main list are items or props even before they count as items. */
-        Track *t = NULL;
-        for (int k = 0; k < 24; k++) if (tracks[k].obj == obj) t = &tracks[k];
-        if (t && t->still >= 4 && s->w <= 16 && s->h <= 16) return false;
-    }
+    /* Of the main list only the spirit's slots: the rest are enemies, people and items. */
+    if (obj >= MAIN_LIST && obj < MAIN_END) return obj >= MAIN_LIST + 0xBC && obj < SPIRIT_END;
     return true;
 }
 
