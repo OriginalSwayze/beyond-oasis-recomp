@@ -21,6 +21,10 @@ typedef struct {
     bool elements;                      /* particles from spirits and magic (fx.c) */
     bool footsteps;                     /* dust, grass and splashes where Ali walks (fx.c) */
     bool water;                         /* water shimmers, foams, glints and reflects (hd_water) */
+    int  combat_info;                   /* 0 off, 1 damage numbers, 2 numbers and enemy health bars (combat.c) */
+    int  rumble;                        /* controller rumble on hits: 0 off, 1 light, 2 strong (combat.c) */
+    int  fast_speed;                    /* fast-forward while its key is held: 0 2x, 1 3x, 2 4x */
+    bool play_timer;                    /* this session's play time in the picture's corner (combat.c) */
     char texture_pack[64];              /* folder in texture_packs/, empty for none (texpack.h) */
     bool dump_tiles;                    /* write every tile shown to texture_packs/dump/ */
     int  audio;                         /* sound output: 0 original, 1 clean, 2 rich (sound_quality) */
@@ -34,8 +38,8 @@ typedef struct {
     int  ost_mode;                      /* soundtrack player: OST_MODE_* (launcher.c) */
     int  ost_track;                     /* the song it played last, or -1 for the title theme */
     int  volume;                        /* 0-100: game sound and launcher music */
-    int  bind_key[10];                  /* input.h IN_*: SDL scancode for each action */
-    int  bind_pad[10];                  /* input.h IN_*: SDL game controller button for each action */
+    int  bind_key[11];                  /* input.h IN_*: SDL scancode for each action */
+    int  bind_pad[11];                  /* input.h IN_*: SDL game controller button for each action */
     bool cheat_health;                  /* infinite health: no damage, health held full */
     bool cheat_spirit;                  /* infinite spirit power */
     bool cheat_weapons;                 /* weapons never break */
@@ -60,7 +64,8 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_OVERCLOCK, OPT_VOLUME,
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
        OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AUDIO, OPT_ELEMENTS, OPT_FOOTSTEPS, OPT_WATER,
-       OPT_TEXPACK, OPT_DUMP };
+       OPT_TEXPACK, OPT_DUMP,
+       OPT_COMBAT, OPT_RUMBLE, OPT_FAST, OPT_TIMER };
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);

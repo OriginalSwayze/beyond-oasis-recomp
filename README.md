@@ -540,7 +540,35 @@ cancels, and "Reset to defaults" puts everything back. The menus keep their own 
 keys (arrows / D-pad, Enter / A, Esc / B), and Esc and the Guide button always open the
 pause menu, so a binding can never lock you out. Bindings are saved in `settings.ini` as
 `key_<action>` and `pad_<action>` (SDL key and button names). Any controller SDL knows
-works: Xbox, PlayStation, Switch Pro and most others; the first one connected is used.
+works: Xbox, PlayStation, Switch Pro and most others. Every connected controller is open
+(`runtime/src/pads.c`, shared by the launcher and the game), and the one pressed last is
+used; one that disconnects (a wireless controller sleeping, Bluetooth dropping) is picked
+up again when it comes back.
+
+Holding the fast-forward key (Tab, or RB) runs two, three or four game frames per frame
+("Fast-forward" in the pause menu's GAME tab); the last one's sound is heard.
+
+## Combat info, rumble, stats and the map
+
+`runtime/src/combat.c` compares the health of the game's objects after every frame: the
+enemies (the main object list from slot 4, +$8A; villagers and creatures are left out),
+Ali ($FF1A72) and the spirit's slot ($FF1AA4). From that, whatever caused the hit:
+
+* **Combat info** (EFFECTS): the damage rises from the enemy as a pixel-font number, gold
+  for a one-hit kill; with health bars, a bar over the enemy shows what it has left (and a
+  pale part catching up) for a few seconds after each hit.
+* **Rumble** (MORE): a light buzz on a hit, harder on a kill and when Ali is hit, a soft
+  one on a summon.
+* **Stats** (GAME): this session's play time and kills, and over all sessions the play
+  time, enemies defeated, damage dealt and taken, biggest hit, hits taken and spirits
+  called, kept in `stats.ini`. **Play timer** (MORE) shows the session's time in the
+  corner of the picture.
+
+The **Map** (GAME, `runtime/src/automap.c`) fills in as you explore: every few frames the
+scenery under the camera (the planes, without sprites or the HUD) is copied at a quarter
+of its size into the current area's picture, with Ali's place blinking on it. Areas are
+told apart by the map number and tile sets at $FF16F6-$FF16FD and the map's size; the
+maps are kept in `automap.bin`.
 
 ## Third-party code
 

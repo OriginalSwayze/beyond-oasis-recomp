@@ -11,10 +11,13 @@
 #include "motion.h"
 #include "filter.h"
 #include "input.h"
+#include "pads.h"
 #include "controls.h"
 #include "outfit.h"
 #include "preview.h"
 #include "fx.h"
+#include "combat.h"
+#include "automap.h"
 #include "texpack.h"
 #include "menu.h"
 #include "savestate.h"
@@ -168,10 +171,14 @@ static HdPost finishing(int scale, float t) {
     return p;
 }
 
-/* The particles move on after each game frame, placed in the world by the camera. */
-static void fx_after_frame(void) {
+/* The particles move on after each game frame, placed in the world by the camera; the
+ * combat info, stats and the auto-map look at the frame too. `live` is false while
+ * rewinding and in headless runs: nothing is counted or felt then. */
+static void fx_after_frame(bool live) {
     HdPost here = finishing(1, 0);
     fx_game_frame(&hd_frame, here.world, here.cam_x, here.cam_y);
+    combat_frame(&hd_frame, here.world, here.cam_x, here.cam_y, live);
+    automap_frame(&hd_frame, here.world, here.cam_x, here.cam_y);
 }
 
 /* Ali's middle on screen (frame pixels), for the previews' close-ups; -1 if unknown. */
@@ -325,6 +332,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--lighting") && i + 1 < argc) { settings.lighting = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--elements") && i + 1 < argc) { settings.elements = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--footsteps") && i + 1 < argc) { settings.footsteps = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--combat") && i + 1 < argc) { settings.combat_info = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
+        else if (!strcmp(argv[i], "--play-timer") && i + 1 < argc) { settings.play_timer = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--water") && i + 1 < argc) { settings.water = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--texture-pack") && i + 1 < argc) { snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", argv[++i]); test_overrides = true; }
         else if (!strcmp(argv[i], "--dump-tiles") && i + 1 < argc) { settings.dump_tiles = atoi(argv[++i]) != 0; test_overrides = true; }
@@ -466,6 +475,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
+    if (!headless_frames) pads_init();
     if (!headless_frames && settings.show_launcher && !no_launcher) {
         apply_settings();
         if (!launcher_run(ini)) { SDL_Quit(); return 0; }
@@ -521,7 +531,7 @@ int main(int argc, char **argv) {
             rewind_push(pad_state[0]);
             cheats_frame();
             machine_run_frame(framebuffer, FB_W);
-            if (vdp_opts.hd_capture) { hd_frame_done(); fx_after_frame(); }
+            if (vdp_opts.hd_capture) { hd_frame_done(); fx_after_frame(false); }
             if (sprite_every > 0 && f >= 300 && f % sprite_every == 0) {
                 static uint32_t *layers, *worst_a, *worst_b;
                 static int worst = -1, worst_frame, checked, over;
@@ -737,7 +747,8 @@ int main(int argc, char **argv) {
             hd_compose(settings.internal_scale);
             double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency();
             printf("hd frame %dx%d in %.2f ms\n", hd_w, hd_h, ms);
-            png_write(hd_shot, hd_px, hd_w, hd_h, hd_w);
+            HdPost post = finishing(hd_w / frame_width(), 0);     /* with the effects, as the window shows it */
+            png_write(hd_shot, hd_post(hd_px, hd_w, hd_h, hd_w, &post), hd_w, hd_h, hd_w);
         }
         if (save_preview) {
             HdPost here = finishing(1, 0);
@@ -784,7 +795,6 @@ int main(int argc, char **argv) {
     int hd_tex_now = 0;
     int hd_tex_w = 0, hd_tex_h = 0;
     bool vsync_on = false;
-    SDL_GameController *pad = NULL;
     SDL_AudioSpec want = { .freq = 48000, .format = AUDIO_S16SYS, .channels = 2, .samples = 1024 }, have;
     SDL_AudioDeviceID audio = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (audio) { sound_out_rate = have.freq; SDL_PauseAudioDevice(audio, 0); }
@@ -802,18 +812,20 @@ int main(int argc, char **argv) {
     Uint64 freq = SDL_GetPerformanceFrequency(), next = SDL_GetPerformanceCounter(), start = next;
     SDL_Texture *menu_tex = NULL;
     int menu_tex_w = 0, menu_tex_h = 0;
-    bool running = true;
+    bool running = true, fast_now = false;
+    combat_stats_load(base_dir);
+    automap_load(base_dir);
     while (running) {
         SDL_Event e;
         int ww, wh;
         SDL_GetRendererOutputSize(ren, &ww, &wh);
         while (SDL_PollEvent(&e)) {
+            pads_event(&e);
             /* The pause menu binding opens the menu; Esc and the Guide button always do too. */
             bool open_menu = input_event_is(IN_MENU, &e) ||
                              (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE && !e.key.repeat) ||
                              (e.type == SDL_CONTROLLERBUTTONDOWN && e.cbutton.button == SDL_CONTROLLER_BUTTON_GUIDE);
             if (e.type == SDL_QUIT) running = false;
-            else if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
             else if (menu_is_open()) {
                 bool was_rewind = settings.rewind;
                 switch (menu_event(&e)) {
@@ -839,6 +851,8 @@ int main(int argc, char **argv) {
                 HdPost here = finishing(1, 0);
                 preview_set_world(here.world, here.cam_x, here.cam_y, ali_x(), ali_y());
                 preview_save(base_dir);         /* the frame the launcher's previews will show */
+                combat_stats_save(base_dir);
+                automap_save(base_dir);
                 menu_open(framebuffer, frame_width(), vdp_screen_height(), FB_W, r.x, r.y, r.w, r.h, ww, wh,
                           win_w ? (float)ww / win_w : 1);
             }
@@ -893,21 +907,27 @@ int main(int argc, char **argv) {
         const Uint64 frame_ticks = (Uint64)(frame_s * freq);
         if (now >= next) {
             const Uint8 *keys = SDL_GetKeyboardState(NULL);
-            bool rewinding = settings.rewind && input_held(IN_REWIND, keys, pad);
+            bool rewinding = settings.rewind && input_held(IN_REWIND, keys, pads_active());
             uint16_t old_pad;
             if (rewinding && rewind_step(&old_pad)) {
                 /* Redraw the frame we stepped back to, then return to the state before it. */
                 pad_state[0] = old_pad;
                 machine_run_frame(framebuffer, FB_W);
-                if (vdp_opts.hd_capture) { hd_frame_done(); fx_after_frame(); }
+                if (vdp_opts.hd_capture) { hd_frame_done(); fx_after_frame(false); }
                 rewind_restore_head();
                 sound_out_count = 0;            /* silent while rewinding */
             } else if (!rewinding) {
-                pad_state[0] = input_pad_bits(keys, pad);
-                rewind_push(pad_state[0]);
-                cheats_frame();
-                machine_run_frame(framebuffer, FB_W);
-                if (vdp_opts.hd_capture) { hd_frame_done(); fx_after_frame(); }
+                /* Fast-forward: while its key is held, two to four game frames per frame
+                 * (the last one's sound is heard). */
+                int runs = input_held(IN_FAST, keys, pads_active()) ? settings.fast_speed + 2 : 1;
+                for (int r = 0; r < runs; r++) {
+                    pad_state[0] = input_pad_bits(keys, pads_active());
+                    rewind_push(pad_state[0]);
+                    cheats_frame();
+                    machine_run_frame(framebuffer, FB_W);
+                    if (vdp_opts.hd_capture) { hd_frame_done(); fx_after_frame(true); }
+                }
+                fast_now = runs > 1;
             } else {
                 sound_out_count = 0;            /* at the start of the buffer: hold the picture */
             }
@@ -915,6 +935,7 @@ int main(int argc, char **argv) {
 
             char title[160];
             if (rewinding) snprintf(title, sizeof title, "Beyond Oasis - Rewinding (%.1f s left)", rewind_frames() / 60.0);
+            else if (fast_now) snprintf(title, sizeof title, "Beyond Oasis - Fast-forward %d\xC3\x97", settings.fast_speed + 2);
             else if (SDL_GetPerformanceCounter() < message_until) snprintf(title, sizeof title, "Beyond Oasis - %s", message);
             else snprintf(title, sizeof title, "Beyond Oasis");
             if (strcmp(title, shown_title)) { SDL_SetWindowTitle(win, title); strcpy(shown_title, title); }
@@ -986,6 +1007,8 @@ int main(int argc, char **argv) {
 
     save_coverage();
     save_sram();
+    combat_stats_save(base_dir);
+    automap_save(base_dir);
     outfit_preview_save(base_dir);
     if (!menu_is_open()) {
         HdPost here = finishing(1, 0);

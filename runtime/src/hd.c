@@ -9,6 +9,7 @@
 #include "hd.h"
 #include "motion.h"
 #include "fx.h"
+#include "combat.h"
 #include "texpack.h"
 
 #include <math.h>
@@ -894,7 +895,7 @@ const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPo
     static uint32_t *buf;
     static size_t cap;
     bool light = p->lighting > 0;
-    bool world_fx = p->world && (p->elements || p->footsteps);
+    bool world_fx = p->world && (p->elements || p->footsteps || combat_active(p));
     if (light || world_fx) {
         size_t need = (size_t)w * h;
         if (need > cap) { free(buf); buf = malloc(need * 4); cap = buf ? need : 0; }
@@ -912,7 +913,7 @@ const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPo
             } else {
                 for (int y = 0; y < h; y++) memcpy(buf + (size_t)y * w, src + (size_t)y * pitch, (size_t)w * 4);
             }
-            if (world_fx) fx_draw(buf, w, h, p);
+            if (world_fx) { fx_draw(buf, w, h, p); combat_draw(buf, w, h, p); }
             src = buf;
             pitch = w;
         }

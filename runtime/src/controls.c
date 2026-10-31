@@ -23,7 +23,7 @@
 #define KEY_X   (PANEL_X + 330)
 #define PAD_X   (PANEL_X + 510)
 #define LIST_Y  (PANEL_Y + 128)
-#define ROW_H   36
+#define ROW_H   33
 
 static bool open_, capturing;
 static int selected;

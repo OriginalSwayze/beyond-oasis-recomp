@@ -10,6 +10,7 @@
 #include "launcher.h"
 #include "ost.h"
 #include "launcher_scene.h"
+#include "pads.h"
 #include "foil.h"
 #include "recomp_rt.h"
 #include "genesis.h"
@@ -590,7 +591,8 @@ static const Row tab_rows[TABS][9] = {
     { { ROW_OPTION, "Lighting", OPT_LIGHTING, "Fire, magic and bright light glow into their surroundings." },
       { ROW_OPTION, "Spirit effects", OPT_ELEMENTS, "The spirits and their magic give off embers, drops, wisps or leaves." },
       { ROW_OPTION, "Water", OPT_WATER, "Water swells, foams at the shore, glints and reflects what stands above it." },
-      { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." } },
+      { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." },
+      { ROW_OPTION, "Combat info", OPT_COMBAT, "Damage numbers rise from enemies; health bars show what they have left." } },
     { { ROW_ROM, "ROM", 0, "Your Beyond Oasis (USA) cartridge file." },
       { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
       { ROW_OPTION, "Sprite flicker fix", OPT_FLICKER, "Lifts the hardware's sprites-per-line limit, so nothing flickers." },
@@ -598,6 +600,7 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Rewind", OPT_REWIND_ALL, "Hold the rewind key to step back in time." },
       { ROW_CONTROLS, "Controls", 0, "Keyboard keys and controller buttons for every action." },
       { ROW_OUTFIT, "Ali's outfit", 0, "Colours and animations for his clothes, hair, skin and jewellery." },
+      { ROW_OPTION, "Rumble", OPT_RUMBLE, "The controller rumbles on hits, kills, when Ali is hit and on summons." },
       { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER, "Off starts the game directly (show_launcher=1 in settings.ini brings it back)." } },
     { { ROW_OPTION, "Launcher music", OPT_MUSIC, NULL }, { ROW_TRACK, "Track", 0, NULL },
       { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL },
@@ -608,7 +611,7 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Attack power", OPT_CHEAT_ATTACK, "Double or quadruple damage, or every enemy falls to one hit." },
       { ROW_OPTION, "Move speed", OPT_CHEAT_SPEED, "Ali moves 1.5x or 2x as fast; walls still stop him." } },
 };
-static const int tab_count[TABS] = { 9, 4, 8, 5, 5 };
+static const int tab_count[TABS] = { 9, 5, 9, 5, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define CASE_X 84                       /* the steelbook */
@@ -1111,7 +1114,6 @@ int launcher_run(const char *ini_path) {
     SDL_GetRendererOutputSize(ren, &ow, &oh);
     layout(ow > 1920 ? 1920 : ow);      /* drawn in software: past 1080p the GPU scales it up */
     SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, ui_w, ui_h);
-    SDL_GameController *pad = NULL;
     memset(&ui, 0, sizeof ui);
     outfit_sound = launcher_outfit_sound;
     ui.tab_t0 = -10;
@@ -1130,10 +1132,10 @@ int launcher_run(const char *ini_path) {
         ui.t = t;
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            pads_event(&e);
             int activate = 0, change = 0;
             if ((controls_is_open() || outfit_is_open()) && e.type != SDL_QUIT) {
                 /* A page takes all input while it is up (mouse points match the layout). */
-                if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
                 float mx = e.type == SDL_MOUSEMOTION ? e.motion.x : e.type == SDL_MOUSEBUTTONDOWN ? e.button.x : 0;
                 float my = e.type == SDL_MOUSEMOTION ? e.motion.y : e.type == SDL_MOUSEBUTTONDOWN ? e.button.y : 0;
                 if (outfit_is_open()) { outfit_event(&e, mx, my); continue; }
@@ -1143,7 +1145,6 @@ int launcher_run(const char *ini_path) {
             }
             switch (e.type) {
             case SDL_QUIT: result = 0; break;
-            case SDL_CONTROLLERDEVICEADDED: if (!pad) pad = SDL_GameControllerOpen(e.cdevice.which); break;
             case SDL_MOUSEMOTION: {
                 /* Mouse positions are in window points, which match the 1280x720 layout. */
                 int h = hit_test(e.motion.x, e.motion.y);
@@ -1225,7 +1226,6 @@ int launcher_run(const char *ini_path) {
     }
     music_stop();
     settings_save(ini_path);
-    if (pad) SDL_GameControllerClose(pad);
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

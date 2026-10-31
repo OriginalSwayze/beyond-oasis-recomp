@@ -86,6 +86,9 @@ add_executable(BeyondOasis WIN32
   runtime/src/ost.c
   runtime/src/filter.c
   runtime/src/input.c
+  runtime/src/pads.c
+  runtime/src/combat.c
+  runtime/src/automap.c
   runtime/src/controls.c
   runtime/src/outfit.c
   runtime/src/preview.c

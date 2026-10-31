@@ -10,6 +10,8 @@
 #include "preview.h"
 #include "launcher_scene.h"
 #include "foil.h"
+#include "combat.h"
+#include "automap.h"
 #include "genesis.h"
 #include "savestate.h"
 #include "settings.h"
@@ -19,7 +21,7 @@
 #include <string.h>
 
 typedef enum { ITEM_ACTION, ITEM_SLOT, ITEM_OPTION } ItemKind;
-enum { ACT_RESUME, ACT_SAVE, ACT_LOAD, ACT_RESET, ACT_QUIT, ACT_CONTROLS, ACT_OUTFIT };
+enum { ACT_RESUME, ACT_SAVE, ACT_LOAD, ACT_RESET, ACT_QUIT, ACT_CONTROLS, ACT_OUTFIT, ACT_MAP, ACT_STATS };
 typedef struct { ItemKind kind; const char *label; int id; } Item;
 
 #define TABS 5
@@ -28,7 +30,8 @@ static const char *const tab_names[TABS] = { "GAME", "DISPLAY", "EFFECTS", "CHEA
 static const int tab_spirit[TABS] = { 2, 0, 1, SPIRIT_ARMLET, 3 };     /* Bow, Dytto, Efreet, the armlet, Shade */
 static const Item tab_items[TABS][MAX_ROWS] = {
     { { ITEM_ACTION, "Resume", ACT_RESUME }, { ITEM_SLOT, "Save state", ACT_SAVE }, { ITEM_SLOT, "Load state", ACT_LOAD },
-      { ITEM_OPTION, "Rewind", OPT_REWIND },
+      { ITEM_ACTION, "Map", ACT_MAP }, { ITEM_ACTION, "Stats", ACT_STATS },
+      { ITEM_OPTION, "Rewind", OPT_REWIND }, { ITEM_OPTION, "Fast-forward", OPT_FAST },
       { ITEM_ACTION, "Reset game", ACT_RESET }, { ITEM_ACTION, "Quit game", ACT_QUIT } },
     { { ITEM_OPTION, "Widescreen", OPT_WIDESCREEN }, { ITEM_OPTION, "Aspect ratio", OPT_ASPECT },
       { ITEM_OPTION, "Integer scaling", OPT_INTEGER }, { ITEM_OPTION, "Internal resolution", OPT_INTERNAL },
@@ -36,15 +39,17 @@ static const Item tab_items[TABS][MAX_ROWS] = {
       { ITEM_OPTION, "Sharpening", OPT_SHARPEN }, { ITEM_OPTION, "Smooth motion", OPT_SMOOTH },
       { ITEM_OPTION, "Sprite flicker fix", OPT_FLICKER }, { ITEM_OPTION, "Slowdown fix", OPT_OVERCLOCK } },
     { { ITEM_OPTION, "Lighting", OPT_LIGHTING }, { ITEM_OPTION, "Spirit effects", OPT_ELEMENTS },
-      { ITEM_OPTION, "Water", OPT_WATER }, { ITEM_OPTION, "Footsteps", OPT_FOOTSTEPS } },
+      { ITEM_OPTION, "Water", OPT_WATER }, { ITEM_OPTION, "Footsteps", OPT_FOOTSTEPS },
+      { ITEM_OPTION, "Combat info", OPT_COMBAT } },
     { { ITEM_OPTION, "Infinite health", OPT_CHEAT_HEALTH }, { ITEM_OPTION, "Infinite spirit", OPT_CHEAT_SPIRIT },
       { ITEM_OPTION, "Unbreakable weapons", OPT_CHEAT_WEAPONS }, { ITEM_OPTION, "Attack power", OPT_CHEAT_ATTACK },
       { ITEM_OPTION, "Move speed", OPT_CHEAT_SPEED } },
     { { ITEM_OPTION, "Volume", OPT_VOLUME }, { ITEM_OPTION, "Audio", OPT_AUDIO },
       { ITEM_ACTION, "Controls", ACT_CONTROLS }, { ITEM_ACTION, "Ali's outfit", ACT_OUTFIT },
+      { ITEM_OPTION, "Rumble", OPT_RUMBLE }, { ITEM_OPTION, "Play timer", OPT_TIMER },
       { ITEM_OPTION, "Texture pack", OPT_TEXPACK }, { ITEM_OPTION, "Dump tiles", OPT_DUMP } },
 };
-static const int tab_count[TABS] = { 6, 10, 4, 5, 6 };
+static const int tab_count[TABS] = { 9, 10, 5, 5, 8 };
 
 /* What each option and action does, for the card on the right. */
 static const char *about(const Item *it) {
@@ -54,6 +59,8 @@ static const char *about(const Item *it) {
         case ACT_RESET: return "Starts the game over from the beginning. Unsaved progress is lost.";
         case ACT_QUIT: return "Closes the game. Unsaved progress is lost; the game's own saves stay.";
         case ACT_CONTROLS: return "The keyboard key and controller button for every action.";
+        case ACT_MAP: return "Fills in as you explore: everything that has been on screen in this area, with Ali's place blinking.";
+        case ACT_STATS: return NULL;
         case ACT_OUTFIT: return "Pick colours for Ali's clothes, hair, skin and jewellery, and animate them if you like (shimmer, pulse, rainbow, flame), with a preview before you apply them.";
         }
     if (it->kind == ITEM_SLOT) return NULL;
@@ -80,6 +87,10 @@ static const char *about(const Item *it) {
     case OPT_CHEAT_ATTACK: return "Enemies take double or four times the damage from every hit, or fall to a single one. Bosses too.";
     case OPT_CHEAT_SPEED: return "Ali walks and runs one and a half or two times as fast. Walls still stop him. If a scripted scene stalls, set it back to Normal.";
     case OPT_REWIND: return "Hold the rewind key to step back in time.";
+    case OPT_FAST: return "How fast the game runs while the fast-forward key is held (Tab, or RB on a controller; change it in Controls).";
+    case OPT_COMBAT: return "The damage of every hit rises from the enemy as a number, gold for a one-hit kill; with health bars, a bar over an enemy shows what it has left for a few seconds after each hit.";
+    case OPT_RUMBLE: return "The controller rumbles when Ali lands a hit, harder for a kill and when he is hit, and softly when a spirit is called.";
+    case OPT_TIMER: return "This session's play time in the top corner of the picture, for speedruns and keeping track. The total is under Stats.";
     case OPT_VOLUME: return "The game's volume.";
     case OPT_AUDIO: return "Original is the console's sound as emulated. Clean removes aliasing, the hum and clipping; Rich adds wider stereo and a light room.";
     }
@@ -312,6 +323,7 @@ static MenuAction act(int dir, bool activate) {
         if (it->id == ACT_RESUME) return MENU_CLOSE;
         if (it->id == ACT_CONTROLS) { sound(1); controls_open(); return MENU_NONE; }
         if (it->id == ACT_OUTFIT) { sound(1); outfit_open(); return MENU_NONE; }
+        if (it->id == ACT_MAP || it->id == ACT_STATS) return MENU_NONE;     /* shown on the card */
         /* Reset and quit lose progress: ask for a second press. */
         if (!confirm_pending || confirm_item != selected) {
             confirm_pending = true;
@@ -512,6 +524,33 @@ static void draw_card(float t, float alpha) {
     ui_fill_rect(x, y + 24, 40, 2, sp->light, .7f * alpha);
     y += 44;
     if (it->kind == ITEM_SLOT) { draw_slot(x, y, w, t, alpha); return; }
+    if (it->kind == ITEM_ACTION && it->id == ACT_MAP) {
+        float mh = CARD_H - 44 - 24 - 110;
+        ui_fill_rect(x, y, w, mh, rgb_hex(0x07050A), .55f * alpha);
+        if (!automap_draw(x + 6, y + 6, w - 12, mh - 12, t, alpha)) {
+            const char *none = "Nothing of this area seen yet.";
+            float nw = ui_text_width(none, "Segoe UI", 15, 400, 0);
+            ui_draw_text(none, "Segoe UI", 15, 400, 0, x + (w - nw) / 2, y + mh / 2 - 10, rgb_hex(0x8F8673), rgb_hex(0x8F8673), alpha);
+        }
+        ui_panel(x - 1, y - 1, w + 2, mh + 2, 4, rgb(0, 0, 0), rgb(0, 0, 0), 0, rgb_hex(0xD9B567), .5f * alpha);
+        draw_wrapped(about(it), x, y + mh + 18, w, 15.5f, rgb_hex(0xD8CDB6), alpha);
+        return;
+    }
+    if (it->kind == ITEM_ACTION && it->id == ACT_STATS) {
+        char lines[12][64];
+        int n = combat_stats_lines(lines, 12);
+        for (int i = 0; i < n; i++) {
+            char *tab_at = strchr(lines[i], '\t');
+            if (!tab_at) continue;
+            *tab_at = 0;
+            float ly = y + i * 38 + (i >= 2 ? 22 : 0);   /* this session, then all sessions */
+            if (i == 2) ui_fill_rect(x, ly - 18, w, 1, sp->light, .35f * alpha);
+            ui_draw_text(lines[i], "Segoe UI", 16, 400, 0, x, ly, rgb_hex(0xD8CDB6), rgb_hex(0xD8CDB6), alpha);
+            float vw = ui_text_width(tab_at + 1, "Segoe UI Semibold", 17, 600, 0);
+            ui_draw_text(tab_at + 1, "Segoe UI Semibold", 17, 600, 0, x + w - vw, ly - 1, rgb_hex(0xFFE4A0), rgb_hex(0xFFE4A0), alpha);
+        }
+        return;
+    }
     if (it->kind == ITEM_OPTION && preview_supported(it->id) && preview_ready()) {
         float ph = w * 9 / 16.f;
         preview_draw(it->id, x, y, w, ph, t);

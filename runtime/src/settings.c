@@ -75,6 +75,10 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "elements")) settings.elements = parse_bool(v);
         else if (!strcmp(k, "footsteps")) settings.footsteps = parse_bool(v);
         else if (!strcmp(k, "water")) settings.water = parse_bool(v);
+        else if (!strcmp(k, "combat_info")) settings.combat_info = atoi(v);
+        else if (!strcmp(k, "rumble")) settings.rumble = atoi(v);
+        else if (!strcmp(k, "fast_speed")) settings.fast_speed = atoi(v);
+        else if (!strcmp(k, "play_timer")) settings.play_timer = parse_bool(v);
         else if (!strcmp(k, "texture_pack")) snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", v);
         else if (!strcmp(k, "dump_tiles")) settings.dump_tiles = parse_bool(v);
         else if (!strcmp(k, "audio")) settings.audio = atoi(v);
@@ -101,6 +105,9 @@ void settings_load(const char *path) {
     if (settings.audio < 0 || settings.audio > 2) settings.audio = 0;
     if (settings.cheat_attack < 0 || settings.cheat_attack > 3) settings.cheat_attack = 0;
     if (settings.cheat_speed < 0 || settings.cheat_speed > 2) settings.cheat_speed = 0;
+    if (settings.combat_info < 0 || settings.combat_info > 2) settings.combat_info = 0;
+    if (settings.rumble < 0 || settings.rumble > 2) settings.rumble = 0;
+    if (settings.fast_speed < 0 || settings.fast_speed > 2) settings.fast_speed = 0;
     if (settings.ost_track < -1 || settings.ost_track > 0xFF) settings.ost_track = -1;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
     if (settings.state_slot < 1 || settings.state_slot > 9) settings.state_slot = 1;
@@ -134,6 +141,10 @@ void settings_save(const char *path) {
     fprintf(f, "elements=%d\n", settings.elements);
     fprintf(f, "footsteps=%d\n", settings.footsteps);
     fprintf(f, "water=%d\n", settings.water);
+    fprintf(f, "combat_info=%d\n", settings.combat_info);
+    fprintf(f, "rumble=%d\n", settings.rumble);
+    fprintf(f, "fast_speed=%d\n", settings.fast_speed);
+    fprintf(f, "play_timer=%d\n", settings.play_timer);
     fprintf(f, "texture_pack=%s\n", settings.texture_pack);
     fprintf(f, "dump_tiles=%d\n", settings.dump_tiles);
     fprintf(f, "audio=%d\n", settings.audio);
@@ -191,6 +202,10 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_ELEMENTS:   snprintf(out, n, "%s", settings.elements ? "On" : "Off"); break;
     case OPT_FOOTSTEPS:  snprintf(out, n, "%s", settings.footsteps ? "On" : "Off"); break;
     case OPT_WATER:      snprintf(out, n, "%s", settings.water ? "On" : "Off"); break;
+    case OPT_COMBAT:     snprintf(out, n, "%s", settings.combat_info == 2 ? "Numbers and health bars" : settings.combat_info ? "Damage numbers" : "Off"); break;
+    case OPT_RUMBLE:     snprintf(out, n, "%s", settings.rumble == 2 ? "Strong" : settings.rumble ? "Light" : "Off"); break;
+    case OPT_FAST:       snprintf(out, n, "%d\xC3\x97", settings.fast_speed + 2); break;
+    case OPT_TIMER:      snprintf(out, n, "%s", settings.play_timer ? "On" : "Off"); break;
     case OPT_TEXPACK:    snprintf(out, n, "%s", settings.texture_pack[0] ? settings.texture_pack : "None"); break;
     case OPT_DUMP:       snprintf(out, n, "%s", settings.dump_tiles ? "On" : "Off"); break;
     case OPT_AUDIO:      snprintf(out, n, "%s", settings.audio == 2 ? "Rich" : settings.audio ? "Clean" : "Original"); break;
@@ -295,6 +310,10 @@ void settings_option_change(int id, int dir) {
     case OPT_ELEMENTS: settings.elements = !settings.elements; break;
     case OPT_FOOTSTEPS: settings.footsteps = !settings.footsteps; break;
     case OPT_WATER:    settings.water = !settings.water; break;
+    case OPT_COMBAT:   settings.combat_info = settings_cycle(settings.combat_info, 3, dir); break;
+    case OPT_RUMBLE:   settings.rumble = settings_cycle(settings.rumble, 3, dir); break;
+    case OPT_FAST:     settings.fast_speed = settings_cycle(settings.fast_speed, 3, dir); break;
+    case OPT_TIMER:    settings.play_timer = !settings.play_timer; break;
     case OPT_DUMP:     settings.dump_tiles = !settings.dump_tiles; break;
     case OPT_TEXPACK: {                 /* None, then each folder in texture_packs/ */
         static char names[32][64];
