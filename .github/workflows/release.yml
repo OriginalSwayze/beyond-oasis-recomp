@@ -22,7 +22,9 @@ jobs:
         run: |
           name="Beyond-Oasis-Recomp-${GITHUB_REF_NAME}"
           mkdir -p "stage/Beyond Oasis Recomp"
-          git ls-files -z --recurse-submodules | xargs -0 cp --parents -t "stage/Beyond Oasis Recomp"
+          git ls-files -z --recurse-submodules | xargs -0 cp -P --parents -t "stage/Beyond Oasis Recomp"
+          # Symlinks (in the submodules' examples, which the build never uses) do not unzip on Windows.
+          find stage -type l -delete
           (cd stage && zip -qr9 "../${name}.zip" "Beyond Oasis Recomp")
           echo "ZIP=${name}.zip" >> "$GITHUB_ENV"
 
