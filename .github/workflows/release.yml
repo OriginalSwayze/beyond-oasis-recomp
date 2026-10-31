@@ -1,0 +1,41 @@
+# Pushing a tag like v1.0 makes a release with the builder zip: this repository's files
+# and the third-party submodules (which GitHub's own "Source code" zips leave out). No game
+# code is in it: the game is built from each player's own ROM by "Build Beyond Oasis.bat".
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  builder-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Make the builder zip
+        run: |
+          name="Beyond-Oasis-Recomp-${GITHUB_REF_NAME}"
+          mkdir -p "stage/Beyond Oasis Recomp"
+          git ls-files -z --recurse-submodules | xargs -0 cp --parents -t "stage/Beyond Oasis Recomp"
+          (cd stage && zip -qr9 "../${name}.zip" "Beyond Oasis Recomp")
+          echo "ZIP=${name}.zip" >> "$GITHUB_ENV"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP }}
+          body: |
+            **Download `${{ env.ZIP }}`** below (not "Source code": that leaves out the third-party code the build needs).
+
+            1. Unzip it anywhere, for example your Desktop.
+            2. Double-click **Build Beyond Oasis.bat**.
+            3. Pick your own Beyond Oasis (USA) ROM when asked.
+
+            The builder downloads the build tools it needs (Node.js, CMake, Ninja and LLVM-MinGW, about 260 MB, from their publishers, checked against pinned SHA-256s) into a `toolchain` folder next to it; nothing is installed into Windows. It then recompiles your ROM and builds the game (a few minutes), and puts a **Beyond Oasis** shortcut on your desktop.
+
+            No part of the game is included in this release. You need your own copy of the cartridge.

@@ -9,3 +9,6 @@ rom/
 build/
 generated/
 out/
+
+# The builder's portable tools (downloaded, never committed).
+toolchain/

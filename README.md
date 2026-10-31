@@ -6,14 +6,48 @@ checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
 
 It is a static recompilation, not a decompilation: at build time the game's 68000 machine
 code is translated into C from your ROM, and anything not yet covered runs on an
-interpreter. To build it, see [Usage](#usage).
+interpreter.
+
+## Playing it
+
+**You need your own Beyond Oasis (USA) ROM.** It is not included and never will be, and
+there is no ready-made .exe to download: the built game contains the game's own code,
+translated to C, so it can only be made on your PC from your copy. The builder does that
+for you:
+
+1. Download `Beyond-Oasis-Recomp-<version>.zip` from
+   [Releases](https://github.com/OriginalSwayze/beyond-oasis-recomp/releases) (not
+   "Source code": that leaves out the third-party code the build needs).
+2. Unzip it somewhere with a short path, for example your Desktop.
+3. Double-click **Build Beyond Oasis.bat**. If Windows asks whether to run it, choose
+   Run (or More info, then Run anyway).
+4. Pick your ROM when asked. It has to be the USA release, unchanged: the builder checks
+   its SHA-1 and tells you if it is a different one.
+
+The builder then:
+
+* downloads the build tools it needs into a `toolchain` folder next to it, after asking:
+  [Node.js](https://nodejs.org/), [CMake](https://cmake.org/),
+  [Ninja](https://ninja-build.org/) and [LLVM-MinGW](https://github.com/mstorsjo/llvm-mingw)
+  (Clang), a 260 MB download (about 1 GB unpacked), each from its publisher's own release
+  and checked against a pinned SHA-256. Nothing is installed into Windows; delete the
+  folder to remove them.
+  Tools you already have are used instead.
+* recompiles your ROM to C and builds the game (a few minutes the first time)
+* puts a **Beyond Oasis** shortcut on your desktop
+
+The game is `build/cmake/BeyondOasis.exe`, with its saves, states and `settings.ini` next
+to it. To update, unzip the new release over the old folder (your saves are kept) and run
+the builder again. It needs 64-bit Windows 10 or 11.
+
+To build it by hand instead, see [Usage](#usage).
 
 ## Status
 
 | Part | State |
 |---|---|
 | ROM verification (`tools/setup.mjs`) | done |
-| 68000 decoder, code tracer, disassembly listing (`tools/disasm.mjs`) | done: ~97 KB of code in 8,365 blocks |
+| 68000 decoder, code tracer, disassembly listing (`tools/disasm.mjs`) | done: ~128 KB of code in 11,075 blocks, with the code seen running in play (`config/coverage.txt`) |
 | Runtime: memory map, VDP with widescreen renderer, pads, SRAM, settings | done |
 | Z80 + YM2612 + PSG sound | done |
 | 68000 → C recompiler (`tools/recomp.mjs`, built automatically by CMake) | done: 99.98% of 68000 time runs as native C |
@@ -528,6 +562,11 @@ build/cmake/BeyondOasis.exe "<path to ROM>"
 
 `setup.mjs` checks the ROM and remembers where it is (`local.json`, never committed); the
 build recompiles it into `generated/` (also never committed).
+
+The tracer finds most of the code on its own; the rest is code it has seen running.
+`config/coverage.txt` lists those addresses (addresses only, nothing from the ROM), so a
+fresh build is as complete as a played one. After playing, `node tools/save-coverage.mjs`
+adds what that play reached to it.
 
 Default controls (all remappable, see Controls below):
 
