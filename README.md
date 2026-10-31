@@ -423,11 +423,12 @@ row of its own; `cheat_health`, `cheat_spirit`, `cheat_weapons`, `cheat_attack` 
 * **Infinite health.** The player's hit handler subtracts no damage (a recompiler patch
   at `$005884`, `playerDamage` in `config/patches.json`), and the health is held full.
 * **Infinite spirit.** Spirit power is held full once Ali has a spirit.
-* **Attack power: Double, Quadruple, One-hit kill.** The enemies' hit handlers subtract the
-  damage (after their defence, +$92) from their HP (+$8A) at four places (`$01D494`,
-  `$01E33A`, `$02A07E`, `$02C010`, `enemyDamage` in `config/patches.json`). These take
-  2x or 4x the damage, or all the HP left (`enemy_damage()` in `recomp_rt.h`). The game
-  itself decides what follows, so enemies die as they always do.
+* **Attack power: Double, Quadruple, One-hit kill.** A hit stores its damage in the
+  target's object (+$86) at four places (`$00BEE8` and `$00BFE6` in the shared hit test,
+  `$01DABA` and `$01EA30`; `hitDamage` in `config/patches.json`). For any target but Ali
+  that damage is made 2x or 4x, or the target's HP plus its defence (`hit_damage()` in
+  `recomp_rt.h`). Each enemy's own handler then takes it off as always, so every kind of
+  enemy is covered, and they die as they always do.
 * **Move speed: Fast (1.5x), Very fast (2x).** The move-with-collision routine loads an
   object's movement for the tick (+$72 x, +$76 y, 16.16) at four places (`$009078`,
   `$00970E`, `$009200`, `$0097EA`, `playerSpeed`); for Ali's object (`$FF19E8`) it is

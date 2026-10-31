@@ -25,13 +25,13 @@
     "comment": "The player's hit handler subtracts the damage from the current HP ($8A of the player object at $FF19E8) here. With patch_no_damage set (the infinite health cheat) the damage is 0, so even a hit bigger than the whole health bar cannot kill.",
     "pc": "005884"
   },
-  "enemyDamage": {
-    "comment": "The enemies' hit handlers subtract the damage from the HP ($8A of their object) here, after their defence ($92) and with the result clamped at 0. The attack power cheat (patch_attack) makes the damage 2x, 4x or the whole HP (enemy_damage() in recomp_rt.h); 0 keeps the original. Keys are the pc, values the damage register.",
+  "hitDamage": {
+    "comment": "A hit stores its damage in the target's object at $86 here (flags in the top 4 bits, damage in the low 12); every object's own handler later takes it off its HP ($8A) after its defence ($92). The attack power cheat (patch_attack) makes the damage 2x, 4x or a one-hit kill for any target but the player (hit_damage() in recomp_rt.h); 0 keeps the original. Keys are the pc, values the source operand.",
     "pcs": {
-      "01D494": "d7",
-      "01E33A": "d0",
-      "02A07E": "d0",
-      "02C010": "d0"
+      "00BEE8": "d6",
+      "00BFE6": "d6",
+      "01DABA": "$90(a6)",
+      "01EA30": "$90(a6)"
     }
   },
   "playerSpeed": {

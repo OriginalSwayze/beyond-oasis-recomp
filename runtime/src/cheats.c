@@ -1,5 +1,5 @@
 /* Built-in cheats: RAM values held every frame, like a Pro Action Replay, plus recompiler
- * patches (config/patches.json): playerDamage for infinite health, enemyDamage for the
+ * patches (config/patches.json): playerDamage for infinite health, hitDamage for the
  * attack power (double, quadruple, one-hit kills), playerSpeed for the move speed.
  *
  * RAM used (from the disassembly):

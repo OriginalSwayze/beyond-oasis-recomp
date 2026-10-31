@@ -20,8 +20,9 @@ const REPLACED = new Map([
     ['setw(&D(0), rd16(0xFF177A) - cam_margin()); logicw(D(0) & 0xFFFFu);']]],
   [parseInt(PATCHES.playerDamage.pc, 16), ['sub.w	d0,d1',
     ['setw(&D(1), subw(patch_no_damage ? 0u : (D(0) & 0xFFFFu), D(1) & 0xFFFFu));']]],
-  ...Object.entries(PATCHES.enemyDamage.pcs).map(([pc, r]) => [parseInt(pc, 16), [`sub.w	${r},d1`,
-    [`setw(&D(1), subw(enemy_damage(D(${r[1]}) & 0xFFFFu, D(1) & 0xFFFFu), D(1) & 0xFFFFu));`]]]),
+  ...Object.entries(PATCHES.hitDamage.pcs).map(([pc, src]) => [parseInt(pc, 16), [`move.w	${src},$86(a0)`,
+    [`{ uint32_t v = ${src[0] === 'd' ? `D(${src[1]}) & 0xFFFFu` : `rd16(A(6) + 0x${src.slice(1, 3)})`};`,
+     '  wr16(A(0) + 0x86, hit_damage(A(0), v)); logicw(v); }']]]),
   ...Object.entries(PATCHES.playerSpeed.pcs).map(([pc, field]) => [parseInt(pc, 16), [`move.l	${field}(a6),d0`,
     [`D(0) = player_move(A(6), rd32(A(6) + 0x${field.slice(1)}));`, 'logicl(D(0));']]]),
 ]);

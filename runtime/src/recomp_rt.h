@@ -55,17 +55,19 @@ static inline void wr32(uint32_t a, uint32_t v) { wr16(a, v >> 16); wr16(a + 2, 
 static inline uint32_t sx8(uint32_t v)  { return (uint32_t)(int32_t)(int8_t)v; }
 static inline uint32_t sx16(uint32_t v) { return (uint32_t)(int32_t)(int16_t)v; }
 
-/* The damage an enemy takes (playerDamage's counterpart, config/patches.json): the game's,
- * or more with the attack power cheat; a one-hit kill takes all the HP left. Capped so the
- * game's signed test on the result still sees it go below zero. */
-static inline uint32_t enemy_damage(uint32_t damage, uint32_t hp) {
+/* The damage a hit leaves in its target (hitDamage, config/patches.json): the game's, or
+ * more with the attack power cheat for anything but the player (the object at $FF19E8).
+ * The flags in the top 4 bits are kept; the damage (low 12) is capped at 12 bits, and a
+ * one-hit kill is the target's HP plus its defence. */
+static inline uint32_t hit_damage(uint32_t target, uint32_t v) {
+    uint32_t damage = v & 0xFFF;
+    if (!patch_attack || !damage || (target & 0xFFFFFF) == 0xFF19E8) return v;
     switch (patch_attack) {
     case 1: damage *= 2; break;
     case 2: damage *= 4; break;
-    case 3: return hp ? hp : damage;
-    default: break;
+    default: damage = rd16(target + 0x8A) + rd16(target + 0x92) + 1; break;
     }
-    return damage > 0x7FFF ? 0x7FFF : damage;
+    return (v & 0xF000) | (damage > 0xFFF ? 0xFFF : damage);
 }
 
 /* The movement of an object for this tick (16.16), scaled by the move speed cheat when
