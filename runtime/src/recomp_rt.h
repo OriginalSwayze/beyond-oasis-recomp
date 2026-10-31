@@ -25,6 +25,14 @@ extern int patch_cam_margin;
 extern int patch_no_damage;             /* infinite health cheat (cheats.c) */
 extern int patch_attack;                /* attack power cheat: 0 normal, 1 double, 2 quadruple, 3 one-hit kills */
 extern int patch_speed;                 /* move speed cheat: the player's movement per tick in percent (100 = normal) */
+extern int patch_random;                /* randomizer: 0 off, 1 restoratives, 2 restoratives and weapons */
+
+/* The randomizer (cheats.c): an item about to come into the world (item << 8 | count), swapped
+ * for another of its kind by the seed, the area and `place`; unchanged when off. */
+uint32_t random_drop_swap(uint32_t item, uint32_t place);
+static inline uint32_t random_drop(uint32_t item, uint32_t place) {
+    return patch_random ? random_drop_swap(item, place) : item;
+}
 
 /* Replaces the code at pc with hand-written C (machine.c); NULL restores the generated code. */
 void machine_override(uint32_t pc, RecompBlock fn);

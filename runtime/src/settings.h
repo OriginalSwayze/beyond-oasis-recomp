@@ -45,6 +45,8 @@ typedef struct {
     bool cheat_weapons;                 /* weapons never break */
     int  cheat_attack;                  /* attack power: 0 normal, 1 double, 2 quadruple, 3 one-hit kills */
     int  cheat_speed;                   /* move speed: 0 normal, 1 fast (1.5x), 2 very fast (2x) */
+    int  randomizer;                    /* item randomizer: 0 off, 1 restoratives, 2 restoratives and weapons */
+    unsigned randomizer_seed;           /* its seed: a new one each time it is turned on */
     char cheat_codes[512];              /* extra RAM codes, "FFxxxx:VV[VV],..." (settings.ini only) */
     bool outfit;                        /* Ali wears outfit_color (outfit.c) */
     int  outfit_color[8];               /* CRAM colour for each part (OUTFIT_PARTS, outfit.c), -1 = his own */
@@ -65,7 +67,7 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
        OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AUDIO, OPT_ELEMENTS, OPT_FOOTSTEPS, OPT_WATER,
        OPT_TEXPACK, OPT_DUMP,
-       OPT_COMBAT, OPT_RUMBLE, OPT_FAST, OPT_TIMER };
+       OPT_COMBAT, OPT_RUMBLE, OPT_FAST, OPT_TIMER, OPT_RANDOMIZER };
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);

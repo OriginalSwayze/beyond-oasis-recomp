@@ -17,6 +17,7 @@
 #include "preview.h"
 #include "fx.h"
 #include "combat.h"
+#include "recomp_rt.h"
 #include "automap.h"
 #include "texpack.h"
 #include "menu.h"
@@ -333,6 +334,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--elements") && i + 1 < argc) { settings.elements = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--footsteps") && i + 1 < argc) { settings.footsteps = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--combat") && i + 1 < argc) { settings.combat_info = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
+        else if (!strcmp(argv[i], "--randomizer") && i + 2 < argc) { settings.randomizer = atoi(argv[++i]) % 3; settings.randomizer_seed = (unsigned)atoi(argv[++i]); test_overrides = true; }   /* MODE SEED */
         else if (!strcmp(argv[i], "--play-timer") && i + 1 < argc) { settings.play_timer = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--water") && i + 1 < argc) { settings.water = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--texture-pack") && i + 1 < argc) { snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", argv[++i]); test_overrides = true; }
@@ -442,6 +444,21 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--outfit-shot")) outfit_page_shot = true;  /* with --menu-shot: the outfit page */
         else if (!strcmp(argv[i], "--save-preview")) save_preview = true;
         else if (!strcmp(argv[i], "--menu-tab") && i + 2 < argc) { menu_tab = atoi(argv[++i]); menu_row = atoi(argv[++i]); }
+        else if (!strcmp(argv[i], "--randomizer-check")) {
+            /* --randomizer-check: what every item becomes at three places, both modes (seed 1234). */
+            settings.randomizer_seed = 1234;
+            for (int mode = 1; mode <= 2; mode++) {
+                patch_random = mode;
+                printf("mode %d:\n", mode);
+                for (uint32_t id = 1; id <= 0x31; id++) {
+                    printf("  %02X ->", id);
+                    for (uint32_t place = 0; place < 3; place++) printf(" %02X", random_drop((id << 8) | 1, place * 0x1234567u) >> 8);
+                    printf("\n");
+                }
+            }
+            patch_random = 0;
+            return 0;
+        }
         else if (!strcmp(argv[i], "--input-check") && i + 1 < argc) {
             /* --input-check FILE: rebind a few keys and buttons, save to FILE, load it back,
              * and print the bindings (never touches settings.ini). */

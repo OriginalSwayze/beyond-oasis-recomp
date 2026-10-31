@@ -450,6 +450,18 @@ digits write a byte, four write a word, every frame. Useful addresses:
 | `$FF0D80` + 2k | weapon slot k (0-7): id byte, uses byte (`$FF` = never breaks) |
 | `$FF0D90` + 2k | item slot k (0-15): id byte (0 = empty), then a second byte |
 
+### Randomizer
+
+"Randomizer" (CHEATS) swaps what chests, pots, enemies and the items lying about give. A
+broken object loads its drop (+$8C, item << 8 | count) at `$00F564`, and a map script
+places an item on the ground at `$010050` (`randomDrop` in `config/patches.json`); there
+`random_drop()` (`cheats.c`) swaps a restorative ($1E-$2A: the HP, SP and HP+SP
+restoratives and the Elixir) for another, and on "Items + weapons" a weapon for another.
+The result is fixed by the seed, the area and the spot, so a chest keeps its prize; turning
+it on picks a new seed (`randomizer_seed` in `settings.ini`). Keys, HP Up, the spirit
+stones and calls, lasting upgrades, the one-time table at $043830, the Knife and the Bomb
+never change, so the game can always be finished. `--randomizer-check` prints every swap.
+
 ## Save states and rewind
 
 A snapshot holds the whole machine between frames: both CPUs, all RAM, the VDP, I/O,

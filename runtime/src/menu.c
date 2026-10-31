@@ -43,13 +43,13 @@ static const Item tab_items[TABS][MAX_ROWS] = {
       { ITEM_OPTION, "Combat info", OPT_COMBAT } },
     { { ITEM_OPTION, "Infinite health", OPT_CHEAT_HEALTH }, { ITEM_OPTION, "Infinite spirit", OPT_CHEAT_SPIRIT },
       { ITEM_OPTION, "Unbreakable weapons", OPT_CHEAT_WEAPONS }, { ITEM_OPTION, "Attack power", OPT_CHEAT_ATTACK },
-      { ITEM_OPTION, "Move speed", OPT_CHEAT_SPEED } },
+      { ITEM_OPTION, "Move speed", OPT_CHEAT_SPEED }, { ITEM_OPTION, "Randomizer", OPT_RANDOMIZER } },
     { { ITEM_OPTION, "Volume", OPT_VOLUME }, { ITEM_OPTION, "Audio", OPT_AUDIO },
       { ITEM_ACTION, "Controls", ACT_CONTROLS }, { ITEM_ACTION, "Ali's outfit", ACT_OUTFIT },
       { ITEM_OPTION, "Rumble", OPT_RUMBLE }, { ITEM_OPTION, "Play timer", OPT_TIMER },
       { ITEM_OPTION, "Texture pack", OPT_TEXPACK }, { ITEM_OPTION, "Dump tiles", OPT_DUMP } },
 };
-static const int tab_count[TABS] = { 9, 10, 5, 5, 8 };
+static const int tab_count[TABS] = { 9, 10, 5, 6, 8 };
 
 /* What each option and action does, for the card on the right. */
 static const char *about(const Item *it) {
@@ -87,6 +87,7 @@ static const char *about(const Item *it) {
     case OPT_CHEAT_ATTACK: return "Enemies take double or four times the damage from every hit, or fall to a single one. Bosses too.";
     case OPT_CHEAT_SPEED: return "Ali walks and runs one and a half or two times as fast. Walls still stop him. If a scripted scene stalls, set it back to Normal.";
     case OPT_REWIND: return "Hold the rewind key to step back in time.";
+    case OPT_RANDOMIZER: return "Chests, pots, enemies and the items lying about give other restoratives (and, with weapons, other weapons) than they used to. Each spot keeps its prize for the seed; turning it on picks a new seed. Keys, upgrades, spirit stones and the Bomb never change, so the game can always be finished.";
     case OPT_FAST: return "How fast the game runs while the fast-forward key is held (Tab, or RB on a controller; change it in Controls).";
     case OPT_COMBAT: return "The damage of every hit rises from the enemy as a number, gold for a one-hit kill; with health bars, a bar over an enemy shows what it has left for a few seconds after each hit.";
     case OPT_RUMBLE: return "The controller rumbles when Ali lands a hit, harder for a kill and when he is hit, and softly when a spirit is called.";

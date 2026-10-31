@@ -4,6 +4,7 @@
 #include "filter.h"
 #include "input.h"
 #include "texpack.h"
+#include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,6 +91,8 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "cheat_weapons")) settings.cheat_weapons = parse_bool(v);
         else if (!strcmp(k, "cheat_attack")) settings.cheat_attack = atoi(v);
         else if (!strcmp(k, "cheat_speed")) settings.cheat_speed = atoi(v);
+        else if (!strcmp(k, "randomizer")) settings.randomizer = atoi(v);
+        else if (!strcmp(k, "randomizer_seed")) settings.randomizer_seed = (unsigned)strtoul(v, NULL, 10);
         else if (!strcmp(k, "cheat_codes")) snprintf(settings.cheat_codes, sizeof settings.cheat_codes, "%s", v);
     }
     fclose(f);
@@ -105,6 +108,7 @@ void settings_load(const char *path) {
     if (settings.audio < 0 || settings.audio > 2) settings.audio = 0;
     if (settings.cheat_attack < 0 || settings.cheat_attack > 3) settings.cheat_attack = 0;
     if (settings.cheat_speed < 0 || settings.cheat_speed > 2) settings.cheat_speed = 0;
+    if (settings.randomizer < 0 || settings.randomizer > 2) settings.randomizer = 0;
     if (settings.combat_info < 0 || settings.combat_info > 2) settings.combat_info = 0;
     if (settings.rumble < 0 || settings.rumble > 2) settings.rumble = 0;
     if (settings.fast_speed < 0 || settings.fast_speed > 2) settings.fast_speed = 0;
@@ -154,6 +158,8 @@ void settings_save(const char *path) {
     fprintf(f, "cheat_weapons=%d\n", settings.cheat_weapons);
     fprintf(f, "cheat_attack=%d\n", settings.cheat_attack);
     fprintf(f, "cheat_speed=%d\n", settings.cheat_speed);
+    fprintf(f, "randomizer=%d\n", settings.randomizer);
+    fprintf(f, "randomizer_seed=%u\n", settings.randomizer_seed);
     fprintf(f, "# Extra RAM codes held every frame: FFxxxx:VV (byte) or FFxxxx:VVVV (word), comma-separated\n");
     fprintf(f, "cheat_codes=%s\n", settings.cheat_codes);
     input_ini_save(f);
@@ -206,6 +212,10 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_RUMBLE:     snprintf(out, n, "%s", settings.rumble == 2 ? "Strong" : settings.rumble ? "Light" : "Off"); break;
     case OPT_FAST:       snprintf(out, n, "%d\xC3\x97", settings.fast_speed + 2); break;
     case OPT_TIMER:      snprintf(out, n, "%s", settings.play_timer ? "On" : "Off"); break;
+    case OPT_RANDOMIZER:
+        if (!settings.randomizer) snprintf(out, n, "Off");
+        else snprintf(out, n, "%s (seed %u)", settings.randomizer == 2 ? "Items + weapons" : "Items", settings.randomizer_seed);
+        break;
     case OPT_TEXPACK:    snprintf(out, n, "%s", settings.texture_pack[0] ? settings.texture_pack : "None"); break;
     case OPT_DUMP:       snprintf(out, n, "%s", settings.dump_tiles ? "On" : "Off"); break;
     case OPT_AUDIO:      snprintf(out, n, "%s", settings.audio == 2 ? "Rich" : settings.audio ? "Clean" : "Original"); break;
@@ -314,6 +324,12 @@ void settings_option_change(int id, int dir) {
     case OPT_RUMBLE:   settings.rumble = settings_cycle(settings.rumble, 3, dir); break;
     case OPT_FAST:     settings.fast_speed = settings_cycle(settings.fast_speed, 3, dir); break;
     case OPT_TIMER:    settings.play_timer = !settings.play_timer; break;
+    case OPT_RANDOMIZER: {
+        bool was_off = !settings.randomizer;
+        settings.randomizer = settings_cycle(settings.randomizer, 3, dir);
+        if (was_off && settings.randomizer) settings.randomizer_seed = (unsigned)(SDL_GetPerformanceCounter() % 9000u) + 1000u;   /* a new game of it */
+        break;
+    }
     case OPT_DUMP:     settings.dump_tiles = !settings.dump_tiles; break;
     case OPT_TEXPACK: {                 /* None, then each folder in texture_packs/ */
         static char names[32][64];

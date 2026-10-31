@@ -18,6 +18,7 @@
 int patch_no_damage;
 int patch_attack;
 int patch_speed = 100;
+int patch_random;
 
 typedef struct { uint16_t addr; uint16_t value; bool word; } Code;
 
@@ -78,6 +79,37 @@ static void hold_weapons(void) {
     }
 }
 
+/* ---- Randomizer -------------------------------------------------------------------------- *
+ * Item IDs (the game's own names): $01-$0C weapons (Knife, Sword, Broad, Death, Omega, Bow,
+ * Fire, Metal, Bomb, Power, Hyper, Atm Bow), $0D-$10 keys, $11 HP Up, $12-$15 the spirit
+ * stones, $16-$19 lasting upgrades, $1A-$1D the spirit calls, $1E-$29 the restoratives
+ * (HP, SP, HP+SP: 1/4, 1/2, 3/4, Max), $2A Elixir, $31 L. Cube. Only restoratives (and, at
+ * the higher setting, weapons) are swapped, each for one of its own kind: the keys, upgrades,
+ * stones, calls, the Knife Ali starts with and the Bomb (which the way on may need) never
+ * change, so the game can always be finished. */
+static const uint8_t restoratives[] = { 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A };
+static const uint8_t weapons[] = { 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x0A, 0x0B, 0x0C };
+
+static bool in(const uint8_t *set, size_t n, uint32_t id) { for (size_t i = 0; i < n; i++) if (set[i] == id) return true; return false; }
+
+uint32_t random_drop_swap(uint32_t item, uint32_t place) {
+    item &= 0xFFFF;
+    uint32_t id = item >> 8;
+    if (item >= 0x8000 || !id) return item;           /* the one-time table, or nothing */
+    const uint8_t *set;
+    size_t n;
+    if (in(restoratives, sizeof restoratives, id)) { set = restoratives; n = sizeof restoratives; }
+    else if (patch_random >= 2 && in(weapons, sizeof weapons, id)) { set = weapons; n = sizeof weapons; }
+    else return item;
+    /* The same seed, area, place and item always give the same: a chest keeps its prize. */
+    uint32_t h = (uint32_t)settings.randomizer_seed * 2654435761u;
+    for (uint16_t a = 0x16F6; a < 0x16FE; a++) h = (h ^ bus.ram[a]) * 16777619u;
+    h = (h ^ place) * 16777619u;
+    h = (h ^ item) * 16777619u;
+    h ^= h >> 15; h *= 0x2C1B3C6Du; h ^= h >> 12;
+    return (uint32_t)set[h % n] << 8 | (item & 0xFF);
+}
+
 void cheats_frame(void) {
     if (strcmp(user_spec, settings.cheat_codes)) {
         memcpy(user_spec, settings.cheat_codes, sizeof user_spec);
@@ -87,6 +119,7 @@ void cheats_frame(void) {
     bool player = peek16(0x19E8) == 2;
     patch_no_damage = settings.cheat_health;
     patch_attack = settings.cheat_attack;
+    patch_random = settings.randomizer;
     static const int speeds[3] = { 100, 150, 200 };
     patch_speed = speeds[settings.cheat_speed >= 0 && settings.cheat_speed < 3 ? settings.cheat_speed : 0];
     if (player && settings.cheat_health) fill(0x1A70, 0x1A72);

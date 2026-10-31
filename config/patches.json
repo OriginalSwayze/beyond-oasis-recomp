@@ -42,5 +42,10 @@
       "009200": "$76",
       "0097EA": "$76"
     }
+  },
+  "randomDrop": {
+    "comment": "Where an item comes into the world: a broken object (chest, pot, enemy) loads its drop (+$8C, item << 8 | count; $8000 and up index the one-time table at $043830, left alone) at dropPc, and a map places an item on the ground from its script at placePc. The randomizer (random_drop() in recomp_rt.h) swaps the item for another of its kind, fixed by the seed and the place; 0 keeps the original.",
+    "dropPc": "00F564",
+    "placePc": "010050"
   }
 }

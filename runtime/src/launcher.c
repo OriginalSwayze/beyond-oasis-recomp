@@ -609,9 +609,10 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Infinite spirit", OPT_CHEAT_SPIRIT, "Spirit power stays full." },
       { ROW_OPTION, "Unbreakable weapons", OPT_CHEAT_WEAPONS, "Weapons keep their uses however often they strike." },
       { ROW_OPTION, "Attack power", OPT_CHEAT_ATTACK, "Double or quadruple damage, or every enemy falls to one hit." },
-      { ROW_OPTION, "Move speed", OPT_CHEAT_SPEED, "Ali moves 1.5x or 2x as fast; walls still stop him." } },
+      { ROW_OPTION, "Move speed", OPT_CHEAT_SPEED, "Ali moves 1.5x or 2x as fast; walls still stop him." },
+      { ROW_OPTION, "Randomizer", OPT_RANDOMIZER, "Chests and drops give other items; keys and upgrades stay put." } },
 };
-static const int tab_count[TABS] = { 9, 5, 9, 5, 5 };
+static const int tab_count[TABS] = { 9, 5, 9, 5, 6 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define CASE_X 84                       /* the steelbook */

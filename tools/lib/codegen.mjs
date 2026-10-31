@@ -23,6 +23,10 @@ const REPLACED = new Map([
   ...Object.entries(PATCHES.hitDamage.pcs).map(([pc, src]) => [parseInt(pc, 16), [`move.w	${src},$86(a0)`,
     [`{ uint32_t v = ${src[0] === 'd' ? `D(${src[1]}) & 0xFFFFu` : `rd16(A(6) + 0x${src.slice(1, 3)})`};`,
      '  wr16(A(0) + 0x86, hit_damage(A(0), v)); logicw(v); }']]]),
+  [parseInt(PATCHES.randomDrop.dropPc, 16), ['move.w	$8C(a0),d0',
+    ['{ uint32_t v = random_drop(rd16(A(0) + 0x8C), rd16(A(0) + 0x8) << 16 | rd16(A(0) + 0xC)); setw(&D(0), v); logicw(v); }']]],
+  [parseInt(PATCHES.randomDrop.placePc, 16), ['move.w	(a0)+,d1',
+    ['{ uint32_t v = random_drop(rd16(A(0)), A(0)); A(0) += 2; setw(&D(1), v); logicw(v); }']]],
   ...Object.entries(PATCHES.playerSpeed.pcs).map(([pc, field]) => [parseInt(pc, 16), [`move.l	${field}(a6),d0`,
     [`D(0) = player_move(A(6), rd32(A(6) + 0x${field.slice(1)}));`, 'logicl(D(0));']]]),
 ]);
