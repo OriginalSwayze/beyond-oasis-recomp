@@ -11,36 +11,59 @@ interpreter.
 ## Playing it
 
 **You need your own Beyond Oasis (USA) ROM.** It is not included and never will be, and
-there is no ready-made .exe to download: the built game contains the game's own code,
-translated to C, so it can only be made on your PC from your copy. The builder does that
-for you:
+there is no ready-made game .exe to download: the built game contains the game's own code,
+translated to C, so it can only be made on your PC from your copy. The installer does that
+for you. It needs 64-bit Windows 10 or 11 and an internet connection for the first install.
 
-1. Download `Beyond-Oasis-Recomp-<version>.zip` from
-   [Releases](https://github.com/OriginalSwayze/beyond-oasis-recomp/releases) (not
-   "Source code": that leaves out the third-party code the build needs).
-2. Unzip it somewhere with a short path, for example your Desktop.
-3. Double-click **Build Beyond Oasis.bat**. If Windows asks whether to run it, choose
-   Run (or More info, then Run anyway).
-4. Pick your ROM when asked. It has to be the USA release, unchanged: the builder checks
-   its SHA-1 and tells you if it is a different one.
+### Installing
 
-The builder then:
+1. Download `Beyond-Oasis-Setup-<version>.exe` from
+   [Releases](https://github.com/OriginalSwayze/beyond-oasis-recomp/releases).
+2. Run it. If Windows SmartScreen says it protected your PC (the installer is not
+   code-signed), choose **More info**, then **Run anyway**.
+3. **Welcome:** read what it will do, then **Next**.
+4. **Install folder:** keep the default (`%LOCALAPPDATA%\Programs\Beyond Oasis`, no
+   administrator rights needed) or **Browse** for another, then **Next**. Plan for about
+   700 MB.
+5. **Your ROM:** **Browse** to your Beyond Oasis (USA) ROM (`.md`, `.bin` or `.gen`, or a
+   `.zip` with one inside), or drop it on the window. It is checked by its SHA-1 at once: a
+   green tick means it is the right one; otherwise Setup says why not (a hack, another
+   region, a headered `.smd` dump). Then **Install**.
+6. **Installing:** Setup downloads the build tools it needs from their publishers
+   ([Node.js](https://nodejs.org/), [CMake](https://cmake.org/),
+   [Ninja](https://ninja-build.org/) and [LLVM-MinGW](https://github.com/mstorsjo/llvm-mingw),
+   about 260 MB, each checked against a pinned SHA-256) into the install folder, unless they
+   are already on your PC, then recompiles your ROM to C and builds the game. This takes a
+   few minutes; the bar and the lines under it show where it is.
+7. **Ready to play:** choose whether to put a shortcut on the desktop and start the game,
+   then **Finish**. Beyond Oasis is in the Start menu from now on.
 
-* downloads the build tools it needs into a `toolchain` folder next to it, after asking:
-  [Node.js](https://nodejs.org/), [CMake](https://cmake.org/),
-  [Ninja](https://ninja-build.org/) and [LLVM-MinGW](https://github.com/mstorsjo/llvm-mingw)
-  (Clang), a 260 MB download (about 1 GB unpacked), each from its publisher's own release
-  and checked against a pinned SHA-256. Nothing is installed into Windows; delete the
-  folder to remove them.
-  Tools you already have are used instead.
-* recompiles your ROM to C and builds the game (a few minutes the first time)
-* puts a **Beyond Oasis** shortcut on your desktop
+The game, `BeyondOasis.exe`, sits in the install folder with its `settings.ini`, saves and
+save states. Setup copies your ROM into the folder's `rom` folder, so the game keeps
+working if you move or delete the original.
 
-The game is `build/cmake/BeyondOasis.exe`, with its saves, states and `settings.ini` next
-to it. To update, unzip the new release over the old folder (your saves are kept) and run
-the builder again. It needs 64-bit Windows 10 or 11.
+**Updating:** run the newer Setup. It finds the install, offers the ROM it used, and builds
+the game again; your settings, saves and save states stay as they are. (Settings > Apps >
+Beyond Oasis Recomp > Modify does the same with the Setup you have.)
 
-To build it by hand instead, see [Usage](#usage).
+**Removing:** Settings > Apps > Beyond Oasis Recomp > Uninstall. It removes the game, its
+build tools and the shortcuts, and asks whether to keep your settings, saves and save
+states. Your ROM file elsewhere is never touched.
+
+**If the install stops**, Setup shows the reason, and **Back** lets you try again. The
+usual causes: no internet connection while it downloads the tools, or security software
+holding a file it has just written (try again, or add an exception for the install folder).
+
+### Without the installer
+
+`Beyond-Oasis-Recomp-<version>.zip` on the same page holds the same files to build by hand
+(not "Source code": that leaves out the third-party code the build needs). Unzip it
+somewhere with a short path, double-click **Build Beyond Oasis.bat** and pick your ROM when
+asked. It downloads the same tools into a `toolchain` folder next to it (after asking),
+builds the game into `build/cmake/BeyondOasis.exe` and puts a **Beyond Oasis** shortcut on
+your desktop. To update, unzip the new release over the old folder and run it again.
+
+To build it fully by hand instead, see [Usage](#usage).
 
 ## Status
 
@@ -104,7 +127,8 @@ Other headless options:
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
-* `--lighting N` (0-2), `--elements 0|1`, `--water 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1` (edge, smooth), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
+* `--lighting N` (0-2), `--hdr N` (0-2), `--elements 0|1`, `--water 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1|2` (edge, smooth, sharp), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
+* `--bench N`: after each game frame, draw N pictures of it as the window does (layers put together at points between frames, then the finishing steps) and print the average times at the end: the game frame, putting the layers together (scaling layers, sprites, compositing) and the finishing steps. With `--shot F.png`, the last finished picture is saved. Use it with `--load N` and your own settings to see what a scene costs
 * `--outfit a,b,...`, `--outfit-anims 0,1,...`: Ali's outfit colours and animations for this run (as `outfit_colors` and `outfit_anims` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
@@ -314,8 +338,12 @@ any speed, but replays are only identical at the speed they were recorded at.
 
 ## Scaler, lighting and effects
 
-"Scaler" (Edge, Smooth; `scaler=edge|smooth` in `settings.ini`) picks how the layers are
-scaled for the internal resolution. Edge is Scale2x / Scale3x. Smooth uses Hyllian's xBR
+"Scaler" (Edge, Smooth, Sharp; `scaler=edge|smooth|sharp` in `settings.ini`) picks how the
+layers are scaled for the internal resolution. Sharp keeps every pixel a plain square,
+exactly as drawn. Edge and Smooth round edges, but leave dither (checkerboards and
+one-pixel stripes the art shades with) as blocks, so it stays crisp instead of smearing
+into blobs: a pixel that differs from both its neighbours on a line, which match, with the
+pattern repeating two pixels on, is dither. Edge is Scale2x / Scale3x. Smooth uses Hyllian's xBR
 rules: it looks at a 5x5 neighbourhood to tell along which diagonal an edge runs and
 rounds each corner on the right side of it, so curves and shallow slopes come out cleaner.
 The usual xBR blends colours at edges; this one takes a whole neighbouring source pixel
@@ -329,6 +357,11 @@ pixels (fire, magic, gems, the HUD's gold) are gathered into a picture an eighth
 blurred at two sizes and laid over the picture with a screen blend. Sunlit ground is
 bright but neither, so daylight scenes do not wash out. The glow is made once per game
 frame, not for every in-between picture.
+
+"HDR look" (Off, On, Strong; `hdr_look`) grades the picture the way an HDR grade does on an
+ordinary screen: an S curve presses the shadows down and lifts the highlights (black and
+white stay where they are), and vibrance makes muted colours richer while leaving vivid
+ones alone, so fire, magic and gems stand out.
 
 "Spirit effects" (`elements`): after each game frame, the bright, vivid pixels of the
 sprites of the spirits and their magic give off particles by colour: fire colours embers

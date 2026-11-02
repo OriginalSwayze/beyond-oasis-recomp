@@ -105,4 +105,16 @@ target_compile_options(BeyondOasis PRIVATE -Wall -Wextra -Wno-unused-parameter)
 if(WIN32)
   target_link_options(BeyondOasis PRIVATE -static)
   target_link_libraries(BeyondOasis PRIVATE gdi32 comdlg32)
+
+  # The installer (setup/setup.c); the release appends the source to it.
+  add_executable(Setup WIN32
+    setup/setup.c
+    runtime/src/ui.c
+    runtime/src/text.c
+    runtime/src/png.c)
+  target_include_directories(Setup PRIVATE runtime/src)
+  target_link_libraries(Setup PRIVATE SDL2::SDL2main SDL2::SDL2-static)
+  target_compile_options(Setup PRIVATE -Wall -Wextra -Wno-unused-parameter)
+  target_link_options(Setup PRIVATE -static)
+  target_link_libraries(Setup PRIVATE gdi32 comdlg32 bcrypt ole32 shell32 uuid)
 endif()
