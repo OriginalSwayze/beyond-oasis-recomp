@@ -277,6 +277,18 @@ void settings_set_volume_fraction(float v) {
 
 int settings_cycle(int v, int count, int dir) { return ((v + dir) % count + count) % count; }
 
+bool settings_option_is_switch(int id) {
+    switch (id) {
+    case OPT_WIDESCREEN: case OPT_INTEGER: case OPT_FLICKER: case OPT_SMOOTH: case OPT_ELEMENTS: case OPT_FOOTSTEPS:
+    case OPT_WATER: case OPT_TIMER: case OPT_MUSIC: case OPT_LAUNCHER: case OPT_CHEAT_HEALTH: case OPT_CHEAT_SPIRIT:
+    case OPT_CHEAT_WEAPONS: case OPT_DUMP: case OPT_PERF_STATS: case OPT_AUTO_QUALITY: case OPT_MERGED: case OPT_AVX2:
+    case OPT_GPU: case OPT_REWIND:
+        return true;
+    default:
+        return false;
+    }
+}
+
 void settings_option_change(int id, int dir) {
     switch (id) {
     case OPT_WIDESCREEN: settings.widescreen = !settings.widescreen; break;

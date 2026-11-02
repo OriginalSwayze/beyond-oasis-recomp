@@ -651,10 +651,15 @@ enum { HIT_PREV = 200, HIT_TOGGLE, HIT_NEXT, HIT_TAB0 = 300 };
 
 static struct {
     int tab, selected;
-    float focus;                        /* the spirit circling to the front, follows tab */
+    float focus;                        /* (unused since the redesign) */
     float tab_t0;                       /* when the tab last changed, and from where */
     int tab_from;
-    float hl_y, hl_x;                   /* the highlight, gliding to the selected item */
+    float hl_y, hl_x, hl_v;             /* the highlight, on a spring to the selected row */
+    float ind_x, ind_v;                 /* the tabs' indicator, on a spring to the open tab */
+    float tab_on[TABS];                 /* each tab's brightness, easing to the open one */
+    float knob[16];                     /* each On/Off switch's knob, 0 off .. 1 on */
+    int changed_dir;                    /* which way the last value changed (it slides in from there) */
+    bool snap;                          /* the switches go straight to their side (a tab just opened) */
     float changed_t0;                   /* when a value last changed (it pulses) */
     float selected_t0;                  /* when the selection last moved (the preview fades in) */
     int changed_item;
@@ -710,6 +715,7 @@ static void open_tab(int tab) {
     ui.tab = tab;
     ui.tab_t0 = ui.t;
     ui.selected_t0 = ui.t;
+    ui.snap = true;
     if (ui.selected >= 0 && ui.selected < 100 && ui.selected >= tab_count[tab]) ui.selected = tab_count[tab] - 1;
     ui.flash = 1;
     music_sfx(SFX_CURSOR);
@@ -733,207 +739,241 @@ static void song_name(int song, char *out, size_t n) {
     else snprintf(out, n, "Track %02d", song + 1);
 }
 
-/* ---- Drawing ----------------------------------------------------------------------- */
+/* ---- Drawing ----------------------------------------------------------------------- *
+ * One accent for everything: iridescent holofoil, a pastel that drifts through cyan,
+ * violet and gold along the surface and in time; warm gold for values and titles. */
 static float ease_out(float x) { x = clampf(x, 0, 1); return 1 - (1 - x) * (1 - x) * (1 - x); }
+static float ease_in_out(float x) { x = clampf(x, 0, 1); return x * x * (3 - 2 * x); }
 
-/* A filled triangle (layout units), antialiased by 2x2 supersampling. */
-static void fill_tri(float ax, float ay, float bx, float by, float cx, float cy, Rgb c, float a) {
-    float x0 = fminf(ax, fminf(bx, cx)), x1 = fmaxf(ax, fmaxf(bx, cx)), y0 = fminf(ay, fminf(by, cy)), y1 = fmaxf(ay, fmaxf(by, cy));
-    int px0 = (int)ui_x(x0) - 1, px1 = (int)ui_x(x1) + 1, py0 = (int)ui_y(y0) - 1, py1 = (int)ui_y(y1) + 1;
-    for (int y = py0; y <= py1; y++)
-        for (int x = px0; x <= px1; x++) {
-            int in = 0;
-            for (int s = 0; s < 4; s++) {
-                float ux = (x + .25f + (s & 1) * .5f - ui_ox) / ui_s, uy = (y + .25f + (s >> 1) * .5f - ui_oy) / ui_s;
-                float e0 = (bx - ax) * (uy - ay) - (by - ay) * (ux - ax);
-                float e1 = (cx - bx) * (uy - by) - (cy - by) * (ux - bx);
-                float e2 = (ax - cx) * (uy - cy) - (ay - cy) * (ux - cx);
-                in += (e0 >= 0 && e1 >= 0 && e2 >= 0) || (e0 <= 0 && e1 <= 0 && e2 <= 0);
-            }
-            if (in) ui_blend_px(x, y, c, a * in / 4.f);
-        }
-}
+#define C_GOLD  rgb_hex(0xF3D58E)
+#define C_LABEL rgb_hex(0xDAD4C6)
+#define C_DIM   rgb_hex(0x8A8476)
 
-/* Each tab's orb: the four spirits, the armlet for CHEATS, and Efreet again for SPEED. */
-static int tab_orb(int k) { static const int orb[TABS] = { 0, 1, 2, 3, SPIRIT_ARMLET, 1 }; return orb[k]; }
 
-static void draw_tabs(void) {
+
+
+static void stroke(float x0, float y0, float x1, float y1, Rgb c, float a) { ui_capsule(x0, y0, x1, y1, .85f, 0, c, a); }
+
+
+
+
+static const int tab_icons[TABS] = { UI_ICON_DISPLAY, UI_ICON_EFFECTS, UI_ICON_GAME, UI_ICON_MUSIC, UI_ICON_CHEATS, UI_ICON_SPEED };
+
+static void draw_tabs(float t) {
     for (int k = 0; k < TABS; k++) {
-        float x = TAB_X0 + k * TAB_W, cx = x + TAB_W / 2.f;
-        bool open = ui.tab == k, focus = ui.selected == ITEM_TABS && open;
-        const Spirit *sp = &spirits[tab_orb(k)];
-        float bright = open ? 1 : .45f;
-        if (open) {
-            ui_fill_rect(x + 6, TAB_Y, TAB_W - 12, TAB_H, sp->light, focus ? .10f : .06f);
-            /* A glowing line under the open tab. */
-            for (int i = 0; i < 3; i++) ui_fill_rect(x + 14 - i * 3, TAB_Y + TAB_H - 3 - i, TAB_W - 28 + i * 6, 2, sp->light, .5f - i * .15f);
-        }
-        scene_orb(tab_orb(k), cx, TAB_Y + 24, open ? 15 : 12, ui.t, bright + (open ? ui.flash * .4f : 0));
-        Rgb tc = open ? mix(rgb_hex(0xFFF4DA), sp->light, .25f) : rgb_hex(0x8A8170);
-        float tw = ui_text_width(tab_names[k], "Segoe UI Semibold", 12.5f, 600, 3);
-        ui_draw_text(tab_names[k], "Segoe UI Semibold", 12.5f, 600, 3, cx - tw / 2, TAB_Y + 46, tc, tc, 1);
+        float x = TAB_X0 + k * TAB_W, cx = x + TAB_W / 2.f, on = ui.tab_on[k];
+        Rgb ic = mix(rgb_hex(0x6E6A62), mix(rgb(1, 1, 1), ui_holo(k * .17f, t), .4f), on);
+        if (on > .02f) scene_glow(cx, TAB_Y + 22, 30, ui_holo(k * .17f, t), .10f * on);
+        ui_icon(tab_icons[k], cx, TAB_Y + 22 - on * 2, 1, ic, .6f + .4f * on);
+        Rgb tc = mix(rgb_hex(0x7C776C), rgb_hex(0xF4EFE4), on);
+        float tw = ui_text_width(tab_names[k], "Segoe UI Semibold", 12, 600, 2.5f);
+        ui_draw_text(tab_names[k], "Segoe UI Semibold", 12, 600, 2.5f, cx - tw / 2, TAB_Y + 42, tc, tc, 1);
     }
+    /* The indicator under the open tab, sliding on a spring. */
+    float w = TAB_W - 40, focus = ui.selected == ITEM_TABS ? 1 : 0;
+    scene_glow(ui.ind_x, TAB_Y + TAB_H - 6, 40, ui_holo(.3f, t), .16f + .14f * focus);
+    ui_holo_bar(ui.ind_x - w / 2, TAB_Y + TAB_H - 7, w, 2.5f, t, .95f);
 }
 
-static void draw_row(int r, const Row *row, float dx, float alpha, const PlayerView *pv) {
-    float y = row_y(r);
-    bool focus = ui.selected == r;
-    Rgb lc = focus ? rgb_hex(0xFFFFFF) : rgb_hex(0xD8CDB6);
-    ui_draw_text(row->label, "Segoe UI", 17.5f, 400, 0, PANEL_X + 4 + dx, y + 10, lc, lc, alpha);
-    char value[96];
-    Rgb vc = focus ? rgb_hex(0xFFE4A0) : rgb_hex(0xEBD9AE);
-    const char *hint = NULL;
+
+/* A switch for the options that are only on or off; the GPU effects' "On (from the next
+ * start)" keeps its words. */
+static bool is_switch(const Row *row, char *value) {
+    return row->kind == ROW_OPTION && settings_option_is_switch(row->id) && (!strcmp(value, "On") || !strcmp(value, "Off"));
+}
+
+static void row_value(const Row *row, const PlayerView *pv, char *value, size_t n, const char **hint) {
+    *hint = NULL;
     switch (row->kind) {
-    case ROW_ROM:
-        snprintf(value, sizeof value, "%s", rom_status);
-        vc = rom_ok ? rgb_hex(0x9FDCA6) : rgb_hex(0xF09A86);
-        hint = "Enter to choose\xE2\x80\xA6";
-        break;
-    case ROW_CONTROLS:
-        snprintf(value, sizeof value, "Keyboard & controller");
-        hint = "Enter to change\xE2\x80\xA6";
-        break;
+    case ROW_ROM: snprintf(value, n, "%s", rom_status); *hint = "Enter to choose\xE2\x80\xA6"; break;
+    case ROW_CONTROLS: snprintf(value, n, "Keyboard & controller"); *hint = "Enter to change\xE2\x80\xA6"; break;
     case ROW_OUTFIT: {
         int changed = 0;
         for (int k = 0; k < OUTFIT_PARTS; k++) changed += settings.outfit_color[k] >= 0;
-        if (!settings.outfit || !changed) snprintf(value, sizeof value, "His own colours");
-        else snprintf(value, sizeof value, "%d part%s recoloured", changed, changed == 1 ? "" : "s");
-        hint = "Enter to change\xE2\x80\xA6";
+        if (!settings.outfit || !changed) snprintf(value, n, "His own colours");
+        else snprintf(value, n, "%d part%s recoloured", changed, changed == 1 ? "" : "s");
+        *hint = "Enter to change\xE2\x80\xA6";
         break;
     }
     case ROW_TRACK:
-        song_name(pv->ready ? pv->song : (settings.ost_track >= 0 ? settings.ost_track : title_song), value, sizeof value);
-        hint = pv->on ? "Enter to stop" : "Enter to play";
+        song_name(pv->ready ? pv->song : (settings.ost_track >= 0 ? settings.ost_track : title_song), value, n);
+        *hint = pv->on ? "Enter to stop" : "Enter to play";
         break;
-    default:
-        settings_option_text(row->id, value, sizeof value);
+    default: settings_option_text(row->id, value, n);
     }
-    float pulse = ui.changed_item == r ? 1 - ease_out((ui.t - ui.changed_t0) / .35f) : 0;
-    if (pulse > 0) vc = mix(vc, rgb(1, 1, 1), pulse * .8f);
-    float px = 17.5f + pulse * 1.5f;
-    float vw = ui_text_width(value, "Segoe UI Semibold", px, 600, 0);
+}
+
+static void draw_row(int r, const Row *row, float dx, float alpha, const PlayerView *pv, float t) {
+    float y = row_y(r), cy = y + ROW_H / 2.f;
+    bool focus = ui.selected == r;
+    Rgb lc = focus ? rgb_hex(0xFFFFFF) : C_LABEL;
+    ui_draw_text(row->label, "Segoe UI", 17, 400, 0, PANEL_X + 4 + dx, y + 10, lc, lc, alpha);
+    char value[96];
+    const char *hint;
+    row_value(row, pv, value, sizeof value, &hint);
+    if (is_switch(row, value)) {
+        ui_switch(PANEL_R + dx, cy, ui.knob[r], t, alpha);
+        return;
+    }
+    Rgb vc = focus ? rgb_hex(0xFFE7AE) : C_GOLD;
+    if (row->kind == ROW_ROM) vc = rom_ok ? rgb_hex(0x9FDCA6) : rgb_hex(0xF09A86);
+    /* A new value slides in from the side it was changed towards. */
+    float s = ui.changed_item == r ? ease_out((t - ui.changed_t0) / .26f) : 1;
+    float slide = (1 - s) * 16 * ui.changed_dir, va = alpha * (.25f + .75f * s);
+    float vw = ui_text_width(value, "Segoe UI Semibold", 17, 600, 0);
     float vx = PANEL_R - vw;
     bool arrows = row->kind == ROW_OPTION || row->kind == ROW_TRACK;
     if (row->kind == ROW_OPTION && row->id == OPT_VOLUME) {
-        vw = ui_text_width("100%", "Segoe UI Semibold", px, 600, 0);
+        vw = ui_text_width("100%", "Segoe UI Semibold", 17, 600, 0);
         vx = PANEL_R - 22 - vw;
-        ui_slider(VOLUME_X + dx, y + ROW_H / 2.f, VOLUME_W, settings.volume / 100.f, focus);
+        ui_slider(VOLUME_X + dx, cy, VOLUME_W, settings.volume / 100.f, focus);
     } else if (arrows) {
-        vx -= 22;
+        vx -= 24;
     }
     if (focus && hint) {
         float hw = ui_text_width(hint, "Segoe UI", 13, 400, 0);
-        ui_draw_text(hint, "Segoe UI", 13, 400, 0, vx - hw - (arrows ? 34 : 16) + dx, y + 13, rgb_hex(0x8F8673), rgb_hex(0x8F8673), alpha);
+        ui_draw_text(hint, "Segoe UI", 13, 400, 0, vx - hw - (arrows ? 36 : 18) + dx, y + 13, C_DIM, C_DIM, alpha);
     }
     if (arrows) {
-        Rgb ac = focus ? spirits[tab_orb(ui.tab)].light : rgb_hex(0x6A5F4C);
-        float nudge = pulse * 3;
-        ui_draw_text("\xE2\x80\xB9", "Segoe UI Semibold", 20, 600, 0, vx - 18 - nudge + dx, y + 7, ac, ac, alpha);
-        ui_draw_text("\xE2\x80\xBA", "Segoe UI Semibold", 20, 600, 0, PANEL_R - 12 + nudge + dx, y + 7, ac, ac, alpha);
+        Rgb ac = focus ? ui_holo(.2f, t) : rgb_hex(0x5E5A52);
+        float nudge = (1 - s) * 3, lx = vx - 14 - nudge * (ui.changed_dir < 0) + dx, rx = PANEL_R - 6 + nudge * (ui.changed_dir > 0) + dx;
+        stroke(lx + 3, cy - 5, lx - 1, cy, ac, alpha); stroke(lx - 1, cy, lx + 3, cy + 5, ac, alpha);
+        stroke(rx - 3, cy - 5, rx + 1, cy, ac, alpha); stroke(rx + 1, cy, rx - 3, cy + 5, ac, alpha);
     }
-    ui_draw_text(value, "Segoe UI Semibold", px, 600, 0, vx + dx, y + 10 - pulse * .8f, vc, vc, alpha);
+    ui_draw_text(value, "Segoe UI Semibold", 17, 600, 0, vx + dx + slide, y + 10, vc, vc, va);
 }
 
 /* The soundtrack player: the song, its time, a level meter and the transport buttons. */
-static void draw_player(const PlayerView *pv, float dx, float alpha) {
+static void draw_player(const PlayerView *pv, float dx, float alpha, float t) {
     float x = PANEL_X - 6 + dx, w = PANEL_R - PANEL_X + 12, y = CARD_Y;
-    const Spirit *sp = &spirits[3];
-    ui_panel(x, y, w, CARD_H, 12, rgb_hex(0x1B1426), rgb_hex(0x100C16), .9f * alpha, sp->light, .28f * alpha);
+    Rgb acc = ui_holo(.55f, t);
+    ui_panel(x, y, w, CARD_H, 12, rgb_hex(0x1A1D27), rgb_hex(0x0E1016), .92f * alpha, acc, .25f * alpha);
     char name[64], time[48];
     int song = pv->ready ? pv->song : (settings.ost_track >= 0 ? settings.ost_track : title_song);
     song_name(song, name, sizeof name);
-    ui_draw_text(pv->on ? "NOW PLAYING" : "STOPPED", "Segoe UI Semibold", 11, 600, 3, x + 20, y + 16, sp->light, sp->light, alpha * .9f);
+    ui_draw_text(pv->on ? "NOW PLAYING" : "STOPPED", "Segoe UI Semibold", 11, 600, 3, x + 20, y + 16, acc, acc, alpha * .9f);
     ui_draw_text(name, "Palatino Linotype", 26, 700, 1, x + 20, y + 32, rgb_hex(0xFFF1D0), rgb_hex(0xD9B567), alpha);
     char count[32];
     snprintf(count, sizeof count, "%d / %d", (song < 0 ? 0 : song) + 1, OST_SONGS);
     float cw = ui_text_width(count, "Segoe UI", 14, 400, 0);
-    ui_draw_text(count, "Segoe UI", 14, 400, 0, x + w - 20 - cw, y + 20, rgb_hex(0x9A8FB0), rgb_hex(0x9A8FB0), alpha);
-    /* Level meter, right of the name. */
+    ui_draw_text(count, "Segoe UI", 14, 400, 0, x + w - 20 - cw, y + 20, C_DIM, C_DIM, alpha);
+    /* Level meter, right of the name: bars rounded at both ends, in the accent. */
     float mx0 = x + w - 20 - METER_BARS * 7, my = y + 72;
     for (int b = 0; b < METER_BARS; b++) {
         float h = 3 + pv->meter[b] * 26;
-        Rgb c = mix(sp->light, rgb_hex(0xFFE4A0), pv->meter[b]);
-        ui_fill_rect(mx0 + b * 7, my - h, 4, h, c, alpha * (.35f + .65f * pv->meter[b]));
+        Rgb c = mix(ui_holo(b / (float)METER_BARS * .5f, t), rgb_hex(0xFFE4A0), pv->meter[b] * .6f);
+        ui_capsule(mx0 + b * 7 + 2, my - h + 2, mx0 + b * 7 + 2, my - 2, 1.8f, 0, c, alpha * (.35f + .65f * pv->meter[b]));
     }
     /* Progress through the song's turn, and the time. */
     int secs = pv->frames / 60;
     snprintf(time, sizeof time, "%d:%02d", secs / 60, secs % 60);
     float bar_x = x + 20, bar_w = w - 40, bar_y = y + 86;
     float prog = clampf(pv->frames / (PLAY_FOR * 60.f), 0, 1);
-    ui_fill_rect(bar_x, bar_y, bar_w, 3, rgb_hex(0x3A2F4A), alpha);
-    ui_fill_rect(bar_x, bar_y, bar_w * prog, 3, sp->light, alpha);
-    ui_draw_text(time, "Segoe UI", 12, 400, 0, bar_x, bar_y + 8, rgb_hex(0x9A8FB0), rgb_hex(0x9A8FB0), alpha);
+    ui_capsule(bar_x, bar_y + 1.5f, bar_x + bar_w, bar_y + 1.5f, 1.5f, 0, rgb_hex(0x2E3240), alpha);
+    if (prog > 0) ui_holo_bar(bar_x, bar_y, bar_w * prog, 3, t, alpha);
+    ui_draw_text(time, "Segoe UI", 12, 400, 0, bar_x, bar_y + 8, C_DIM, C_DIM, alpha);
     /* Previous, play/stop, next. */
     float cx = (PANEL_X + PANEL_R) / 2.f + dx, by = PLAYER_BTN_Y;
     Rgb bc = rgb_hex(0xEADFC8);
-    fill_tri(cx - 62, by, cx - 50, by - 9, cx - 50, by + 9, bc, alpha * .85f);
-    fill_tri(cx - 74, by, cx - 62, by - 9, cx - 62, by + 9, bc, alpha * .85f);
-    fill_tri(cx + 62, by, cx + 50, by - 9, cx + 50, by + 9, bc, alpha * .85f);
-    fill_tri(cx + 74, by, cx + 62, by - 9, cx + 62, by + 9, bc, alpha * .85f);
-    scene_glow(cx, by, 30, sp->light, .25f * alpha);
+    ui_tri(cx - 62, by, cx - 50, by - 9, cx - 50, by + 9, bc, alpha * .85f);
+    ui_tri(cx - 74, by, cx - 62, by - 9, cx - 62, by + 9, bc, alpha * .85f);
+    ui_tri(cx + 62, by, cx + 50, by - 9, cx + 50, by + 9, bc, alpha * .85f);
+    ui_tri(cx + 74, by, cx + 62, by - 9, cx + 62, by + 9, bc, alpha * .85f);
+    ui_capsule(cx, by, cx, by, 21, 1.2f, acc, alpha * .7f);
+    scene_glow(cx, by, 34, acc, (.18f + .08f * sinf(t * 2.4f)) * alpha);
     if (pv->on) {
-        ui_fill_rect(cx - 9, by - 10, 18, 20, rgb_hex(0xFFF1D0), alpha);
+        ui_capsule(cx - 4.5f, by - 8, cx - 4.5f, by + 8, 2.2f, 0, rgb_hex(0xFFF1D0), alpha);
+        ui_capsule(cx + 4.5f, by - 8, cx + 4.5f, by + 8, 2.2f, 0, rgb_hex(0xFFF1D0), alpha);
     } else {
-        fill_tri(cx - 8, by - 12, cx + 13, by, cx - 8, by + 12, rgb_hex(0xFFF1D0), alpha);
+        ui_tri(cx - 6, by - 10, cx + 11, by, cx - 6, by + 10, rgb_hex(0xFFF1D0), alpha);
     }
 }
 
+/* A shine sweeping across the rounded button at (x, y, w, h); p 0..1 through the sweep. */
+static void button_shine(float x, float y, float w, float h, float p) {
+    float band = x - 60 + (w + 120) * ease_in_out(p);
+    int y0 = (int)ui_y(y), y1 = (int)ui_y(y + h);
+    for (int py = y0; py < y1; py++) {
+        float uy = (py + .5f - ui_oy) / ui_s, centre = band - (uy - y) * .6f;
+        int x0 = (int)ui_x(fmaxf(x, centre - 26)), x1 = (int)ui_x(fminf(x + w, centre + 26));
+        for (int px = x0; px < x1; px++) {
+            float ux = (px + .5f - ui_ox) / ui_s, d = ui_rrect_dist(ux, uy, x, y, w, h, 10);
+            float cov = clampf(.5f - d * ui_s, 0, 1), e = (ux - centre) / 14;
+            if (cov > 0) ui_blend_px(px, py, rgb(1, 1, .96f), cov * .45f * expf(-e * e));
+        }
+    }
+}
+
+
 static void draw_ui(float t) {
     PlayerView pv = player_view();
-    draw_tabs();
-    /* The open tab slides in from the side it came from. */
-    float k = ease_out((t - ui.tab_t0) / .32f);
+    draw_tabs(t);
+    /* The open tab's rows cascade in, one after another, from the side moved towards. */
     int dir = ui.tab > ui.tab_from ? 1 : -1;
-    float dx = (1 - k) * 36 * dir, alpha = k;
-    /* The highlight glides to the selected row. */
     bool on_row = ui.selected >= 0 && ui.selected < tab_count[ui.tab];
     if (on_row) {
-        float y = ui.hl_y;
-        Rgb c = spirits[tab_orb(ui.tab)].light;
-        ui_fill_rect(PANEL_X - 14, y + 2, PANEL_R - PANEL_X + 22, ROW_H - 4, c, .07f);
-        ui_fill_rect(PANEL_X - 14, y + 2, 3, ROW_H - 4, c, .95f);
-        scene_glow(PANEL_X - 12, y + ROW_H / 2.f, 16, c, .35f);
+        /* The highlight, on a spring, with a living accent edge. */
+        float y = ui.hl_y, w = PANEL_R - PANEL_X + 22;
+        float a = ease_out((t - ui.tab_t0 - .1f) / .3f);
+        ui_panel(PANEL_X - 14, y + 3, w, ROW_H - 6, 8, rgb_hex(0x262A36), rgb_hex(0x1C1F28), .55f * a,
+                 ui_holo(.1f, t), .22f * a);
+        ui_capsule(PANEL_X - 8, y + 11, PANEL_X - 8, y + ROW_H - 11, 1.6f, 0, ui_holo(t * .1f, t), a);
+        scene_glow(PANEL_X - 8, y + ROW_H / 2.f, 22, ui_holo(t * .1f, t), .28f * a);
     }
-    for (int r = 0; r < tab_count[ui.tab]; r++) draw_row(r, &tab_rows[ui.tab][r], dx, alpha, &pv);
-    if (ui.tab == 3) draw_player(&pv, dx, alpha);
-    else if (on_row && tab_rows[ui.tab][ui.selected].about) {
-        /* What the selected option does, under a thin rule in the tab's colour. */
-        float y = row_y(tab_count[ui.tab]) + 22;
-        ui_fill_rect(PANEL_X, y, 46, 2, spirits[tab_orb(ui.tab)].light, .7f * alpha);
-        ui_draw_text(tab_rows[ui.tab][ui.selected].about, "Segoe UI", 14.5f, 400, 0, PANEL_X + dx, y + 14,
-                     rgb_hex(0xB8AC92), rgb_hex(0xB8AC92), alpha);
+    for (int r = 0; r < tab_count[ui.tab]; r++) {
+        float e = ease_out((t - ui.tab_t0 - r * .035f) / .3f);
+        if (e <= 0) continue;
+        draw_row(r, &tab_rows[ui.tab][r], (1 - e) * 26 * dir, e, &pv, t);
+    }
+    if (ui.tab == 3) {
+        float e = ease_out((t - ui.tab_t0 - .15f) / .35f);
+        draw_player(&pv, (1 - e) * 26 * dir, e, t);
+    } else if (on_row && tab_rows[ui.tab][ui.selected].about) {
+        /* What the selected option does, rising in under a thin accent rule. */
+        float a = ease_out((t - fmaxf(ui.selected_t0, ui.tab_t0 + .2f)) / .3f), y = row_y(tab_count[ui.tab]) + 22 + (1 - a) * 6;
+        ui_holo_bar(PANEL_X, y, 46 * a, 2, t, .85f * a);
+        ui_draw_text(tab_rows[ui.tab][ui.selected].about, "Segoe UI", 14.5f, 400, 0, PANEL_X, y + 14,
+                     rgb_hex(0xB9B3A5), rgb_hex(0xB9B3A5), a);
     }
 
     float lx, ly;
     foil_light(t, 0, 0, -1, &lx, &ly);   /* drifting on its own, not following the mouse */
+    /* PLAY: gold foil, breathing a warm glow, a shine sweeping over it every few seconds. */
+    if (play_enabled()) scene_glow(PLAY_X + PLAY_W / 2.f, BTN_Y + BTN_H / 2.f, 150, rgb(1, .78f, .42f),
+                                   (.07f + .04f * sinf(t * 2.1f)) * (ui.selected == ITEM_PLAY ? 1.6f : 1));
     ui_button(PLAY_X, BTN_Y, PLAY_W, BTN_H, "PLAY", 20, true, ui.selected == ITEM_PLAY, play_enabled(), lx, ly, t);
+    float sp = fmodf(t + 3.2f, 4.6f) / .9f;
+    if (play_enabled() && sp < 1) button_shine(PLAY_X, BTN_Y, PLAY_W, BTN_H, sp);
     ui_button(QUIT_X, BTN_Y, QUIT_W, BTN_H, "QUIT", 20, false, ui.selected == ITEM_QUIT, true, lx, ly, t);
-    const char *keys = "\xE2\x86\x91\xE2\x86\x93 select    \xE2\x86\x90\xE2\x86\x92 change    Q E  tabs    [ ]  track    M  music    Esc  quit";
-    ui_draw_text(keys, "Segoe UI", 12, 400, 1, PANEL_X, TABLET_Y + TABLET_H - 44, rgb_hex(0x7C7262), rgb_hex(0x7C7262), 1);
+    float kx = PANEL_X, ky = TABLET_Y + TABLET_H - 46;
+    kx = ui_keycap(kx, ky, "\xE2\x86\x91\xE2\x86\x93", "select", 1);
+    kx = ui_keycap(kx, ky, "\xE2\x86\x90\xE2\x86\x92", "change", 1);
+    kx = ui_keycap(kx, ky, "Q  E", "tabs", 1);
+    kx = ui_keycap(kx, ky, "[  ]", "track", 1);
+    kx = ui_keycap(kx, ky, "M", "music", 1);
+    ui_keycap(kx, ky, "Esc", "quit", 1);
 
     /* A picture option: its before/after on the last frame the game saved, over the scene. */
     if (on_row && tab_rows[ui.tab][ui.selected].kind == ROW_OPTION && preview_supported(tab_rows[ui.tab][ui.selected].id) &&
         preview_ready()) {
         float a = ease_out((t - ui.selected_t0) / .3f);
-        float px = 40, py = 226, pw = 556, ph = pw * 9 / 16.f;
+        float px = 40, py = 226 + (1 - a) * 10, pw = 556, ph = pw * 9 / 16.f;
         ui_fill_rect(0, 0, TABLET_X - 20, UI_BASE_H, rgb(0, 0, 0), .55f * a);
         static FoilSurface card;
-        if (foil_begin(&card, px - 18, py - 50, pw + 36, ph + 74, 14, rgb(.9f, .92f, 1))) {
+        if (foil_begin(&card, px - 18, 226 - 50, pw + 36, ph + 74, 14, rgb(.9f, .92f, 1))) {
             foil_frame(&card, 6, 10);
-            foil_recess(&card, px - 2, py - 2, pw + 4, ph + 4, 4, .4f);
+            foil_recess(&card, px - 2, 226 - 2, pw + 4, ph + 4, 4, .4f);
             foil_finish(&card);
         }
-        float lx, ly;
-        foil_light(t, 0, 0, -1, &lx, &ly);   /* drifting on its own, not following the mouse */
         if (a > .99f) foil_draw(&card, lx, ly, t);
         else ui_panel(px - 18, py - 50, pw + 36, ph + 74, 14, rgb_hex(0x14131A), rgb_hex(0x0A090D), .92f * a, rgb_hex(0xD9B567), .45f * a);
-        ui_draw_text("PREVIEW  \xC2\xB7  YOUR LAST GAME FRAME", "Segoe UI Semibold", 12, 600, 3, px, py - 30,
-                     spirits[tab_orb(ui.tab)].light, spirits[tab_orb(ui.tab)].light, a);
+        Rgb acc = ui_holo(.25f, t);
+        ui_draw_text("PREVIEW  \xC2\xB7  YOUR LAST GAME FRAME", "Segoe UI Semibold", 12, 600, 3, px, py - 30, acc, acc, a);
         if (a > .05f) preview_draw(tab_rows[ui.tab][ui.selected].id, px, py, pw, ph, t);
         ui_panel(px - 1, py - 1, pw + 2, ph + 2, 4, rgb(0, 0, 0), rgb(0, 0, 0), 0, rgb_hex(0xD9B567), .5f * a);
     }
 
-    /* Under the armlet, on every tab: what is playing. */
+    /* Under the case, on every tab: what is playing. */
     if (pv.ready && pv.on) {
         char name[64], line[96];
         song_name(pv.song, name, sizeof name);
@@ -950,32 +990,37 @@ static void layout(int pixel_w) {
 
 /* Advances the animations by dt seconds. */
 static void animate(float dt) {
-    float k = 1 - expf(-dt * 10);
-    float target = ui.tab < 4 ? (float)ui.tab : ui.focus;   /* four spirits on the armlet; CHEATS has none */
-    float d = remainderf(target - ui.focus, 4);
-    ui.focus += d * (1 - expf(-dt * 6));
     float hy = ui.selected >= 0 && ui.selected < tab_count[ui.tab] ? row_y(ui.selected) : ui.hl_y;
-    ui.hl_y += (hy - ui.hl_y) * k;
-    ui.flash *= expf(-dt * 3);
+    ui_spring(&ui.hl_y, &ui.hl_v, hy, dt, 320);
+    ui_spring(&ui.ind_x, &ui.ind_v, TAB_X0 + ui.tab * TAB_W + TAB_W / 2.f, dt, 220);
+    float k = 1 - expf(-dt * 12);
+    for (int i = 0; i < TABS; i++) ui.tab_on[i] += ((i == ui.tab ? 1.f : 0.f) - ui.tab_on[i]) * k;
+    /* The switches' knobs ease to their side (straight there on a newly opened tab). */
+    PlayerView pv = { 0 };
+    for (int r = 0; r < tab_count[ui.tab] && r < 16; r++) {
+        char value[96];
+        const char *hint;
+        row_value(&tab_rows[ui.tab][r], &pv, value, sizeof value, &hint);
+        float target = !strcmp(value, "On") ? 1.f : 0.f;
+        ui.knob[r] = ui.snap ? target : ui.knob[r] + (target - ui.knob[r]) * (1 - expf(-dt * 14));
+    }
+    ui.snap = false;
 }
 
-/* The steelbook on the left: the logo in gold and the Gold Armlet embossed in dark steel,
- * the four spirits set in sockets below them; the tablet of settings in the same steel. */
+/* The steelbook on the left: the logo in gold and the Gold Armlet embossed in dark steel;
+ * the tablet of settings in the same steel. */
 static FoilSurface case_surf, tablet_surf;
-static const float gem_dx[4] = { -114, -38, 38, 114 };   /* the spirits' sockets, in tab order */
-#define GEM_Y (CASE_Y + CASE_H - 104)
 
 static void build_case(void) {
     if (!foil_begin(&case_surf, CASE_X, CASE_Y, CASE_W, CASE_H, 16, rgb(.86f, .90f, 1.0f))) return;
-    float cx = CASE_X + CASE_W / 2.f;
+    float cx = CASE_X + CASE_W / 2.f, foot = CASE_Y + CASE_H - 92;
     foil_frame(&case_surf, 18, 8);
     float bottom = logo.w ? foil_art(&case_surf, &logo, cx, CASE_Y + 46, 320, FOIL_GOLD, 1.0f, .7f) : CASE_Y + 150;
     if (!logo.w) foil_text(&case_surf, "BEYOND OASIS", "Palatino Linotype", 44, 700, 6, cx, CASE_Y + 110, -.9f, FOIL_GOLD);
-    float room = GEM_Y - 40 - (bottom + 26);              /* the armlet fills the space down to the sockets */
-    float width = armlet.w ? fminf(330, room * armlet.w / (float)armlet.h) : 0;
+    float room = foot - 24 - (bottom + 26);               /* the armlet fills the space down to the rule */
+    float width = armlet.w ? fminf(350, room * armlet.w / (float)armlet.h) : 0;
     if (armlet.w) foil_art(&case_surf, &armlet, cx, bottom + 26 + (room - width * armlet.h / armlet.w) / 2, width, FOIL_ART, .9f, .6f);
-    for (int k = 0; k < 4; k++) foil_ring(&case_surf, cx + gem_dx[k], GEM_Y, 19, 2.2f);
-    foil_rule(&case_surf, CASE_X + 70, CASE_X + CASE_W - 70, GEM_Y - 38, 1.1f);
+    foil_rule(&case_surf, CASE_X + 70, CASE_X + CASE_W - 70, foot, 1.1f);
     foil_text(&case_surf, "NATIVE PC EDITION", "Segoe UI Semibold", 13, 600, 5, cx, CASE_Y + CASE_H - 52, .7f, FOIL_HOLO);
     foil_finish(&case_surf);
 }
@@ -988,6 +1033,35 @@ static void build_tablet(void) {
     foil_finish(&tablet_surf);
 }
 
+/* A band of holographic light sweeping diagonally over the case every few seconds. */
+static void case_sweep(float t) {
+    float p = (fmodf(t + 6.0f, 6.5f)) / 1.7f;          /* the first sweep at 0.5 s, as the case fades in */
+    if (p >= 1) return;
+    float span = CASE_W + CASE_H * .55f + 240, centre = -120 + span * ease_in_out(p);
+    int y0 = (int)ui_y(CASE_Y), y1 = (int)ui_y(CASE_Y + CASE_H);
+    for (int py = y0; py < y1; py++) {
+        float uy = (py + .5f - ui_oy) / ui_s, cx = CASE_X + centre - (uy - CASE_Y) * .55f;
+        int x0 = (int)ui_x(fmaxf(CASE_X, cx - 90)), x1 = (int)ui_x(fminf(CASE_X + CASE_W, cx + 90));
+        for (int px = x0; px < x1; px++) {
+            float ux = (px + .5f - ui_ox) / ui_s, d = ui_rrect_dist(ux, uy, CASE_X, CASE_Y, CASE_W, CASE_H, 16);
+            float cov = clampf(.5f - d * ui_s, 0, 1), e = (ux - cx) / 38;
+            if (cov <= 0) continue;
+            float k = expf(-e * e) * sinf(p * 3.14159f);
+            ui_blend_px(px, py, ui_holo((ux + uy) / 420, t), cov * .16f * k);
+        }
+    }
+}
+
+/* Soft iridescent lights drifting slowly behind the panels. */
+static void bokeh(float t) {
+    for (int i = 0; i < 7; i++) {
+        float h1 = hashf((uint32_t)i * 7919u + 1), h2 = hashf((uint32_t)i * 104729u + 7), h3 = hashf((uint32_t)i * 1299709u + 3);
+        float x = 40 + h1 * 1200 + 60 * sinf(t * (.05f + .04f * h2) + i), y = 80 + h2 * 560 + 40 * sinf(t * (.04f + .03f * h3) + i * 2);
+        float r = 50 + 60 * h3, k = (.035f + .03f * h1) * (.7f + .3f * sinf(t * .5f + i));
+        scene_glow(x, y, r, ui_holo(h1 + i * .13f, t), k);
+    }
+}
+
 static void render(float t) {
     ui.t = t;
     float lx, ly;
@@ -996,18 +1070,17 @@ static void render(float t) {
         foil_shadow(CASE_X + 10, CASE_Y + 18, CASE_W, CASE_H, 18);
         foil_shadow(TABLET_X + 8, TABLET_Y + 14, TABLET_W, TABLET_H, 20);
     }
-    foil_atmosphere(t, .9f);
+    bokeh(t);
+    foil_atmosphere(t, .55f);
     build_case();
     build_tablet();
-    /* The case, then its spirits glowing in their sockets. */
     foil_draw(&case_surf, lx, ly, t);
-    for (int k = 0; k < 4; k++) {
-        bool open = ui.tab == k;
-        float pulse = open ? .85f + .15f * sinf(t * 2.2f) + ui.flash * .4f : .35f;
-        scene_orb(k, CASE_X + CASE_W / 2.f + gem_dx[k], GEM_Y, open ? 15 : 13, t, pulse);
-    }
+    case_sweep(t);
     foil_draw(&tablet_surf, lx, ly, t);
     draw_ui(t);
+    /* The opening: out of black. */
+    float fade = 1 - ease_in_out(t / .9f);
+    if (fade > 0) ui_fill_rect(0, 0, BASE_W, BASE_H, rgb(0, 0, 0), fade);
 }
 
 static void update_rom_status(void) {
@@ -1042,7 +1115,12 @@ int launcher_screenshot(const char *png, int width, int tab, float t) {
     ui.focus = (float)ui.tab;
     ui.selected = tab_count[ui.tab] > 1 ? 1 : 0;
     ui.hl_y = row_y(ui.selected);
-    ui.tab_t0 = -10;
+    ui.ind_x = TAB_X0 + ui.tab * TAB_W + TAB_W / 2.f;
+    ui.tab_t0 = .35f;                   /* as at a start: the rows cascade in */
+    ui.snap = true;
+    ui.changed_item = -1;
+    /* The animations run up to t, as they would have in the window. */
+    for (float s = 0; s < t; s += 1 / 60.f) { ui.t = s; animate(1 / 60.f); }
     render(t);                          /* builds the surfaces and the backdrop: not timed */
     Uint64 t0 = SDL_GetPerformanceCounter();
     for (int i = 0; i < 10; i++) render(t);
@@ -1107,6 +1185,7 @@ static void row_action(SDL_Window *win, int dir) {
         if (row->id == OPT_MUSIC) music_request(-1, 0, settings.launcher_music, !settings.launcher_music);
     }
     ui.changed_item = ui.selected;
+    ui.changed_dir = dir ? dir : 1;
     ui.changed_t0 = ui.t;
     ui.flash = 1;
     music_sfx(SFX_CONFIRM);
@@ -1126,11 +1205,13 @@ int launcher_run(const char *ini_path) {
     SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, ui_w, ui_h);
     memset(&ui, 0, sizeof ui);
     outfit_sound = launcher_outfit_sound;
-    ui.tab_t0 = -10;
+    ui.tab_t0 = .35f;                   /* the rows cascade in as the launcher fades up */
     ui.changed_item = -1;
+    ui.snap = true;
     ui.selected = ITEM_PLAY;
     if (!rom_ok) { ui.tab = ui.tab_from = 2; ui.focus = 2; ui.selected = 0; }   /* the ROM row */
     ui.hl_y = row_y(ui.selected >= 0 && ui.selected < 100 ? ui.selected : 0);
+    ui.ind_x = TAB_X0 + ui.tab * TAB_W + TAB_W / 2.f;
     music_start();
 
     Uint64 freq = SDL_GetPerformanceFrequency(), start = SDL_GetPerformanceCounter(), last = start;

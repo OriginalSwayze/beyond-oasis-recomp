@@ -82,6 +82,9 @@ enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);
 void settings_option_change(int id, int dir);
+/* True for the options that are only on or off (drawn as a switch); others, like Filter or
+ * Sharpening, can read "Off" too but have more steps. */
+bool settings_option_is_switch(int id);
 int  settings_cycle(int v, int count, int dir);     /* (v + dir) wrapped into 0..count-1 */
 
 /* Widescreen pixels to add on each side for the current settings. */

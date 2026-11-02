@@ -69,4 +69,28 @@ float ui_slider_value(float x, float w, float mouse_x);
 void  ui_button(float x, float y, float w, float h, const char *label, float text_px,
                 bool primary, bool focus, bool enabled, float lx, float ly, float t);
 
+/* ---- The holofoil look (the launcher and the in-game menu) ------------------------- */
+/* The accent: iridescent holofoil, a pastel drifting through cyan, violet and gold along
+ * s and in time t. */
+static inline Rgb ui_holo(float s, float t) { return mix(rgb(1, 1, 1), hue(s + t * .05f), .45f); }
+/* A critically damped spring: x moves to target with velocity v (stiffness k). */
+void  ui_spring(float *x, float *v, float target, float dt, float k);
+/* Soft additive light of radius r centred at (cx, cy) (layout units). */
+void  ui_glow(float cx, float cy, float r, Rgb c, float k);
+/* A filled triangle, antialiased. */
+void  ui_tri(float ax, float ay, float bx, float by, float cx, float cy, Rgb c, float a);
+/* A capsule from (x0, y0) to (x1, y1) of radius r: filled, or only its outline that thick
+ * (outline > 0). A single point makes a disc or a ring. */
+void  ui_capsule(float x0, float y0, float x1, float y1, float r, float outline, Rgb c, float a);
+/* A line icon about 20 units across (times size), centred at (cx, cy). */
+enum { UI_ICON_DISPLAY, UI_ICON_EFFECTS, UI_ICON_GAME, UI_ICON_MUSIC, UI_ICON_CHEATS, UI_ICON_SPEED, UI_ICON_MORE };
+void  ui_icon(int icon, float cx, float cy, float size, Rgb c, float a);
+/* A bar filled with the accent along its length. */
+void  ui_holo_bar(float x, float y, float w, float h, float t, float a);
+/* An on/off switch right-aligned to x1 and centred on cy, its knob at k (0 off .. 1 on). */
+void  ui_switch(float x1, float cy, float k, float t, float alpha);
+/* A key hint at (x, y): the key on a small keycap, what it does after it. Returns where
+ * the next one goes. */
+float ui_keycap(float x, float y, const char *key, const char *what, float alpha);
+
 #endif

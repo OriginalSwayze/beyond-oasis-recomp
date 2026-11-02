@@ -34,7 +34,7 @@
 #define APP_NAME   "Beyond Oasis"
 #define GAME_EXE   "BeyondOasis.exe"
 #define UNINST_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\BeyondOasisRecomp"
-#define VERSION    "1.3.1"
+#define VERSION    "1.4"
 #define ROM_NAME   "Beyond Oasis (USA)"
 #define ROM_SHA1   "2944910c07c02eace98c17d78d07bef7859d386a"
 
