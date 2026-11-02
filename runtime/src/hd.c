@@ -565,16 +565,56 @@ static void make_water(int scale, const uint32_t *sprites) {
     }
 }
 
-static inline uint32_t water_pixel(uint32_t c, int x, int y, int line, int scale, const uint32_t *sprites) {
-    int nx = x / scale;
+/* What a water pixel gets that depends only on its game pixel (nx, line): the same for all
+ * scale x scale picture pixels of it, so worked out once for them. */
+typedef struct { int nx, d, wave, k, foam, glint, sparkle; } WaterCell;
+
+static inline void water_cell(WaterCell *w, int nx, int line) {
     int d = water_map[(size_t)line * water_w + nx];
     int t = (int)(hd_time * 90);
     /* Soft horizontal swells that wobble sideways as they roll: -127..127. */
     int wobble = wave_lut[(nx * 3 + t / 3) & 255] / 6;
     int wave = wave_lut[(line * 19 + wobble + t) & 255];
-    int r = (int)((c >> 16) & 255), g = (int)((c >> 8) & 255), b = (int)(c & 255);
+    w->nx = nx; w->d = d; w->wave = wave;
     /* Ripples: brightness rising and falling along the water. */
-    int k = 256 + wave / 12;
+    w->k = 256 + wave / 12;
+    /* Sparkles at points fixed in the world: plane coordinates from the scroll. */
+    int plane = water_wx[(size_t)line * water_w + nx];
+    int wx = nx - hd_frame.extra - hd_frame.hscroll[plane][line], wy = line + hd_frame.vscroll[plane][line];
+    /* Foam where the water meets the shore or a character: a white edge whose width laps
+     * in and out, at its own pace along the shore, with a little froth just past it. */
+    w->foam = 0;
+    int edge = water_edge[(size_t)line * water_w + nx];
+    if (edge < 8) {
+        int lap = wave_lut[(t / 2 + wx * 3) & 255] + wave_lut[(t + wx * 9 + wy * 5) & 255] / 2;   /* -190..190 */
+        int width = 512 + lap * 2;                          /* foam width in 1/256 game pixels: 0.5-3.5 */
+        int dist = edge * 256 - 256;                        /* 0 right at the edge */
+        if (dist < width) {
+            int f = (width - dist) * 300 / (width + 160);    /* out of 256: up to about 80% at the edge */
+            f = f > 210 ? 210 : f;
+            uint32_t froth = hash32((uint32_t)(wx & 1023) * 2654435761u ^ (uint32_t)(wy & 1023) * 40503u ^ (uint32_t)(t / 12));
+            if (dist > width - 200 && (froth & 7)) f /= 3;   /* the outer rim breaks into froth */
+            w->foam = f;
+        }
+    }
+    /* Glints that drift along the crests of the swells. */
+    w->glint = 0;
+    if (wave > 96) {
+        uint32_t gh = hash32((uint32_t)((wx + t / 6) >> 2) * 2246822519u ^ (uint32_t)(wy >> 1) * 3266489917u);
+        if ((gh & 31) == 0) w->glint = (wave - 96) * 3;
+    }
+    /* A twinkle at some fixed points, on the middle picture pixel of the game pixel. */
+    w->sparkle = 0;
+    uint32_t hsh = hash32((uint32_t)(wx & 1023) * 73856093u ^ (uint32_t)(wy & 1023) * 19349663u);
+    if ((hsh & 63) == 0) {
+        int ph = wave_lut[(int)((hd_time * (40 + (hsh >> 8 & 31))) + (hsh >> 16)) & 255];
+        if (ph > 90) w->sparkle = (ph - 90) * 6;
+    }
+}
+
+static inline uint32_t water_pixel(uint32_t c, int x, int y, int scale, const uint32_t *sprites, const WaterCell *w) {
+    int d = w->d, wave = w->wave, k = w->k;
+    int r = (int)((c >> 16) & 255), g = (int)((c >> 8) & 255), b = (int)(c & 255);
     r = r * k >> 8; g = g * k >> 8; b = b * k >> 8;
     /* Reflections of the sprites above the edge. */
     int sy = y - (2 * d - 1) * scale, sx = x + wave * scale / 160;
@@ -588,36 +628,11 @@ static inline uint32_t water_pixel(uint32_t c, int x, int y, int line, int scale
             r += (rr - r) * a >> 8; g += (rg - g) * a >> 8; b += ((rb > 255 ? 255 : rb) - b) * a >> 8;
         }
     }
-    /* Sparkles at points fixed in the world: plane coordinates from the scroll. */
-    int plane = water_wx[(size_t)line * water_w + nx];
-    int wx = nx - hd_frame.extra - hd_frame.hscroll[plane][line], wy = line + hd_frame.vscroll[plane][line];
-    /* Foam where the water meets the shore or a character: a white edge whose width laps
-     * in and out, at its own pace along the shore, with a little froth just past it. */
-    int edge = water_edge[(size_t)line * water_w + nx];
-    if (edge < 8) {
-        int lap = wave_lut[(t / 2 + wx * 3) & 255] + wave_lut[(t + wx * 9 + wy * 5) & 255] / 2;   /* -190..190 */
-        int width = 512 + lap * 2;                          /* foam width in 1/256 game pixels: 0.5-3.5 */
-        int dist = edge * 256 - 256;                        /* 0 right at the edge */
-        if (dist < width) {
-            int f = (width - dist) * 300 / (width + 160);    /* out of 256: up to about 80% at the edge */
-            f = f > 210 ? 210 : f;
-            uint32_t froth = hash32((uint32_t)(wx & 1023) * 2654435761u ^ (uint32_t)(wy & 1023) * 40503u ^ (uint32_t)(t / 12));
-            if (dist > width - 200 && (froth & 7)) f /= 3;   /* the outer rim breaks into froth */
-            r += (238 - r) * f >> 8; g += (246 - g) * f >> 8; b += (255 - b) * f >> 8;
-        }
-    }
-    /* Glints that drift along the crests of the swells. */
-    if (wave > 96) {
-        uint32_t gh = hash32((uint32_t)((wx + t / 6) >> 2) * 2246822519u ^ (uint32_t)(wy >> 1) * 3266489917u);
-        if ((gh & 31) == 0) { int s = (wave - 96) * 3; r += s; g += s; b += s; }
-    }
-    if (((x % scale) == scale / 2 || scale == 1) && ((y % scale) == scale / 2 || scale == 1)) {
-        uint32_t hsh = hash32((uint32_t)(wx & 1023) * 73856093u ^ (uint32_t)(wy & 1023) * 19349663u);
-        if ((hsh & 63) == 0) {
-            int ph = wave_lut[(int)((hd_time * (40 + (hsh >> 8 & 31))) + (hsh >> 16)) & 255];
-            if (ph > 90) { int s = (ph - 90) * 6; r += s; g += s; b += s; }
-        }
-    }
+    int f = w->foam;
+    if (f) { r += (238 - r) * f >> 8; g += (246 - g) * f >> 8; b += (255 - b) * f >> 8; }
+    int s = w->glint;
+    if (w->sparkle && ((x % scale) == scale / 2 || scale == 1) && ((y % scale) == scale / 2 || scale == 1)) s += w->sparkle;
+    r += s; g += s; b += s;
     r = r > 255 ? 255 : r; g = g > 255 ? 255 : g; b = b > 255 ? 255 : b;
     return (uint32_t)(r << 16 | g << 8 | b);
 }
@@ -677,7 +692,16 @@ static int compose_band(void *arg) {
                 const uint32_t *ta = tex_layer[0] + (size_t)y * hd_w, *tb = tex_layer[1] + (size_t)y * hd_w;
                 for (int x = 0; x < hd_w; x++) out[x] = compose_tex(ra0[x], rb[x], rs[x], ta[x], tb[x], tsrow[x], backdrop, sh);
             } else {
-                for (int x = 0; x < hd_w; x++) out[x] = vdp_compose(ra0[x], rb[x], rs[x], backdrop, sh);
+                /* A scaled picture repeats its pixels: the last result is kept while the
+                 * three layers are the same (backdrop and shadow are the line's). */
+                uint32_t la = ra0[0], lb = rb[0], ls = rs[0], lo = vdp_compose(la, lb, ls, backdrop, sh);
+                for (int x = 0; x < hd_w; x++) {
+                    if (ra0[x] != la || rb[x] != lb || rs[x] != ls) {
+                        la = ra0[x]; lb = rb[x]; ls = rs[x];
+                        lo = vdp_compose(la, lb, ls, backdrop, sh);
+                    }
+                    out[x] = lo;
+                }
             }
         } else if (tex) {
             int ya = y + oy_a[line], yb = y + oy_b[line];
@@ -700,19 +724,30 @@ static int compose_band(void *arg) {
             yb = yb < 0 ? 0 : yb >= hd_h ? hd_h - 1 : yb;
             const uint32_t *ra = scaled[0] + (size_t)ya * hd_w, *rb = scaled[1] + (size_t)yb * hd_w;
             int dxa = ox_a[line], dxb = ox_b[line];
+            uint32_t la = 0, lb = 0, ls = 0, lo = 0;
+            bool have = false;
             for (int x = 0; x < hd_w; x++) {
                 int xa = x + dxa, xb = x + dxb;
                 xa = xa < 0 ? 0 : xa >= hd_w ? hd_w - 1 : xa;
                 xb = xb < 0 ? 0 : xb >= hd_w ? hd_w - 1 : xb;
                 uint32_t a = (ra0[x] >> 16) & HD_WINDOW ? ra0[x] : ra[xa];
-                out[x] = vdp_compose(a, rb[xb], rs[x], backdrop, sh);
+                if (!have || a != la || rb[xb] != lb || rs[x] != ls) {     /* as above: repeats keep the result */
+                    la = a; lb = rb[xb]; ls = rs[x];
+                    lo = vdp_compose(la, lb, ls, backdrop, sh);
+                    have = true;
+                }
+                out[x] = lo;
             }
         }
         if (hd_water && water_map) {
             const uint8_t *wm = water_map + (size_t)line * water_w;
+            WaterCell cell = { -1, 0, 0, 0, 0, 0, 0 };
             for (int x = 0; x < hd_w; x++) {
                 int nx = x / scale;
-                if (nx < water_w && wm[nx] && !((rs[x] >> 16) & 0x0F)) out[x] = water_pixel(out[x], x, y, line, scale, sprites);
+                if (nx < water_w && wm[nx] && !((rs[x] >> 16) & 0x0F)) {
+                    if (cell.nx != nx) water_cell(&cell, nx, line);
+                    out[x] = water_pixel(out[x], x, y, scale, sprites, &cell);
+                }
             }
         }
         if (mask) {
@@ -739,6 +774,25 @@ static void compose_rows(int scale, const uint32_t *sprites, const int *ox_a, co
 /* ---- Sharpening -------------------------------------------------------------------- */
 typedef struct { const uint32_t *src; uint32_t *dst; int w, h, pitch, y0, y1; float peak; } SharpenJob;
 
+/* A pixel's weight and normalisation depend only on its neighbourhood's darkest and
+ * brightest luma: made once per level, [mn][mx], instead of a root and a division a pixel. */
+static float sharpen_wgt[256 * 256], sharpen_norm[256 * 256];
+static float sharpen_for;
+
+static void make_sharpen_lut(float peak) {
+    if (sharpen_for == peak) return;
+    for (int mn = 0; mn < 256; mn++)
+        for (int mx = 0; mx < 256; mx++) {
+            /* How much room there is before clipping, relative to the brightest neighbour (AMD's CAS). */
+            float room = (float)(mn < 255 - mx ? mn : 255 - mx) / (mx > 0 ? mx : 1);
+            float amp = room > 1 ? 1 : sqrtf(room);
+            float wgt = amp * peak;         /* negative: the neighbours are subtracted */
+            sharpen_wgt[mn << 8 | mx] = wgt;
+            sharpen_norm[mn << 8 | mx] = 1 / (1 + 4 * wgt);
+        }
+    sharpen_for = peak;
+}
+
 static inline int luma(uint32_t p) { return (int)(((p >> 16) & 255) * 77 + ((p >> 8) & 255) * 150 + (p & 255) * 29) >> 8; }
 
 static int sharpen_rows(void *arg) {
@@ -749,16 +803,16 @@ static int sharpen_rows(void *arg) {
         uint32_t *out = j->dst + (size_t)y * j->w;
         for (int x = 0; x < j->w; x++) {
             uint32_t e = r[x], b = up[x], hh = dn[x], d = r[x > 0 ? x - 1 : x], f = r[x < j->w - 1 ? x + 1 : x];
+            /* Inside a scaled pixel all five match: nothing to sharpen (most of the picture). */
+            if (b == e && hh == e && d == e && f == e) { out[x] = e; continue; }
             int le = luma(e), lb = luma(b), lh = luma(hh), ld = luma(d), lf = luma(f);
             int mn = le, mx = le;
             if (lb < mn) mn = lb; if (lh < mn) mn = lh; if (ld < mn) mn = ld; if (lf < mn) mn = lf;
             if (lb > mx) mx = lb; if (lh > mx) mx = lh; if (ld > mx) mx = ld; if (lf > mx) mx = lf;
-            if (mx == mn) { out[x] = e; continue; }
-            /* How much room there is before clipping, relative to the brightest neighbour (AMD's CAS). */
-            float room = (float)(mn < 255 - mx ? mn : 255 - mx) / (mx > 0 ? mx : 1);
-            float amp = room > 1 ? 1 : sqrtf(room);
-            float wgt = amp * j->peak;      /* negative: the neighbours are subtracted */
-            float norm = 1 / (1 + 4 * wgt);
+            /* Flat, or only a smooth gradient (the glow's): left alone, as sharpening would
+             * turn its one-level steps into visible bands. */
+            if (mx - mn <= 2) { out[x] = e; continue; }
+            float wgt = sharpen_wgt[mn << 8 | mx], norm = sharpen_norm[mn << 8 | mx];
             int c[3];
             for (int k = 0; k < 3; k++) {
                 int sh = 16 - k * 8;
@@ -786,6 +840,7 @@ const uint32_t *hd_sharpen(const uint32_t *src, int w, int h, int pitch, int lev
     if (!buf) return src;
     static const float peaks[4] = { 0, -1 / 8.f, -1 / 6.5f, -1 / 5.f };
     float peak = peaks[level > 3 ? 3 : level];
+    make_sharpen_lut(peak);
     SharpenJob sj = { src, buf, w, h, pitch, 0, 0, peak };
     run_bands(sharpen_part, &sj, h);
     return buf;
@@ -916,17 +971,17 @@ static void make_bloom(const uint32_t *src, int w, int h, int pitch, int level, 
 }
 
 static int *col_x0, *col_x1;            /* per picture column: the two glow cells it lies between */
-static float *col_tx;
+static int *col_t12;                    /* and how far towards the second, in 4096ths */
 static int col_w, col_f;
 
 static void make_columns(int w) {
     if (w == col_w && bloom_f == col_f) return;
-    free(col_x0); free(col_x1); free(col_tx);
-    col_x0 = malloc(sizeof(int) * (size_t)w); col_x1 = malloc(sizeof(int) * (size_t)w); col_tx = malloc(sizeof(float) * (size_t)w);
+    free(col_x0); free(col_x1); free(col_t12);
+    col_x0 = malloc(sizeof(int) * (size_t)w); col_x1 = malloc(sizeof(int) * (size_t)w); col_t12 = malloc(sizeof(int) * (size_t)w);
     for (int x = 0; x < w; x++) {
         float fx = (x + .5f) / bloom_f - .5f;
         int x0 = (int)floorf(fx), x1 = x0 + 1;
-        col_tx[x] = fx - x0;
+        col_t12[x] = (int)((fx - x0) * 4096 + .5f);
         col_x0[x] = x0 < 0 ? 0 : x0 >= bloom_w ? bloom_w - 1 : x0;
         col_x1[x] = x1 < 0 ? 0 : x1 >= bloom_w ? bloom_w - 1 : x1;
     }
@@ -945,30 +1000,46 @@ static int post_rows(void *arg) {
         int y0 = (int)floorf(fy), y1 = y0 + 1;
         float ty = fy - y0;
         y0 = y0 < 0 ? 0 : y0 >= bh ? bh - 1 : y0; y1 = y1 < 0 ? 0 : y1 >= bh ? bh - 1 : y1;
+        /* The glow is smooth: this row's, between the two rows of cells, once per cell, as
+         * 4096ths of full light (strength applied); the pixels then only blend across. */
+        int lrow[3 * 1024];
+        bool glow = false;
+        if (j->light && bw <= 1024)
+            for (int k = 0; k < bw * 3; k++) {
+                float top = bloom[(size_t)y0 * bw * 3 + k], bot = bloom[(size_t)y1 * bw * 3 + k];
+                lrow[k] = (int)((top + (bot - top) * ty) * j->k * 4096 + .5f);
+                glow |= lrow[k] > 0;
+            }
+        /* The HDR grade depends on the colour alone, and a scaled picture has long runs of
+         * one colour: the last one's result is kept. */
+        uint32_t last_in = 0, last_out = 0;
+        bool have_last = false;
         for (int x = 0; x < j->w; x++) {
             uint32_t p = s[x];
-            if (j->hdr) p = (uint32_t)(curve[(p >> 16) & 255] << 16 | curve[(p >> 8) & 255] << 8 | curve[p & 255]);
-            float r = ((p >> 16) & 255) * (1 / 255.f), g = ((p >> 8) & 255) * (1 / 255.f), b = (p & 255) * (1 / 255.f);
-            if (j->hdr) {                   /* vibrance: more colour where there is little */
-                float mx = fmaxf(r, fmaxf(g, b)), mn = fminf(r, fminf(g, b)), avg = (r + g + b) / 3;
-                float sat = mx > 0 ? (mx - mn) / mx : 0, kv = 1 + vib * (1 - sat);
-                r = clamp01(avg + (r - avg) * kv); g = clamp01(avg + (g - avg) * kv); b = clamp01(avg + (b - avg) * kv);
+            if (!have_last || p != last_in) {
+                last_in = p;
+                have_last = true;
+                if (j->hdr) {
+                    p = (uint32_t)(curve[(p >> 16) & 255] << 16 | curve[(p >> 8) & 255] << 8 | curve[p & 255]);
+                    float r = ((p >> 16) & 255) * (1 / 255.f), g = ((p >> 8) & 255) * (1 / 255.f), b = (p & 255) * (1 / 255.f);
+                    /* vibrance: more colour where there is little */
+                    float mx = fmaxf(r, fmaxf(g, b)), mn = fminf(r, fminf(g, b)), avg = (r + g + b) / 3;
+                    float sat = mx > 0 ? (mx - mn) / mx : 0, kv = 1 + vib * (1 - sat);
+                    r = clamp01(avg + (r - avg) * kv); g = clamp01(avg + (g - avg) * kv); b = clamp01(avg + (b - avg) * kv);
+                    p = (uint32_t)((int)(r * 255 + .5f) << 16 | (int)(g * 255 + .5f) << 8 | (int)(b * 255 + .5f));
+                }
+                last_out = p & 0xFFFFFF;
             }
-            if (!j->light) {
-                o[x] = (uint32_t)((int)(r * 255 + .5f) << 16 | (int)(g * 255 + .5f) << 8 | (int)(b * 255 + .5f));
-                continue;
-            }
-            int x0 = col_x0[x], x1 = col_x1[x];
-            float tx = col_tx[x];
-            const float *a = bloom + ((size_t)y0 * bw + x0) * 3, *bb = bloom + ((size_t)y0 * bw + x1) * 3;
-            const float *c = bloom + ((size_t)y1 * bw + x0) * 3, *d = bloom + ((size_t)y1 * bw + x1) * 3;
-            float l[3];
+            if (!glow) { o[x] = last_out; continue; }
+            const int *a = lrow + col_x0[x] * 3, *c = lrow + col_x1[x] * 3;
+            int t = col_t12[x], out = 0;
             for (int k = 0; k < 3; k++) {
-                float top = a[k] + (bb[k] - a[k]) * tx, bot = c[k] + (d[k] - c[k]) * tx;
-                l[k] = fminf((top + (bot - top) * ty) * j->k, 1);
+                int l = (a[k] * (4096 - t) + c[k] * t) >> 12, v = (int)(last_out >> (16 - 8 * k)) & 255;
+                l = l > 4096 ? 4096 : l;
+                v += ((255 - v) * l + 2048) >> 12;      /* screen: lifts towards white by the light */
+                out |= v << (16 - 8 * k);
             }
-            r = 1 - (1 - r) * (1 - l[0]); g = 1 - (1 - g) * (1 - l[1]); b = 1 - (1 - b) * (1 - l[2]);
-            o[x] = (uint32_t)((int)(r * 255 + .5f) << 16 | (int)(g * 255 + .5f) << 8 | (int)(b * 255 + .5f));
+            o[x] = (uint32_t)out;
         }
     }
     return 0;

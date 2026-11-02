@@ -87,7 +87,9 @@ struct Psg {
             counter[ch] -= left;
             if (period[ch] > 1) mix += (2 * high / ticks - 1) * volume[atten[ch]];
         }
-        int np = (period[3] & 3) == 3 ? (period[2] ? period[2] : 1) * 2 : (0x10 << (period[3] & 3));
+        // The noise counter reloads with $10, $20, $40 or tone 2's period and flips its output
+        // each time, and the shift register moves on every other flip: once per twice that.
+        int np =(period[3] & 3) == 3 ? (period[2] ? period[2] : 1) * 2 : (0x20 << (period[3] & 3));
         double left = ticks, high = 0;
         while (counter[3] <= left) {
             if (counter[3] > 0) { if (out[3]) high += counter[3]; left -= counter[3]; }
@@ -111,7 +113,7 @@ struct Psg {
             while (counter[ch] <= 0) { counter[ch] += p; out[ch] ^= 1; }
             if (period[ch] > 1) mix += out[ch] ? volume[atten[ch]] : -volume[atten[ch]];
         }
-        int np = (period[3] & 3) == 3 ? (period[2] ? period[2] : 1) * 2 : (0x10 << (period[3] & 3));
+        int np = (period[3] & 3) == 3 ? (period[2] ? period[2] : 1) * 2 : (0x20 << (period[3] & 3));
         counter[3] -= ticks;
         while (counter[3] <= 0) {
             counter[3] += np;

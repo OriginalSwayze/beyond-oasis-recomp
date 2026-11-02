@@ -310,6 +310,7 @@ int main(int argc, char **argv) {
     const char *outfit_shot = NULL;     /* --outfit-check F.png */
     bool list_objects = false;          /* --objects */
     const char *smooth_dir = NULL;      /* --smooth-check DIR SCALE */
+    int bench = 0;                      /* --bench N */
     bool motion_check = false;
     const char *sprite_dir = NULL;      /* --sprite-check EVERY DIR SCALE */
     int sprite_every = 0;
@@ -396,6 +397,7 @@ int main(int argc, char **argv) {
             settings.internal_scale = atoi(argv[++i]);
             settings.smooth_motion = true;
         }
+        else if (!strcmp(argv[i], "--bench") && i + 1 < argc) bench = atoi(argv[++i]);   /* pictures per game frame, as the window draws them */
         else if (!strcmp(argv[i], "--motion-check")) {
             /* --motion-check: from frame 300 on, check that the sprites shown are found in the
              * sprite lists the game built and how many belong to objects (motion.c). */
@@ -562,8 +564,36 @@ int main(int argc, char **argv) {
             if (rewind_check && f == headless_frames - rewind_check) len_ref = state_save(snap_ref, sizeof snap_ref);
             rewind_push(pad_state[0]);
             cheats_frame();
+            Uint64 g0 = SDL_GetPerformanceCounter();
             machine_run_frame(framebuffer, FB_W);
             if (vdp_opts.hd_capture) { hd_frame_done(); fx_after_frame(false); }
+            if (bench) {
+                /* --bench N: the game frame, then N pictures of it as the window draws them
+                 * (the layers put together at a point between frames, then the finishing
+                 * steps); the average times over the run, in ms, at the end. */
+                static double sum[7];
+                static int n;
+                double ms_per = 1000.0 / SDL_GetPerformanceFrequency();
+                sum[0] += (double)(SDL_GetPerformanceCounter() - g0) * ms_per;
+                for (int k = 0; k < bench; k++) {
+                    float frac = (k + 1.f) / bench;
+                    Uint64 t0 = SDL_GetPerformanceCounter();
+                    if (settings.smooth_motion) hd_compose_at(settings.internal_scale, frac);
+                    else hd_compose(settings.internal_scale);
+                    Uint64 t1 = SDL_GetPerformanceCounter();
+                    HdPost post = finishing(hd_w / frame_width(), (f + frac) / 60.f);
+                    const uint32_t *pic = hd_post(hd_px, hd_w, hd_h, hd_w, &post);
+                    if (shot && n + 1 == headless_frames && k == bench - 1) { png_write(shot, pic, hd_w, hd_h, hd_w); shot = NULL; }   /* the last picture, finished */
+                    sum[1] += (double)(t1 - t0) * ms_per;
+                    sum[2] += (double)(SDL_GetPerformanceCounter() - t1) * ms_per;
+                    for (int m = 0; m < 4; m++) sum[3 + m] += hd_ms[m];
+                }
+                if (++n == headless_frames)
+                    printf("bench %dx%d: game %.2f ms a frame; a picture: layers together %.2f (scaling layers %.2f, "
+                           "sprites %.2f + %.2f, compositing %.2f), finishing %.2f\n",
+                           hd_w, hd_h, sum[0] / n, sum[1] / n / bench, sum[3] / n / bench, sum[4] / n / bench,
+                           sum[5] / n / bench, sum[6] / n / bench, sum[2] / n / bench);
+            }
             if (sprite_every > 0 && f >= 300 && f % sprite_every == 0) {
                 static uint32_t *layers, *worst_a, *worst_b;
                 static int worst = -1, worst_frame, checked, over;
