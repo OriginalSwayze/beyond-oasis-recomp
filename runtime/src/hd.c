@@ -491,9 +491,12 @@ static int8_t *water_wx;                /* per game pixel: which plane (for its 
 static int water_w, water_h;
 static int8_t wave_lut[256];
 
+/* Blue well above both red and green: the sea and lakes are (0,1,4), (0,2,5), (1,4,6),
+ * (2,4,7); the grey-blue stone of the water dungeon's floors, (1,3,4) and (1,2,3), is not,
+ * and would otherwise ripple, sparkle and foam along every crack. */
 static inline bool is_water_colour(uint16_t c) {
     int r = (c >> 1) & 7, g = (c >> 5) & 7, b = (c >> 9) & 7;
-    return b >= 3 && b >= r + 2 && b >= g + 1;
+    return b >= 3 && b >= r + 2 && b >= g + 2;
 }
 
 /* The plane pixel the VDP would show (ignoring sprites); *plane gets 0 for A, 1 for B. */

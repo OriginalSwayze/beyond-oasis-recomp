@@ -37,10 +37,20 @@ static void vram_cell(uint32_t base, int vrow, int vcol, uint32_t v) {
     wr16(VDP_DATA, v);
 }
 
-/* Map cell (col, row): rows wrap like the original; columns outside the map are blank. */
+/* Map cell (col, row): rows wrap like the original. The original wraps columns too, which
+ * only shows on a map narrower than its 41 columns (the rushing wave in the water dungeon,
+ * 32 wide, repeats across the corridor): such maps wrap here as well, over those 41
+ * columns from the left one (+08), and are blank in the widescreen columns beside them,
+ * which the original never draws. On wider maps the columns past an edge would be the far
+ * side of the room, so they are blank. */
 static uint32_t map_cell(uint32_t layer, int col, int row) {
     int w = L16(layer, 0x20), h = L16(layer, 0x22);
-    if (col < 0 || col >= w) return BLANK_CELL;
+    if (w > 0 && w < 41) {
+        int from_left = col - L16(layer, 0x08);
+        if (from_left < 0 || from_left > 40) return BLANK_CELL;
+        col %= w;
+        if (col < 0) col += w;
+    } else if (col < 0 || col >= w) return BLANK_CELL;
     row %= h;
     if (row < 0) row += h;
     return rd16(rd32(layer + 0x16) + ((uint32_t)row << L16(layer, 0x24)) + (uint32_t)col * 2);
@@ -93,6 +103,15 @@ static uint32_t scroll_column(uint32_t pc) {
     wr16(layer + 0x08, (uint32_t)left);
     wr16(layer + 0x0C, (uint32_t)c);
     draw_column(layer, target, vtarget);
+    if (w < 41) {
+        /* A narrow map shows only in the original's 41 columns (map_cell): the columns at
+         * that band's edges change between the map and blank as it moves. */
+        int v0 = (c & 0x7E) >> 1;
+        draw_column(layer, left - 1, v0 - 1);
+        draw_column(layer, left, v0);
+        draw_column(layer, left + 40, v0 + 40);
+        draw_column(layer, left + 41, v0 + 41);
+    }
     port_registers();
     return return_to_caller(2700);
 }
