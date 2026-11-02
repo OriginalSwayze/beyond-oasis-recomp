@@ -8,6 +8,7 @@
 #include "launcher.h"
 #include "cheats.h"
 #include "hd.h"
+#include "gpu.h"
 #include "motion.h"
 #include "filter.h"
 #include "input.h"
@@ -23,6 +24,7 @@
 #include "menu.h"
 #include "savestate.h"
 #include "ui.h"
+#include "text.h"
 #include <SDL.h>
 #include "m68k.h"
 #include <stdio.h>
@@ -142,6 +144,9 @@ static void apply_settings(void) {
     vdp_opts.no_sprite_limit = settings.no_sprite_limit;
     vdp_opts.hd_capture = true;         /* the layers are also what the menu's previews draw from */
     machine_opts.overclock = settings.overclock;
+    cpu_has_avx2 = SDL_HasAVX2();
+    hd_avx2 = settings.avx2 && cpu_has_avx2;
+    hd_merged = settings.merged_pass;
     outfit_apply();
     sound_quality = settings.audio;
     hd_scaler = settings.scaler;
@@ -246,6 +251,130 @@ static void window_size(int *w, int *h) {
     *h = 224 * s;
 }
 
+/* ---- Speed: auto quality and the stats panel ------------------------------------------- */
+static const int quality_steps[5] = { 1, 2, 3, 4, 6 };
+static int quality_scale;               /* auto quality's internal resolution (0: the setting's) */
+
+static struct {
+    Uint64 last;                        /* when the last picture was done */
+    double interval, work;              /* smoothed: ms between pictures, ms of work in one */
+    int slow, roomy;                    /* pictures in a row behind the display / with room to spare */
+    double layers, effects, upload;     /* the stats panel's sums since it was made */
+    double game, rewind_ms, present, draw;   /* and the game frames', rewind's, drawing's and waiting for the display's */
+    int frames;                         /* game frames since it was made */
+    int pictures, scale, hz;
+    Uint64 since;
+    bool gpu, dirty;
+} speed;
+
+/* The step of quality_steps below (dir -1) or above (+1) `scale`. */
+static int quality_step(int scale, int dir) {
+    int k = 0;
+    while (k < 4 && quality_steps[k + 1] <= scale) k++;
+    k += dir;
+    return quality_steps[k < 0 ? 0 : k > 4 ? 4 : k];
+}
+
+/* Called after each picture with the time its steps took (ms). */
+static void speed_picture(SDL_Window *win, double layers, double effects, double upload, bool gpu, int scale) {
+    Uint64 now = SDL_GetPerformanceCounter(), freq = SDL_GetPerformanceFrequency();
+    SDL_DisplayMode mode;
+    int hz = SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(win), &mode) == 0 && mode.refresh_rate > 0 ? mode.refresh_rate : 60;
+    double work = layers + effects + upload, budget = 1000.0 / hz;
+    if (speed.last) {
+        double gap = (double)(now - speed.last) * 1000 / freq;
+        speed.interval = speed.interval > 0 ? speed.interval * .9 + gap * .1 : gap;
+    }
+    speed.last = now;
+    speed.work = speed.work > 0 ? speed.work * .9 + work * .1 : work;
+    /* Auto quality: a step down after about 3/4 of a second behind the display while the
+     * work fills the time; a step back up (never past the setting) once the next step's
+     * work, which grows with its pixels, would leave a third of the time free, for 3 s. */
+    if (settings.auto_quality) {
+        int setting = settings.internal_scale, cur = quality_scale ? quality_scale : setting;
+        if (cur > setting) cur = setting;
+        speed.slow = speed.interval > budget * 1.15 && speed.work > budget * .75 ? speed.slow + 1 : 0;
+        int up = quality_step(cur, 1);
+        if (up > setting) up = setting;
+        speed.roomy = cur < setting && speed.work * up * up / ((double)cur * cur) < budget * .65 ? speed.roomy + 1 : 0;
+        int next = cur;
+        if (speed.slow > hz * 3 / 4 && cur > 1) next = quality_step(cur, -1);
+        else if (speed.roomy > hz * 3) next = up;
+        if (next != cur) speed.slow = speed.roomy = 0, speed.work = speed.interval = 0, speed.last = 0;
+        quality_scale = next;
+    } else quality_scale = 0;
+    /* The stats panel: sums, made into its lines twice a second. */
+    speed.layers += layers; speed.effects += effects; speed.upload += upload;
+    speed.pictures++;
+    speed.gpu = gpu; speed.scale = scale; speed.hz = hz;
+    if (!speed.since) speed.since = now;
+    if (now - speed.since >= freq / 2) speed.dirty = true;
+}
+
+/* The panel in the top-left corner: pictures a second, the resolution, each step's time. */
+static void draw_stats(SDL_Renderer *ren, int win_w, int win_h) {
+    static SDL_Texture *panel;
+    static int pw, ph;
+    if (speed.dirty && speed.pictures) {
+        Uint64 freq = SDL_GetPerformanceFrequency();
+        double secs = (double)(SDL_GetPerformanceCounter() - speed.since) / freq, n = speed.pictures;
+        char lines[4][160];
+        snprintf(lines[0], sizeof lines[0], "%.0f pictures a second (display %d Hz)", n / secs, speed.hz);
+        if (settings.auto_quality && speed.scale < settings.internal_scale)
+            snprintf(lines[1], sizeof lines[1], "%dx internal resolution (auto quality; set to %dx)", speed.scale, settings.internal_scale);
+        else snprintf(lines[1], sizeof lines[1], "%dx internal resolution%s", speed.scale, settings.auto_quality ? " (auto quality)" : "");
+        char where[48];
+        if (speed.gpu && gpu_fx_card_ms > 0) snprintf(where, sizeof where, "GPU, %.1f ms on the card", gpu_fx_card_ms);
+        else snprintf(where, sizeof where, "%s", speed.gpu ? "GPU" : hd_avx2 ? "CPU, AVX2" : "CPU");
+        snprintf(lines[2], sizeof lines[2], "layers %.1f ms   effects %.1f ms (%s)   upload %.1f ms", speed.layers / n, speed.effects / n,
+                 where, speed.upload / n);
+        double fr = speed.frames ? speed.frames : 1;
+        snprintf(lines[3], sizeof lines[3], "game %.1f ms a frame (rewind %.1f ms)   drawing %.1f ms   waiting for the display %.1f ms", speed.game / fr, speed.rewind_ms / fr, speed.draw / n, speed.present / n);
+        speed.layers = speed.effects = speed.upload = 0;
+        speed.game = speed.rewind_ms = speed.present = speed.draw = 0;
+        speed.frames = 0;
+        speed.pictures = 0;
+        speed.since = SDL_GetPerformanceCounter();
+        speed.dirty = false;
+        int px = win_h / 52 > 13 ? win_h / 52 : 13, line_h = px * 3 / 2, pad = px * 2 / 3;
+        TextMask m[4];
+        int w = 0;
+        for (int k = 0; k < 4; k++) { m[k] = text_render(lines[k], "Segoe UI", px, k == 0 ? 600 : 400, 0); if (m[k].w > w) w = m[k].w; }
+        int tw = w + pad * 2, th = line_h * 4 + pad * 2;
+        uint32_t *img = calloc((size_t)tw * th, 4);
+        if (img) {
+            for (int i = 0; i < tw * th; i++) img[i] = 0xB4000000u;             /* a dark backing */
+            for (int k = 0; k < 4; k++) {
+                uint32_t c = k == 0 ? 0xFFF3DDA4u : 0xFFE6E9EFu;
+                for (int y = 0; y < m[k].h; y++)
+                    for (int x = 0; x < m[k].w; x++) {
+                        int a = m[k].a ? m[k].a[y * m[k].w + x] : 0, ix = pad + x, iy = pad + k * line_h + y;
+                        if (!a || ix >= tw || iy >= th) continue;
+                        uint32_t d = img[iy * tw + ix];
+                        int r = (int)((d >> 16) & 255) + ((int)((c >> 16) & 255) - (int)((d >> 16) & 255)) * a / 255;
+                        int g = (int)((d >> 8) & 255) + ((int)((c >> 8) & 255) - (int)((d >> 8) & 255)) * a / 255;
+                        int b = (int)(d & 255) + ((int)(c & 255) - (int)(d & 255)) * a / 255;
+                        int al = 0xB4 + (255 - 0xB4) * a / 255;
+                        img[iy * tw + ix] = (uint32_t)al << 24 | (uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b;
+                    }
+            }
+            if (!panel || pw != tw || ph != th) {
+                if (panel) SDL_DestroyTexture(panel);
+                panel = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, tw, th);
+                if (panel) SDL_SetTextureBlendMode(panel, SDL_BLENDMODE_BLEND);
+                pw = tw; ph = th;
+            }
+            if (panel) SDL_UpdateTexture(panel, NULL, img, tw * 4);
+            free(img);
+        }
+        for (int k = 0; k < 4; k++) text_free(&m[k]);
+    }
+    if (panel) {
+        SDL_Rect r = { win_w / 100 + 8, win_h / 100 + 8, pw, ph };
+        SDL_RenderCopy(ren, panel, NULL, &r);
+    }
+}
+
 static SDL_Rect display_rect(int win_w, int win_h) {
     int fw = frame_width(), fh = vdp_screen_height();
     double par = (4.0 / 3.0) / (320.0 / 224.0);
@@ -311,10 +440,14 @@ int main(int argc, char **argv) {
     bool list_objects = false;          /* --objects */
     const char *smooth_dir = NULL;      /* --smooth-check DIR SCALE */
     int bench = 0;                      /* --bench N */
+    double window_test = 0;             /* --window-test SECONDS F.png */
+    const char *window_test_png = NULL;
     bool motion_check = false;
     const char *sprite_dir = NULL;      /* --sprite-check EVERY DIR SCALE */
     int sprite_every = 0;
     const char *filter_shot = NULL;     /* --filter-shot F.png W H MODE */
+    const char *gpu_shot = NULL, *gpu_cpu_shot = NULL;   /* --gpu-shot GPU.png CPU.png */
+    const char *gpu_api = NULL;         /* --gpu-api direct3d11|opengl: the GPU effects on that one only */
     int filter_w = 1920, filter_h = 1080, filter_mode = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--headless") && i + 1 < argc) headless_frames = atoi(argv[++i]);
@@ -345,6 +478,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) { settings.widescreen = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--overclock") && i + 1 < argc) { settings.overclock = atoi(argv[++i]); test_overrides = true; }   /* percent */
         else if (!strcmp(argv[i], "--sharpen") && i + 1 < argc) { settings.sharpen = atoi(argv[++i]) & 3; test_overrides = true; }   /* 0-3 */
+        else if (!strcmp(argv[i], "--merged") && i + 1 < argc) { settings.merged_pass = atoi(argv[++i]) != 0; test_overrides = true; }
+        else if (!strcmp(argv[i], "--avx2") && i + 1 < argc) { settings.avx2 = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--hdr") && i + 1 < argc) { settings.hdr = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--lighting") && i + 1 < argc) { settings.lighting = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--elements") && i + 1 < argc) { settings.elements = atoi(argv[++i]) != 0; test_overrides = true; }
@@ -380,6 +515,8 @@ int main(int argc, char **argv) {
             apply_settings();
             return launcher_ost_check(atoi(argv[++i]));
         }
+        else if (!strcmp(argv[i], "--gpu-api") && i + 1 < argc) gpu_api = argv[++i];
+        else if (!strcmp(argv[i], "--gpu-shot") && i + 2 < argc) { gpu_shot = argv[++i]; gpu_cpu_shot = argv[++i]; }
         else if (!strcmp(argv[i], "--filter-shot") && i + 4 < argc) {
             /* --filter-shot F.png W H MODE: draw the last frame into a W x H picture with
              * filter MODE (0 off, 1 scanlines, 2 CRT, 3 LCD), on the GPU in a hidden window. */
@@ -397,6 +534,7 @@ int main(int argc, char **argv) {
             settings.internal_scale = atoi(argv[++i]);
             settings.smooth_motion = true;
         }
+        else if (!strcmp(argv[i], "--window-test") && i + 2 < argc) { window_test = atof(argv[++i]); window_test_png = argv[++i]; }
         else if (!strcmp(argv[i], "--bench") && i + 1 < argc) bench = atoi(argv[++i]);   /* pictures per game frame, as the window draws them */
         else if (!strcmp(argv[i], "--motion-check")) {
             /* --motion-check: from frame 300 on, check that the sprites shown are found in the
@@ -759,6 +897,36 @@ int main(int argc, char **argv) {
             if (sr) SDL_DestroyRenderer(sr);
             if (hw) SDL_DestroyWindow(hw);
         }
+        if (gpu_shot) {
+            /* --gpu-shot GPU.png CPU.png: the last frame at the internal resolution, finished
+             * by the GPU's effects (in a hidden OpenGL window, read back) and by the CPU's. */
+            SDL_InitSubSystem(SDL_INIT_VIDEO);
+            SDL_SetHint(SDL_HINT_RENDER_DRIVER, gpu_api ? gpu_api : "direct3d11");
+            SDL_Window *hw = SDL_CreateWindow("gpu", 0, 0, 64, 64, SDL_WINDOW_HIDDEN);
+            SDL_Renderer *sr = hw ? SDL_CreateRenderer(hw, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE) : NULL;
+            if (sr && gpu_fx_init(sr)) {
+                hd_time = 1.0f;
+                hd_compose(settings.internal_scale);
+                HdPost post = finishing(hd_w / frame_width(), 1.0f);
+                uint32_t *pixels = malloc((size_t)hd_w * hd_h * 4);
+                double ms = 0;
+                SDL_Texture *res = NULL;
+                for (int k = 0; k < 11 && pixels; k++) {    /* the first builds the textures; the rest timed */
+                    Uint64 t0 = SDL_GetPerformanceCounter();
+                    res = gpu_fx_finish(sr, hd_px, hd_w, hd_h, hd_w, &post, true);
+                    if (res) { SDL_SetRenderTarget(sr, res); SDL_RenderReadPixels(sr, NULL, SDL_PIXELFORMAT_XRGB8888, pixels, hd_w * 4); SDL_SetRenderTarget(sr, NULL); }
+                    if (k) ms += (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency();
+                }
+                if (res) {
+                    printf("GPU effects: %.2f ms a picture at %dx%d with reading it back (upload %.2f ms)\n", ms / 10, hd_w, hd_h, gpu_fx_upload_ms);
+                    png_write(gpu_shot, pixels, hd_w, hd_h, hd_w);
+                    png_write(gpu_cpu_shot, hd_post(hd_px, hd_w, hd_h, hd_w, &post), hd_w, hd_h, hd_w);
+                } else fprintf(stderr, "the GPU effects did not run\n");
+                free(pixels);
+            } else fprintf(stderr, "no OpenGL renderer for --gpu-shot: %s\n", SDL_GetError());
+            if (sr) SDL_DestroyRenderer(sr);
+            if (hw) SDL_DestroyWindow(hw);
+        }
         if (list_objects) {
             /* Each drawn sprite: position, size, attributes, and the object that drew it (its
              * list and slot, its type word, and its first 16 words). */
@@ -850,9 +1018,26 @@ int main(int argc, char **argv) {
     int start_w, start_h;
     window_size(&start_w, &start_h);
     SDL_Window *win = SDL_CreateWindow("Beyond Oasis", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, start_w, start_h,
-                                       SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
-                                       (settings.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
-    SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
+                                       SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (window_test ? SDL_WINDOW_HIDDEN : 0) |
+                                       (settings.fullscreen && !window_test ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
+    /* Direct3D 11 for every picture: it presents through a flip-model swap chain, where
+     * SDL's default on Windows (Direct3D 9) can wait most of a refresh at each present.
+     * With the GPU effects on, OpenGL is the second choice for them; failing both, SDL's
+     * default and the CPU's effects. --gpu-api picks one for tests. */
+    SDL_Renderer *ren = NULL;
+    const char *apis[2] = { gpu_api ? gpu_api : "direct3d11", settings.gpu_effects && !gpu_api ? "opengl" : NULL };
+    for (int k = 0; k < 2 && apis[k]; k++) {
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER, apis[k]);
+        ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_TARGETTEXTURE);
+        if (!ren) continue;
+        gpu_effects_running = settings.gpu_effects && gpu_fx_init(ren);
+        if (gpu_effects_running || !settings.gpu_effects || !apis[k + 1]) break;
+        SDL_DestroyRenderer(ren);       /* this one cannot run them: try the next */
+        ren = NULL;
+    }
+    if (!ren) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED); }
+    SDL_RendererInfo ren_info;
+    bool on_opengl = SDL_GetRendererInfo(ren, &ren_info) == 0 && !strcmp(ren_info.name, "opengl");
     SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, FB_W, FB_H);
     SDL_Texture *hd_tex[2] = { NULL, NULL };   /* the frame at the internal resolution, two in turn */
     int hd_tex_now = 0;
@@ -876,6 +1061,9 @@ int main(int argc, char **argv) {
     SDL_Texture *menu_tex = NULL;
     int menu_tex_w = 0, menu_tex_h = 0;
     bool running = true, fast_now = false;
+    /* --window-test: the window loop as it runs for a player, hidden, from --load's slot;
+     * the last picture as the window shows it is saved, with the speed state. */
+    if (window_test && load_from && !savestate_load(load_from)) fprintf(stderr, "could not load slot %d\n", load_from);
     combat_stats_load(base_dir);
     automap_load(base_dir);
     while (running) {
@@ -969,6 +1157,7 @@ int main(int argc, char **argv) {
         Uint64 now = SDL_GetPerformanceCounter();
         const Uint64 frame_ticks = (Uint64)(frame_s * freq);
         if (now >= next) {
+            Uint64 game_t0 = SDL_GetPerformanceCounter();
             const Uint8 *keys = SDL_GetKeyboardState(NULL);
             bool rewinding = settings.rewind && input_held(IN_REWIND, keys, pads_active());
             uint16_t old_pad;
@@ -985,7 +1174,10 @@ int main(int argc, char **argv) {
                 int runs = input_held(IN_FAST, keys, pads_active()) ? settings.fast_speed + 2 : 1;
                 for (int r = 0; r < runs; r++) {
                     pad_state[0] = input_pad_bits(keys, pads_active());
+                    Uint64 rw0 = SDL_GetPerformanceCounter();
                     rewind_push(pad_state[0]);
+                    speed.rewind_ms += (double)(SDL_GetPerformanceCounter() - rw0) * 1000 / freq;
+                    speed.frames++;
                     cheats_frame();
                     machine_run_frame(framebuffer, FB_W);
                     if (vdp_opts.hd_capture) { hd_frame_done(); fx_after_frame(true); }
@@ -1012,10 +1204,14 @@ int main(int argc, char **argv) {
                     SDL_QueueAudio(audio, sound_out, (Uint32)sound_out_count * 4);
                 }
             }
+            speed.game += (double)(SDL_GetPerformanceCounter() - game_t0) * 1000 / freq;
             next += frame_ticks;
             if (now > next + freq / 4) next = now + frame_ticks;  /* fell far behind: don't try to catch up */
         }
-        if (!vsync_on) { SDL_RenderSetVSync(ren, 1); vsync_on = true; }
+        /* OpenGL's vsync in a window or borderless fullscreen waits a whole extra refresh
+         * whenever a picture misses one; Windows' compositor already keeps the picture from
+         * tearing there, so with OpenGL the loop paces itself (after the present below). */
+        if (!vsync_on) { SDL_RenderSetVSync(ren, on_opengl ? 0 : 1); vsync_on = true; }
 
         /* The moment this picture shows: how far we are into the newest game frame (0-1). */
         now = SDL_GetPerformanceCounter();
@@ -1024,48 +1220,102 @@ int main(int argc, char **argv) {
         SDL_Rect dst = display_rect(ww, wh);
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
         SDL_RenderClear(ren);
+        /* The internal resolution this picture: the setting's, or auto quality's step. */
+        int iscale = settings.auto_quality && quality_scale ? quality_scale : settings.internal_scale;
         /* Shadows are drawn while the layers are put together, so they need this path too. */
-        bool hd = (settings.internal_scale > 1 || settings.smooth_motion || settings.water || hd_texpack) &&
+        bool hd = (iscale > 1 || settings.smooth_motion || settings.water || hd_texpack) &&
                   hd_frame.h == vdp_screen_height();
         hd_time = (float)(SDL_GetPerformanceCounter() - start) / freq;
+        Uint64 t_start = SDL_GetPerformanceCounter(), t_layers = t_start, t_effects = t_start, t_upload = t_start;
+        bool on_gpu = false;
         if (hd) {
             hd_time = (float)(SDL_GetPerformanceCounter() - start) / freq;
-            if (settings.smooth_motion) hd_compose_at(settings.internal_scale, frac);
-            else hd_compose(settings.internal_scale);
-            /* Two textures used in turn: uploading into the one the GPU just drew from
-             * can make the upload wait for the GPU. */
-            if (!hd_tex[0] || hd_tex_w != hd_w || hd_tex_h != hd_h) {
-                for (int k = 0; k < 2; k++) {
-                    if (hd_tex[k]) SDL_DestroyTexture(hd_tex[k]);
-                    hd_tex[k] = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, hd_w, hd_h);
-                    /* the last, non-integer step to the window; native pixels stay sharp */
-                    SDL_SetTextureScaleMode(hd_tex[k], settings.internal_scale > 1 ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
-                }
-                hd_tex_w = hd_w; hd_tex_h = hd_h;
-            }
-            hd_tex_now ^= 1;
+            if (settings.smooth_motion) hd_compose_at(iscale, frac);
+            else hd_compose(iscale);
+            t_layers = SDL_GetPerformanceCounter();
             HdPost post = finishing(hd_w / frame_width(), (float)(SDL_GetPerformanceCounter() - start) / freq);
-            SDL_UpdateTexture(hd_tex[hd_tex_now], NULL, hd_post(hd_px, hd_w, hd_h, hd_w, &post), hd_w * 4);
-            filter_draw(ren, hd_tex[hd_tex_now], NULL, dst, frame_width(), vdp_screen_height(), settings.filter);
+            SDL_Texture *shown = NULL;
+            if (gpu_effects_running && settings.gpu_effects && (post.lighting || post.hdr || post.sharpen)) {
+                /* The card grades, lights and sharpens; particles and numbers go on first. */
+                if (post.world && (post.elements || post.footsteps || combat_active(&post))) {
+                    fx_draw(hd_px, hd_w, hd_h, &post);
+                    combat_draw(hd_px, hd_w, hd_h, &post);
+                }
+                shown = gpu_fx_finish(ren, hd_px, hd_w, hd_h, hd_w, &post, iscale > 1);
+                t_effects = SDL_GetPerformanceCounter();
+                t_upload = t_effects;
+                on_gpu = shown != NULL;
+            }
+            if (!shown) {
+                /* Two textures used in turn: uploading into the one the GPU just drew from
+                 * can make the upload wait for the GPU. */
+                if (!hd_tex[0] || hd_tex_w != hd_w || hd_tex_h != hd_h) {
+                    for (int k = 0; k < 2; k++) {
+                        if (hd_tex[k]) SDL_DestroyTexture(hd_tex[k]);
+                        hd_tex[k] = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, hd_w, hd_h);
+                        /* the last, non-integer step to the window; native pixels stay sharp */
+                        SDL_SetTextureScaleMode(hd_tex[k], iscale > 1 ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+                    }
+                    hd_tex_w = hd_w; hd_tex_h = hd_h;
+                }
+                hd_tex_now ^= 1;
+                const uint32_t *img = hd_post(hd_px, hd_w, hd_h, hd_w, &post);
+                t_effects = SDL_GetPerformanceCounter();
+                SDL_UpdateTexture(hd_tex[hd_tex_now], NULL, img, hd_w * 4);
+                t_upload = SDL_GetPerformanceCounter();
+                shown = hd_tex[hd_tex_now];
+            }
+            filter_draw(ren, shown, NULL, dst, frame_width(), vdp_screen_height(), settings.filter);
         } else {
             SDL_Rect src = { 0, 0, frame_width(), vdp_screen_height() };
             HdPost post = finishing(1, (float)(SDL_GetPerformanceCounter() - start) / freq);
             const uint32_t *img = hd_post(framebuffer, src.w, src.h, FB_W, &post);
+            t_effects = SDL_GetPerformanceCounter();
             if (img != framebuffer) SDL_UpdateTexture(tex, &src, img, src.w * 4);
             else SDL_UpdateTexture(tex, NULL, framebuffer, FB_W * 4);
+            t_upload = SDL_GetPerformanceCounter();
             filter_draw(ren, tex, &src, dst, frame_width(), vdp_screen_height(), settings.filter);
+        }
+        {
+            double ms = 1000.0 / freq, effects = (t_effects - t_layers) * ms;
+            /* On the card the upload is part of its effects call: counted on its own. */
+            if (on_gpu) effects -= gpu_fx_upload_ms;
+            speed_picture(win, (t_layers - t_start) * ms, effects, on_gpu ? gpu_fx_upload_ms : (t_upload - t_effects) * ms,
+                          on_gpu, hd ? iscale : 1);
+            SDL_RenderFlush(ren);           /* the drawing handed to the card, for its time */
+            speed.draw += (double)(SDL_GetPerformanceCounter() - t_upload) * ms;
+        }
+        if (settings.perf_stats) draw_stats(ren, ww, wh);
+        if (window_test && (double)(SDL_GetPerformanceCounter() - start) / freq >= window_test) {
+            uint32_t *shot_px = malloc((size_t)ww * wh * 4);
+            if (shot_px && SDL_RenderReadPixels(ren, NULL, SDL_PIXELFORMAT_XRGB8888, shot_px, ww * 4) == 0) png_write(window_test_png, shot_px, ww, wh, ww);
+            free(shot_px);
+            SDL_RendererInfo ri;
+            SDL_GetRendererInfo(ren, &ri);
+            printf("window test: renderer %s, GPU effects %s, internal %dx (auto quality %s), %dx%d window\n", ri.name,
+                   gpu_effects_running ? "running" : "off", iscale, settings.auto_quality ? "on" : "off", ww, wh);
+            running = false;
         }
         Uint64 before_present = SDL_GetPerformanceCounter();
         SDL_RenderPresent(ren);
-        /* If the driver ignores vsync, don't spin: wait about one refresh. */
+        speed.present += (double)(SDL_GetPerformanceCounter() - before_present) * 1000 / freq;
+        /* If the driver ignores vsync (OpenGL often does in a borderless fullscreen window),
+         * don't spin: wait out what is left of one refresh since the last picture went out.
+         * Counted from the last picture, not from this present: a picture that took longer
+         * than a refresh goes straight on instead of waiting a whole refresh more. */
+        static Uint64 last_shown;
         Uint64 after = SDL_GetPerformanceCounter();
         if (after - before_present < freq / 2000) {
             SDL_DisplayMode mode;
             int refresh = SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(win), &mode) == 0 && mode.refresh_rate > 0
                           ? mode.refresh_rate : 60;
-            Uint64 until = before_present + freq / (Uint64)refresh;
-            if (until > after) SDL_Delay((Uint32)((until - after) * 1000 / freq));
+            Uint64 until = last_shown + freq / (Uint64)refresh;
+            if (last_shown && until > after) {
+                SDL_Delay((Uint32)((until - after) * 1000 / freq));
+                after = SDL_GetPerformanceCounter();
+            }
         }
+        last_shown = after;
     }
 
     save_coverage();

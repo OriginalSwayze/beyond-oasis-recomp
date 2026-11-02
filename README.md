@@ -129,6 +129,10 @@ Other headless options:
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
 * `--lighting N` (0-2), `--hdr N` (0-2), `--elements 0|1`, `--water 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1|2` (edge, smooth, sharp), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
 * `--bench N`: after each game frame, draw N pictures of it as the window does (layers put together at points between frames, then the finishing steps) and print the average times at the end: the game frame, putting the layers together (scaling layers, sprites, compositing) and the finishing steps. With `--shot F.png`, the last finished picture is saved. Use it with `--load N` and your own settings to see what a scene costs
+* `--merged 0|1`, `--avx2 0|1`: the Merged finishing pass and the AVX2 loops for this run
+* `--gpu-api direct3d11|opengl`: the renderer and GPU effects to use (with `--gpu-shot`, `--window-test` or a normal start)
+* `--gpu-shot GPU.png CPU.png`: at the end, finish the last frame on the graphics card (a hidden window, Direct3D 11 unless `--gpu-api` says otherwise, read back) and on the CPU, save both and print the card's time
+* `--window-test SECONDS F.png`: run the real window loop, hidden (from `--load N`'s slot, with `settings.ini`), for SECONDS, then save the last picture as the window shows it (with the Performance stats panel when that is on) and print the renderer, whether the GPU effects ran and auto quality's resolution
 * `--outfit a,b,...`, `--outfit-anims 0,1,...`: Ali's outfit colours and animations for this run (as `outfit_colors` and `outfit_anims` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
@@ -315,6 +319,56 @@ window size and multiplied over the picture. The glow is the picture drawn at 1/
 and added back stretched, which blurs it. The curve draws the picture and the overlay
 as a bent 40x30 triangle mesh (`SDL_RenderGeometry`). Filters work with every internal
 resolution and with smooth motion; screenshots and save thumbnails stay unfiltered.
+
+## Speed
+
+The window draws through SDL's Direct3D 11 renderer, which presents with a flip-model
+swap chain. SDL's default on Windows, Direct3D 9, could wait most of a refresh at each
+present: at 6x with every effect on, the same picture work ran at 30 to 70 pictures a
+second there and runs at about 90 with Direct3D 11. Without Direct3D 11, SDL's default is
+used.
+
+The SPEED tab (pause menu and launcher; `settings.ini` keys in brackets) holds what makes
+pictures cheaper to draw. Each one is a setting of its own.
+
+* **Performance stats** (`perf_stats`): a panel in the top-left corner, made twice a
+  second: pictures a second against the display's refresh rate, the internal resolution
+  (and auto quality's step), and each step's time a picture: putting the layers together,
+  the effects (on the CPU, with AVX2 or not, or the graphics card) and the upload to the
+  card, then the game's own frame (and rewind's share), drawing and waiting for the
+  display. It is drawn after the display filter, so it is not sharpened or graded.
+* **Auto quality** (`auto_quality`): when the pictures fall behind the display (the time
+  between them over 1.15 refreshes while their work fills three quarters of one) for about
+  three quarters of a second, the internal resolution drops a step (6x, 4x, 3x, 2x,
+  native); when the next step up would still leave a third of a refresh free (its work
+  estimated from the pixels it has) for three seconds, it goes back up, never past
+  Internal resolution. At 144 Hz with every effect on, 6x on a 24-thread CPU runs at about
+  90 pictures a second on the CPU and auto quality settles at 3x, around 140; with GPU
+  effects it holds 4x at 140.
+* **GPU effects** (`gpu_effects`): lighting, the HDR look and sharpening run on the
+  graphics card instead of the CPU, in two shader passes: the first grades and lights each
+  pixel into a texture in between, the second sharpens from there into a texture the
+  display filters then draw. The picture is uploaded as it is put together, and the glow
+  for the game frame (made on the CPU, a few thousand cells) goes up as a small 16-bit
+  texture. It uses SDL's Direct3D 11 renderer (`runtime/src/gpu_d3d11.c`, the shaders
+  compiled at start with Windows' `d3dcompiler_47.dll`), or OpenGL 2.0 where that is
+  missing (`runtime/src/gpu.c`); either is picked when the window opens, so turning the
+  option on or off takes effect at the next start ("On (from the next start)"), and
+  without either the CPU does the effects. The card's result matches the CPU's within
+  1/255 on 96% of pixels and within 7/255 on the rest. Particles, damage numbers and the
+  timer are drawn into the picture before it goes up. The Performance stats panel shows
+  the card's own time for the passes (from timestamp queries, read a few pictures later).
+  At 6x with every effect on, the card takes well under a millisecond, and with auto
+  quality a 144 Hz display holds 4x instead of 3x.
+* **Merged finishing pass** (`merged_pass`, off by default): on the CPU, each band of rows
+  is lit and graded into a buffer of its own (with a row above and below) and sharpened
+  from there, one pass over the picture instead of two. It saves a trip through memory but
+  works the extra rows: on a fast-memory PC it is about 0.4 ms slower, so try it where
+  memory is slow. Particles, damage numbers and the timer are then not sharpened.
+* **AVX2 pixel loops** (`avx2`): sharpening and the lighting/HDR pass work on eight pixels at
+  a time with AVX2 instructions, on CPUs that have them; the same arithmetic in the same
+  order, so the same picture to the bit.
+* **Slowdown fix**: as below.
 
 ## Slowdown fix
 

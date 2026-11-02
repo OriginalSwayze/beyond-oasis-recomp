@@ -576,8 +576,8 @@ int launcher_ost_check(int seconds) {
 typedef enum { ROW_OPTION, ROW_ROM, ROW_CONTROLS, ROW_TRACK, ROW_OUTFIT } RowKind;
 typedef struct { RowKind kind; const char *label; int id; const char *about; } Row;
 
-#define TABS 5
-static const char *const tab_names[TABS] = { "DISPLAY", "EFFECTS", "GAME", "MUSIC", "CHEATS" };
+#define TABS 6
+static const char *const tab_names[TABS] = { "DISPLAY", "EFFECTS", "GAME", "MUSIC", "CHEATS", "SPEED" };
 static const Row tab_rows[TABS][9] = {
     { { ROW_OPTION, "Widescreen", OPT_WIDESCREEN, "Shows more of the world at the sides, streamed by the game's own map code." },
       { ROW_OPTION, "Aspect ratio", OPT_ASPECT, "The shape of the widescreen picture." },
@@ -612,8 +612,13 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Attack power", OPT_CHEAT_ATTACK, "Double or quadruple damage, or every enemy falls to one hit." },
       { ROW_OPTION, "Move speed", OPT_CHEAT_SPEED, "Ali moves 1.5x or 2x as fast; walls still stop him." },
       { ROW_OPTION, "Randomizer", OPT_RANDOMIZER, "Chests and drops give other items; keys and upgrades stay put." } },
+    { { ROW_OPTION, "Performance stats", OPT_PERF_STATS, "Pictures a second and each step's time, in the top-left corner." },
+      { ROW_OPTION, "Auto quality", OPT_AUTO_QUALITY, "Lowers the internal resolution while pictures fall behind the display." },
+      { ROW_OPTION, "GPU effects", OPT_GPU, "Lighting, HDR and sharpening on the graphics card (Direct3D 11)." },
+      { ROW_OPTION, "Merged finishing pass", OPT_MERGED, "The CPU's effects in one pass over the picture." },
+      { ROW_OPTION, "AVX2 pixel loops", OPT_AVX2, "Eight pixels at a time, on CPUs that have AVX2." } },
 };
-static const int tab_count[TABS] = { 9, 6, 9, 5, 6 };
+static const int tab_count[TABS] = { 9, 6, 9, 5, 6, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define CASE_X 84                       /* the steelbook */
@@ -749,18 +754,21 @@ static void fill_tri(float ax, float ay, float bx, float by, float cx, float cy,
         }
 }
 
+/* Each tab's orb: the four spirits, the armlet for CHEATS, and Efreet again for SPEED. */
+static int tab_orb(int k) { static const int orb[TABS] = { 0, 1, 2, 3, SPIRIT_ARMLET, 1 }; return orb[k]; }
+
 static void draw_tabs(void) {
     for (int k = 0; k < TABS; k++) {
         float x = TAB_X0 + k * TAB_W, cx = x + TAB_W / 2.f;
         bool open = ui.tab == k, focus = ui.selected == ITEM_TABS && open;
-        const Spirit *sp = &spirits[k];
+        const Spirit *sp = &spirits[tab_orb(k)];
         float bright = open ? 1 : .45f;
         if (open) {
             ui_fill_rect(x + 6, TAB_Y, TAB_W - 12, TAB_H, sp->light, focus ? .10f : .06f);
             /* A glowing line under the open tab. */
             for (int i = 0; i < 3; i++) ui_fill_rect(x + 14 - i * 3, TAB_Y + TAB_H - 3 - i, TAB_W - 28 + i * 6, 2, sp->light, .5f - i * .15f);
         }
-        scene_orb(k, cx, TAB_Y + 24, open ? 15 : 12, ui.t, bright + (open ? ui.flash * .4f : 0));
+        scene_orb(tab_orb(k), cx, TAB_Y + 24, open ? 15 : 12, ui.t, bright + (open ? ui.flash * .4f : 0));
         Rgb tc = open ? mix(rgb_hex(0xFFF4DA), sp->light, .25f) : rgb_hex(0x8A8170);
         float tw = ui_text_width(tab_names[k], "Segoe UI Semibold", 12.5f, 600, 3);
         ui_draw_text(tab_names[k], "Segoe UI Semibold", 12.5f, 600, 3, cx - tw / 2, TAB_Y + 46, tc, tc, 1);
@@ -818,7 +826,7 @@ static void draw_row(int r, const Row *row, float dx, float alpha, const PlayerV
         ui_draw_text(hint, "Segoe UI", 13, 400, 0, vx - hw - (arrows ? 34 : 16) + dx, y + 13, rgb_hex(0x8F8673), rgb_hex(0x8F8673), alpha);
     }
     if (arrows) {
-        Rgb ac = focus ? spirits[ui.tab].light : rgb_hex(0x6A5F4C);
+        Rgb ac = focus ? spirits[tab_orb(ui.tab)].light : rgb_hex(0x6A5F4C);
         float nudge = pulse * 3;
         ui_draw_text("\xE2\x80\xB9", "Segoe UI Semibold", 20, 600, 0, vx - 18 - nudge + dx, y + 7, ac, ac, alpha);
         ui_draw_text("\xE2\x80\xBA", "Segoe UI Semibold", 20, 600, 0, PANEL_R - 12 + nudge + dx, y + 7, ac, ac, alpha);
@@ -881,7 +889,7 @@ static void draw_ui(float t) {
     bool on_row = ui.selected >= 0 && ui.selected < tab_count[ui.tab];
     if (on_row) {
         float y = ui.hl_y;
-        Rgb c = spirits[ui.tab].light;
+        Rgb c = spirits[tab_orb(ui.tab)].light;
         ui_fill_rect(PANEL_X - 14, y + 2, PANEL_R - PANEL_X + 22, ROW_H - 4, c, .07f);
         ui_fill_rect(PANEL_X - 14, y + 2, 3, ROW_H - 4, c, .95f);
         scene_glow(PANEL_X - 12, y + ROW_H / 2.f, 16, c, .35f);
@@ -891,7 +899,7 @@ static void draw_ui(float t) {
     else if (on_row && tab_rows[ui.tab][ui.selected].about) {
         /* What the selected option does, under a thin rule in the tab's colour. */
         float y = row_y(tab_count[ui.tab]) + 22;
-        ui_fill_rect(PANEL_X, y, 46, 2, spirits[ui.tab].light, .7f * alpha);
+        ui_fill_rect(PANEL_X, y, 46, 2, spirits[tab_orb(ui.tab)].light, .7f * alpha);
         ui_draw_text(tab_rows[ui.tab][ui.selected].about, "Segoe UI", 14.5f, 400, 0, PANEL_X + dx, y + 14,
                      rgb_hex(0xB8AC92), rgb_hex(0xB8AC92), alpha);
     }
@@ -920,7 +928,7 @@ static void draw_ui(float t) {
         if (a > .99f) foil_draw(&card, lx, ly, t);
         else ui_panel(px - 18, py - 50, pw + 36, ph + 74, 14, rgb_hex(0x14131A), rgb_hex(0x0A090D), .92f * a, rgb_hex(0xD9B567), .45f * a);
         ui_draw_text("PREVIEW  \xC2\xB7  YOUR LAST GAME FRAME", "Segoe UI Semibold", 12, 600, 3, px, py - 30,
-                     spirits[ui.tab].light, spirits[ui.tab].light, a);
+                     spirits[tab_orb(ui.tab)].light, spirits[tab_orb(ui.tab)].light, a);
         if (a > .05f) preview_draw(tab_rows[ui.tab][ui.selected].id, px, py, pw, ph, t);
         ui_panel(px - 1, py - 1, pw + 2, ph + 2, 4, rgb(0, 0, 0), rgb(0, 0, 0), 0, rgb_hex(0xD9B567), .5f * a);
     }

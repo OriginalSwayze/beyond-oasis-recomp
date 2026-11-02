@@ -24,10 +24,10 @@ typedef enum { ITEM_ACTION, ITEM_SLOT, ITEM_OPTION } ItemKind;
 enum { ACT_RESUME, ACT_SAVE, ACT_LOAD, ACT_RESET, ACT_QUIT, ACT_CONTROLS, ACT_OUTFIT, ACT_MAP, ACT_STATS };
 typedef struct { ItemKind kind; const char *label; int id; } Item;
 
-#define TABS 5
+#define TABS 6
 #define MAX_ROWS 10
-static const char *const tab_names[TABS] = { "GAME", "DISPLAY", "EFFECTS", "CHEATS", "MORE" };
-static const int tab_spirit[TABS] = { 2, 0, 1, SPIRIT_ARMLET, 3 };     /* Bow, Dytto, Efreet, the armlet, Shade */
+static const char *const tab_names[TABS] = { "GAME", "DISPLAY", "EFFECTS", "CHEATS", "MORE", "SPEED" };
+static const int tab_spirit[TABS] = { 2, 0, 1, SPIRIT_ARMLET, 3, 1 }; /* Bow, Dytto, Efreet, the armlet, Shade, Efreet */
 static const Item tab_items[TABS][MAX_ROWS] = {
     { { ITEM_ACTION, "Resume", ACT_RESUME }, { ITEM_SLOT, "Save state", ACT_SAVE }, { ITEM_SLOT, "Load state", ACT_LOAD },
       { ITEM_ACTION, "Map", ACT_MAP }, { ITEM_ACTION, "Stats", ACT_STATS },
@@ -48,8 +48,11 @@ static const Item tab_items[TABS][MAX_ROWS] = {
       { ITEM_ACTION, "Controls", ACT_CONTROLS }, { ITEM_ACTION, "Ali's outfit", ACT_OUTFIT },
       { ITEM_OPTION, "Rumble", OPT_RUMBLE }, { ITEM_OPTION, "Play timer", OPT_TIMER },
       { ITEM_OPTION, "Texture pack", OPT_TEXPACK }, { ITEM_OPTION, "Dump tiles", OPT_DUMP } },
+    { { ITEM_OPTION, "Performance stats", OPT_PERF_STATS }, { ITEM_OPTION, "Auto quality", OPT_AUTO_QUALITY },
+      { ITEM_OPTION, "GPU effects", OPT_GPU }, { ITEM_OPTION, "Merged finishing pass", OPT_MERGED },
+      { ITEM_OPTION, "AVX2 pixel loops", OPT_AVX2 }, { ITEM_OPTION, "Slowdown fix", OPT_OVERCLOCK } },
 };
-static const int tab_count[TABS] = { 9, 10, 6, 6, 8 };
+static const int tab_count[TABS] = { 9, 10, 6, 6, 8, 6 };
 
 /* What each option and action does, for the card on the right. */
 static const char *about(const Item *it) {
@@ -92,6 +95,11 @@ static const char *about(const Item *it) {
     case OPT_FAST: return "How fast the game runs while the fast-forward key is held (Tab, or RB on a controller; change it in Controls).";
     case OPT_COMBAT: return "The damage of every hit rises from the enemy as a number, gold for a one-hit kill; with health bars, a bar over an enemy shows what it has left for a few seconds after each hit.";
     case OPT_RUMBLE: return "The controller rumbles when Ali lands a hit, harder for a kill and when he is hit, and softly when a spirit is called.";
+    case OPT_PERF_STATS: return "Shows in the top-left corner how many pictures a second reach the screen, the internal resolution, and how long each picture takes: putting the layers together, the effects (on the CPU or the graphics card) and sending it to the graphics card.";
+    case OPT_AUTO_QUALITY: return "When pictures cannot keep up with your display, the internal resolution steps down (6x, 4x, 3x, 2x) until they do, and back up when there is room again. It never goes above the Internal resolution you picked.";
+    case OPT_GPU: return "Lighting, the HDR look and sharpening on the graphics card instead of the CPU, in one pass. It uses Direct3D 11 (or OpenGL where that is missing), picked as the window opens, so turning it on or off takes effect the next time the game starts; without either the CPU does them as before.";
+    case OPT_MERGED: return "On the CPU, lighting, the HDR look and sharpening in one pass over each band of the picture instead of a pass each over the whole picture. It saves a trip through memory but works a little more per band: try it on a PC with slow memory. Particles, damage numbers and the timer are then drawn after sharpening.";
+    case OPT_AVX2: return "The CPU's effects loops work on eight pixels at a time with AVX2 instructions, on processors that have them (almost every PC since 2013). The result is the same.";
     case OPT_TIMER: return "This session's play time in the top corner of the picture, for speedruns and keeping track. The total is under Stats.";
     case OPT_VOLUME: return "The game's volume.";
     case OPT_AUDIO: return "Original is the console's sound as emulated. Clean removes aliasing, the hum and clipping; Rich adds wider stereo and a light room.";

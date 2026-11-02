@@ -12,6 +12,7 @@
 #include "combat.h"
 #include "texpack.h"
 
+#include <immintrin.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -355,14 +356,16 @@ static int band_worker(void *arg) {
 
 static int workers(void);
 
-static void run_bands(void (*rows)(void *ctx, int y0, int y1), void *ctx, int h) {
-    Bands b = { rows, ctx, h, 8, { 0 } };
+static void run_bands_of(void (*rows)(void *ctx, int y0, int y1), void *ctx, int h, int band) {
+    Bands b = { rows, ctx, h, band, { 0 } };
     SDL_AtomicSet(&b.next, 0);
     Job jobs[MAX_WORKERS];
     int n = workers();
     for (int k = 0; k < n; k++) jobs[k] = (Job){ band_worker, &b };
     run_jobs(jobs, n);
 }
+
+static void run_bands(void (*rows)(void *ctx, int y0, int y1), void *ctx, int h) { run_bands_of(rows, ctx, h, 8); }
 
 void hd_rows(void (*rows)(void *ctx, int y0, int y1), void *ctx, int h) { run_bands(rows, ctx, h); }
 
@@ -772,7 +775,17 @@ static void compose_rows(int scale, const uint32_t *sprites, const int *ox_a, co
 }
 
 /* ---- Sharpening -------------------------------------------------------------------- */
-typedef struct { const uint32_t *src; uint32_t *dst; int w, h, pitch, y0, y1; float peak; } SharpenJob;
+/* src_y0: the picture row src starts at (a band's own buffer starts above the band). */
+typedef struct { const uint32_t *src; uint32_t *dst; int w, h, pitch, y0, y1; float peak; int src_y0; } SharpenJob;
+
+/* The pixel loops' AVX2 versions (8 pixels at a time, the same results), when the CPU has
+ * it and the setting is on (main.c sets it). */
+bool hd_avx2;
+
+float hd_sharpen_peak(int level) {
+    static const float peaks[4] = { 0, -1 / 8.f, -1 / 6.5f, -1 / 5.f };
+    return level <= 0 ? 0 : peaks[level > 3 ? 3 : level];
+}
 
 /* A pixel's weight and normalisation depend only on its neighbourhood's darkest and
  * brightest luma: made once per level, [mn][mx], instead of a root and a division a pixel. */
@@ -795,32 +808,79 @@ static void make_sharpen_lut(float peak) {
 
 static inline int luma(uint32_t p) { return (int)(((p >> 16) & 255) * 77 + ((p >> 8) & 255) * 150 + (p & 255) * 29) >> 8; }
 
+/* One sharpened pixel from its four neighbours. */
+static inline uint32_t sharpen_px(uint32_t e, uint32_t b, uint32_t hh, uint32_t d, uint32_t f) {
+    /* Inside a scaled pixel all five match: nothing to sharpen (most of the picture). */
+    if (b == e && hh == e && d == e && f == e) return e;
+    int le = luma(e), lb = luma(b), lh = luma(hh), ld = luma(d), lf = luma(f);
+    int mn = le, mx = le;
+    if (lb < mn) mn = lb; if (lh < mn) mn = lh; if (ld < mn) mn = ld; if (lf < mn) mn = lf;
+    if (lb > mx) mx = lb; if (lh > mx) mx = lh; if (ld > mx) mx = ld; if (lf > mx) mx = lf;
+    /* Flat, or only a smooth gradient (the glow's): left alone, as sharpening would turn
+     * its one-level steps into visible bands. */
+    if (mx - mn <= 2) return e;
+    float wgt = sharpen_wgt[mn << 8 | mx], norm = sharpen_norm[mn << 8 | mx];
+    int c[3];
+    for (int k = 0; k < 3; k++) {
+        int sh = 16 - k * 8;
+        float v = (((e >> sh) & 255) + wgt * (((b >> sh) & 255) + ((hh >> sh) & 255) + ((d >> sh) & 255) + ((f >> sh) & 255))) * norm;
+        c[k] = v < 0 ? 0 : v > 255 ? 255 : (int)(v + .5f);
+    }
+    return (uint32_t)(c[0] << 16 | c[1] << 8 | c[2]);
+}
+
+/* Columns 1 .. w-2 of one row, 8 at a time: the same arithmetic as sharpen_px (no fused
+ * multiply-adds), so the same result. Returns the first column it did not do. */
+__attribute__((target("avx2")))
+static int sharpen_row_avx2(const uint32_t *r, const uint32_t *up, const uint32_t *dn, uint32_t *out, int w) {
+    const __m256i m255 = _mm256_set1_epi32(255), two = _mm256_set1_epi32(2);
+    const __m256i k77 = _mm256_set1_epi32(77), k150 = _mm256_set1_epi32(150), k29 = _mm256_set1_epi32(29);
+    const __m256 zero = _mm256_setzero_ps(), top = _mm256_set1_ps(255), half = _mm256_set1_ps(.5f);
+    int x = 1;
+    for (; x + 8 <= w - 1; x += 8) {
+        __m256i e = _mm256_loadu_si256((const __m256i *)(r + x)), b = _mm256_loadu_si256((const __m256i *)(up + x));
+        __m256i h = _mm256_loadu_si256((const __m256i *)(dn + x)), d = _mm256_loadu_si256((const __m256i *)(r + x - 1));
+        __m256i f = _mm256_loadu_si256((const __m256i *)(r + x + 1));
+        __m256i same = _mm256_and_si256(_mm256_and_si256(_mm256_cmpeq_epi32(b, e), _mm256_cmpeq_epi32(h, e)),
+                                        _mm256_and_si256(_mm256_cmpeq_epi32(d, e), _mm256_cmpeq_epi32(f, e)));
+        if (_mm256_movemask_epi8(same) == -1) { _mm256_storeu_si256((__m256i *)(out + x), e); continue; }
+#define LUMA(v) _mm256_srli_epi32(_mm256_add_epi32(_mm256_add_epi32( \
+            _mm256_mullo_epi32(_mm256_and_si256(_mm256_srli_epi32(v, 16), m255), k77), \
+            _mm256_mullo_epi32(_mm256_and_si256(_mm256_srli_epi32(v, 8), m255), k150)), \
+            _mm256_mullo_epi32(_mm256_and_si256(v, m255), k29)), 8)
+        __m256i le = LUMA(e), lb = LUMA(b), lh = LUMA(h), ld = LUMA(d), lf = LUMA(f);
+#undef LUMA
+        __m256i mn = _mm256_min_epi32(_mm256_min_epi32(_mm256_min_epi32(le, lb), _mm256_min_epi32(lh, ld)), lf);
+        __m256i mx = _mm256_max_epi32(_mm256_max_epi32(_mm256_max_epi32(le, lb), _mm256_max_epi32(lh, ld)), lf);
+        __m256i keep = _mm256_or_si256(same, _mm256_cmpgt_epi32(_mm256_add_epi32(two, _mm256_set1_epi32(1)), _mm256_sub_epi32(mx, mn)));
+        __m256i idx = _mm256_or_si256(_mm256_slli_epi32(mn, 8), mx);
+        __m256 wgt = _mm256_i32gather_ps(sharpen_wgt, idx, 4), norm = _mm256_i32gather_ps(sharpen_norm, idx, 4);
+        __m256i res = _mm256_setzero_si256();
+        for (int k = 0; k < 3; k++) {
+            int sh = 16 - k * 8;
+#define CH(v) _mm256_and_si256(_mm256_srli_epi32(v, sh), m255)
+            __m256i sum = _mm256_add_epi32(_mm256_add_epi32(CH(b), CH(h)), _mm256_add_epi32(CH(d), CH(f)));
+            __m256 v = _mm256_mul_ps(_mm256_add_ps(_mm256_cvtepi32_ps(CH(e)), _mm256_mul_ps(wgt, _mm256_cvtepi32_ps(sum))), norm);
+#undef CH
+            v = _mm256_min_ps(_mm256_max_ps(v, zero), top);
+            res = _mm256_or_si256(res, _mm256_sll_epi32(_mm256_cvttps_epi32(_mm256_add_ps(v, half)), _mm_cvtsi32_si128(sh)));
+        }
+        _mm256_storeu_si256((__m256i *)(out + x), _mm256_blendv_epi8(res, e, keep));
+    }
+    return x;
+}
+
 static int sharpen_rows(void *arg) {
     const SharpenJob *j = arg;
+    int w = j->w;
     for (int y = j->y0; y < j->y1; y++) {
-        const uint32_t *r = j->src + (size_t)y * j->pitch;
+        const uint32_t *r = j->src + (size_t)(y - j->src_y0) * j->pitch;
         const uint32_t *up = y > 0 ? r - j->pitch : r, *dn = y < j->h - 1 ? r + j->pitch : r;
-        uint32_t *out = j->dst + (size_t)y * j->w;
-        for (int x = 0; x < j->w; x++) {
-            uint32_t e = r[x], b = up[x], hh = dn[x], d = r[x > 0 ? x - 1 : x], f = r[x < j->w - 1 ? x + 1 : x];
-            /* Inside a scaled pixel all five match: nothing to sharpen (most of the picture). */
-            if (b == e && hh == e && d == e && f == e) { out[x] = e; continue; }
-            int le = luma(e), lb = luma(b), lh = luma(hh), ld = luma(d), lf = luma(f);
-            int mn = le, mx = le;
-            if (lb < mn) mn = lb; if (lh < mn) mn = lh; if (ld < mn) mn = ld; if (lf < mn) mn = lf;
-            if (lb > mx) mx = lb; if (lh > mx) mx = lh; if (ld > mx) mx = ld; if (lf > mx) mx = lf;
-            /* Flat, or only a smooth gradient (the glow's): left alone, as sharpening would
-             * turn its one-level steps into visible bands. */
-            if (mx - mn <= 2) { out[x] = e; continue; }
-            float wgt = sharpen_wgt[mn << 8 | mx], norm = sharpen_norm[mn << 8 | mx];
-            int c[3];
-            for (int k = 0; k < 3; k++) {
-                int sh = 16 - k * 8;
-                float v = (((e >> sh) & 255) + wgt * (((b >> sh) & 255) + ((hh >> sh) & 255) + ((d >> sh) & 255) + ((f >> sh) & 255))) * norm;
-                c[k] = v < 0 ? 0 : v > 255 ? 255 : (int)(v + .5f);
-            }
-            out[x] = (uint32_t)(c[0] << 16 | c[1] << 8 | c[2]);
-        }
+        uint32_t *out = j->dst + (size_t)y * w;
+        int x = 0;
+        if (w > 0) { out[0] = sharpen_px(r[0], up[0], dn[0], r[0], r[w > 1 ? 1 : 0]); x = 1; }
+        if (hd_avx2 && w > 10) x = sharpen_row_avx2(r, up, dn, out, w);
+        for (; x < w; x++) out[x] = sharpen_px(r[x], up[x], dn[x], r[x - 1], r[x < w - 1 ? x + 1 : x]);
     }
     return 0;
 }
@@ -838,10 +898,9 @@ const uint32_t *hd_sharpen(const uint32_t *src, int w, int h, int pitch, int lev
     size_t need = (size_t)w * h;
     if (need > cap) { free(buf); buf = malloc(need * 4); cap = buf ? need : 0; }
     if (!buf) return src;
-    static const float peaks[4] = { 0, -1 / 8.f, -1 / 6.5f, -1 / 5.f };
-    float peak = peaks[level > 3 ? 3 : level];
+    float peak = hd_sharpen_peak(level);
     make_sharpen_lut(peak);
-    SharpenJob sj = { src, buf, w, h, pitch, 0, 0, peak };
+    SharpenJob sj = { src, buf, w, h, pitch, 0, 0, peak, 0 };
     run_bands(sharpen_part, &sj, h);
     return buf;
 }
@@ -856,7 +915,8 @@ const uint32_t *hd_sharpen(const uint32_t *src, int w, int h, int pitch, int lev
  * bulbs, lit windows) whatever their brightness, and never the characters (sprites) or
  * the HUD (the window), so a red jacket does not glow; the glow is wider and stronger,
  * and buzzes and now and then flickers like a neon tube. */
-typedef struct { const uint32_t *src; uint32_t *dst; int w, h, pitch, y0, y1; bool light; int hdr; float k; } PostJob;
+/* dst_y0: the picture row dst starts at (a band's own buffer starts above the band). */
+typedef struct { const uint32_t *src; uint32_t *dst; int w, h, pitch, y0, y1; bool light; int hdr; float k; int dst_y0; } PostJob;
 
 /* ---- HDR look ------------------------------------------------------------------------ *
  * The picture's range stretched the way an HDR grade does it on an ordinary screen:
@@ -865,6 +925,7 @@ typedef struct { const uint32_t *src; uint32_t *dst; int w, h, pitch, y0, y1; bo
  * alone (vibrance), so neon and fire stand out against the night. */
 static inline float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 static uint8_t hdr_curve[3][256];       /* [strength 1-2][value] */
+static int hdr_curve32[3][256];        /* the same as 32-bit entries, for AVX2's gathers */
 
 static void make_hdr_curve(void) {
     if (hdr_curve[1][255]) return;
@@ -875,6 +936,7 @@ static void make_hdr_curve(void) {
             float y = x + (sc - x) * a;
             y = powf(y, k == 2 ? 1.08f : 1.04f);            /* a little deeper in the shadows */
             hdr_curve[k][i] = (uint8_t)(clamp01(y) * 255 + .5f);
+            hdr_curve32[k][i] = hdr_curve[k][i];
         }
 }
 
@@ -988,6 +1050,55 @@ static void make_columns(int w) {
     col_w = w; col_f = bloom_f;
 }
 
+/* One row of post_rows, 8 pixels at a time: the same steps (no fused multiply-adds), so
+ * the same result. Returns the first column it did not do. */
+__attribute__((target("avx2")))
+static int post_row_avx2(const uint32_t *s, uint32_t *o, int w, int hdr, float vib, bool glow, const int *lrow) {
+    const __m256i m255 = _mm256_set1_epi32(255), lo24 = _mm256_set1_epi32(0xFFFFFF);
+    const __m256i k4096 = _mm256_set1_epi32(4096), k2048 = _mm256_set1_epi32(2048);
+    const __m256 inv255 = _mm256_set1_ps(1 / 255.f), f255 = _mm256_set1_ps(255), half = _mm256_set1_ps(.5f);
+    const __m256 zero = _mm256_setzero_ps(), one = _mm256_set1_ps(1), three = _mm256_set1_ps(3), vv = _mm256_set1_ps(vib);
+    const int *curve = hdr_curve32[hdr];
+    int x = 0;
+    for (; x + 8 <= w; x += 8) {
+        __m256i p = _mm256_loadu_si256((const __m256i *)(s + x)), out;
+        if (hdr) {
+            __m256i cr = _mm256_i32gather_epi32(curve, _mm256_and_si256(_mm256_srli_epi32(p, 16), m255), 4);
+            __m256i cg = _mm256_i32gather_epi32(curve, _mm256_and_si256(_mm256_srli_epi32(p, 8), m255), 4);
+            __m256i cb = _mm256_i32gather_epi32(curve, _mm256_and_si256(p, m255), 4);
+            __m256 r = _mm256_mul_ps(_mm256_cvtepi32_ps(cr), inv255), g = _mm256_mul_ps(_mm256_cvtepi32_ps(cg), inv255);
+            __m256 b = _mm256_mul_ps(_mm256_cvtepi32_ps(cb), inv255);
+            __m256 mx = _mm256_max_ps(r, _mm256_max_ps(g, b)), mn = _mm256_min_ps(r, _mm256_min_ps(g, b));
+            __m256 avg = _mm256_div_ps(_mm256_add_ps(_mm256_add_ps(r, g), b), three);
+            __m256 sat = _mm256_and_ps(_mm256_div_ps(_mm256_sub_ps(mx, mn), mx), _mm256_cmp_ps(mx, zero, _CMP_GT_OQ));
+            __m256 kv = _mm256_add_ps(one, _mm256_mul_ps(vv, _mm256_sub_ps(one, sat)));
+#define GRADE(c) _mm256_cvttps_epi32(_mm256_add_ps(_mm256_mul_ps(_mm256_min_ps(_mm256_max_ps( \
+                _mm256_add_ps(avg, _mm256_mul_ps(_mm256_sub_ps(c, avg), kv)), zero), one), f255), half))
+            out = _mm256_or_si256(_mm256_or_si256(_mm256_slli_epi32(GRADE(r), 16), _mm256_slli_epi32(GRADE(g), 8)), GRADE(b));
+#undef GRADE
+        } else out = _mm256_and_si256(p, lo24);
+        if (glow) {
+            __m256i x0 = _mm256_loadu_si256((const __m256i *)(col_x0 + x)), x1 = _mm256_loadu_si256((const __m256i *)(col_x1 + x));
+            __m256i i0 = _mm256_add_epi32(x0, _mm256_add_epi32(x0, x0)), i1 = _mm256_add_epi32(x1, _mm256_add_epi32(x1, x1));
+            __m256i t = _mm256_loadu_si256((const __m256i *)(col_t12 + x)), nt = _mm256_sub_epi32(k4096, t);
+            __m256i lit = _mm256_setzero_si256();
+            for (int k = 0; k < 3; k++) {
+                __m256i kk = _mm256_set1_epi32(k);
+                __m256i a = _mm256_i32gather_epi32(lrow, _mm256_add_epi32(i0, kk), 4), c = _mm256_i32gather_epi32(lrow, _mm256_add_epi32(i1, kk), 4);
+                __m256i l = _mm256_srai_epi32(_mm256_add_epi32(_mm256_mullo_epi32(a, nt), _mm256_mullo_epi32(c, t)), 12);
+                l = _mm256_min_epi32(l, k4096);
+                __m128i cnt = _mm_cvtsi32_si128(16 - 8 * k);
+                __m256i v = _mm256_and_si256(_mm256_srl_epi32(out, cnt), m255);
+                v = _mm256_add_epi32(v, _mm256_srai_epi32(_mm256_add_epi32(_mm256_mullo_epi32(_mm256_sub_epi32(m255, v), l), k2048), 12));
+                lit = _mm256_or_si256(lit, _mm256_sll_epi32(v, cnt));
+            }
+            out = lit;
+        }
+        _mm256_storeu_si256((__m256i *)(o + x), out);
+    }
+    return x;
+}
+
 static int post_rows(void *arg) {
     const PostJob *j = arg;
     int f = bloom_f > 0 ? bloom_f : 1, bw = bloom_w, bh = bloom_h;
@@ -995,7 +1106,7 @@ static int post_rows(void *arg) {
     float vib = j->hdr == 2 ? .55f : .35f;
     for (int y = j->y0; y < j->y1; y++) {
         const uint32_t *s = j->src + (size_t)y * j->pitch;
-        uint32_t *o = j->dst + (size_t)y * j->w;
+        uint32_t *o = j->dst + (size_t)(y - j->dst_y0) * j->w;
         float fy = (y + .5f) / f - .5f;
         int y0 = (int)floorf(fy), y1 = y0 + 1;
         float ty = fy - y0;
@@ -1014,7 +1125,8 @@ static int post_rows(void *arg) {
          * one colour: the last one's result is kept. */
         uint32_t last_in = 0, last_out = 0;
         bool have_last = false;
-        for (int x = 0; x < j->w; x++) {
+        int x = hd_avx2 && bw <= 1024 ? post_row_avx2(s, o, j->w, j->hdr, vib, glow, lrow) : 0;
+        for (; x < j->w; x++) {
             uint32_t p = s[x];
             if (!have_last || p != last_in) {
                 last_in = p;
@@ -1051,6 +1163,56 @@ static void post_part(void *ctx, int y0, int y1) {
     post_rows(&j);
 }
 
+/* The merged pass: a band's rows lit and graded into a buffer of its own (with the row
+ * above and below it, which sharpening looks at), then sharpened from there into the
+ * picture. One pass over the picture instead of two. */
+bool hd_merged;
+
+typedef struct { PostJob post; float peak; } MergedJob;
+
+static void merged_part(void *ctx, int y0, int y1) {
+    const MergedJob *m = ctx;
+    int w = m->post.w, h = m->post.h, a = y0 > 0 ? y0 - 1 : 0, b = y1 < h ? y1 + 1 : h;
+    /* Each thread keeps its buffer: fresh memory every band costs more than the pass saves. */
+    static _Thread_local uint32_t *rows;
+    static _Thread_local size_t cap;
+    size_t need = (size_t)(b - a) * w;
+    if (need > cap) { free(rows); rows = malloc(need * 4); cap = rows ? need : 0; }
+    if (!rows) return;
+    PostJob pj = m->post;
+    pj.y0 = a; pj.y1 = b; pj.dst = rows; pj.dst_y0 = a;
+    post_rows(&pj);
+    SharpenJob sj = { rows, m->post.dst, w, h, w, y0, y1, m->peak, a };
+    sharpen_rows(&sj);
+}
+
+/* The glow made for this game frame (made here if need be), for the GPU's effects:
+ * bw x bh cells of RGB floats, each f picture pixels wide, to be scaled by *k. */
+static float glow_strength(const HdPost *p) {
+    float k = light_k;
+    if (p->lighting == 3) {                 /* neon: a slow buzz, and now and then a flicker */
+        k *= .94f + .06f * sinf(p->t * 7.3f);
+        if (hash32((uint32_t)(p->t * 24)) % 160 == 0) k *= .55f;
+    }
+    return k;
+}
+
+static void ensure_bloom(const uint32_t *src, int w, int h, int pitch, const HdPost *p) {
+    static unsigned made_for;
+    static int made_w, made_level;
+    if (made_for != hd_serial || made_w != w || made_level != p->lighting) {
+        make_bloom(src, w, h, pitch, p->lighting, p->scale);   /* once per game frame */
+        made_for = hd_serial; made_w = w; made_level = p->lighting;
+    }
+}
+
+bool hd_glow(const uint32_t *src, int w, int h, int pitch, const HdPost *p, const float **cells, int *bw, int *bh, int *f, float *k) {
+    if (p->lighting <= 0) return false;
+    ensure_bloom(src, w, h, pitch, p);
+    *cells = bloom; *bw = bloom_w; *bh = bloom_h; *f = bloom_f; *k = glow_strength(p);
+    return bloom != NULL;
+}
+
 const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPost *p) {
     static uint32_t *buf;
     static size_t cap;
@@ -1062,22 +1224,20 @@ const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPo
         if (need > cap) { free(buf); buf = malloc(need * 4); cap = buf ? need : 0; }
         if (buf) {
             if (light) {
-                static unsigned made_for;
-                static int made_w, made_level;
-                if (made_for != hd_serial || made_w != w || made_level != p->lighting) {
-                    make_bloom(src, w, h, pitch, p->lighting, p->scale);   /* once per game frame */
-                    made_for = hd_serial; made_w = w; made_level = p->lighting;
-                }
+                ensure_bloom(src, w, h, pitch, p);
                 make_columns(w);
             }
             if (light || hdr) {
                 if (hdr) make_hdr_curve();
-                float k = light_k;
-                if (p->lighting == 3) {         /* neon: a slow buzz, and now and then a flicker */
-                    k *= .94f + .06f * sinf(p->t * 7.3f);
-                    if (hash32((uint32_t)(p->t * 24)) % 160 == 0) k *= .55f;
+                PostJob pj = { src, buf, w, h, pitch, 0, 0, light, hdr, glow_strength(p), 0 };
+                if (hd_merged && p->sharpen > 0) {
+                    /* Graded, lit and sharpened in one pass; the particles go on top after. */
+                    MergedJob mj = { pj, hd_sharpen_peak(p->sharpen) };
+                    make_sharpen_lut(mj.peak);
+                    run_bands_of(merged_part, &mj, h, 32);
+                    if (world_fx) { fx_draw(buf, w, h, p); combat_draw(buf, w, h, p); }
+                    return buf;
                 }
-                PostJob pj = { src, buf, w, h, pitch, 0, 0, light, hdr, k };
                 run_bands(post_part, &pj, h);
             } else {
                 for (int y = 0; y < h; y++) memcpy(buf + (size_t)y * w, src + (size_t)y * pitch, (size_t)w * 4);

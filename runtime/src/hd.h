@@ -101,6 +101,12 @@ typedef struct {
 /* Returns the finished picture (row pitch w): src itself when nothing is on, else a copy
  * valid until the next call. */
 const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPost *p);
+extern bool hd_merged;                  /* lighting/HDR and sharpening in one pass (settings.merged_pass) */
+extern bool hd_avx2;                    /* the AVX2 pixel loops (settings.avx2, when the CPU has it) */
+/* For the GPU's effects (gpu.c): the glow for this game frame (made if need be), bw x bh
+ * cells of RGB floats, each f picture pixels wide, to be scaled by *k; false with lighting off. */
+bool hd_glow(const uint32_t *src, int w, int h, int pitch, const HdPost *p, const float **cells, int *bw, int *bh, int *f, float *k);
+float hd_sharpen_peak(int level);       /* sharpening's neighbour weight for a level (0 off) */
 
 /* Runs rows(ctx, y0, y1) over rows 0..h in small bands on the renderer's worker threads
  * (all cores), returning when all are done. Also used by the launcher's and menu's foil. */

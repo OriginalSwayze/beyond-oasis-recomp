@@ -49,6 +49,11 @@ typedef struct {
     int  randomizer;                    /* item randomizer: 0 off, 1 restoratives, 2 restoratives and weapons */
     unsigned randomizer_seed;           /* its seed: a new one each time it is turned on */
     char cheat_codes[512];              /* extra RAM codes, "FFxxxx:VV[VV],..." (settings.ini only) */
+    bool perf_stats;                    /* pictures a second and each step's time, in the corner (main.c) */
+    bool auto_quality;                  /* lower the internal resolution while pictures fall behind the display (main.c) */
+    bool merged_pass;                   /* lighting, HDR and sharpening in one pass over the picture (hd.c) */
+    bool avx2;                          /* the pixel loops' AVX2 versions, on CPUs that have it (hd.c) */
+    bool gpu_effects;                   /* lighting, HDR and sharpening on the graphics card (gpu.c); from the next start */
     bool outfit;                        /* Ali wears outfit_color (outfit.c) */
     int  outfit_color[8];               /* CRAM colour for each part (OUTFIT_PARTS, outfit.c), -1 = his own */
     int  outfit_anim[8];                /* its animation: OUTFIT_ANIM_* (genesis.h) */
@@ -68,7 +73,11 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
        OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AUDIO, OPT_ELEMENTS, OPT_FOOTSTEPS, OPT_WATER,
        OPT_TEXPACK, OPT_DUMP,
-       OPT_COMBAT, OPT_RUMBLE, OPT_FAST, OPT_TIMER, OPT_RANDOMIZER, OPT_HDR };
+       OPT_COMBAT, OPT_RUMBLE, OPT_FAST, OPT_TIMER, OPT_RANDOMIZER, OPT_HDR,
+       OPT_PERF_STATS, OPT_AUTO_QUALITY, OPT_MERGED, OPT_AVX2, OPT_GPU };
+/* Set by the game when it knows: the GPU effects are running (the renderer is OpenGL and
+ * the shader built), and whether the CPU has AVX2. The launcher leaves them false. */
+extern bool gpu_effects_running, cpu_has_avx2;
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);

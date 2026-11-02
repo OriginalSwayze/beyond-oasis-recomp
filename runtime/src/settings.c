@@ -28,7 +28,11 @@ Settings settings = {
     .launcher_music = true,
     .ost_track = -1,
     .volume = 100,
+    .merged_pass = false,
+    .avx2 = true,
 };
+
+bool gpu_effects_running, cpu_has_avx2;
 
 static const char *filter_keys[FILTER_COUNT] = { "off", "scanlines", "crt", "lcd" };
 static const char *filter_names[FILTER_COUNT] = { "Off", "Scanlines", "CRT", "LCD" };
@@ -81,6 +85,11 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "rumble")) settings.rumble = atoi(v);
         else if (!strcmp(k, "fast_speed")) settings.fast_speed = atoi(v);
         else if (!strcmp(k, "play_timer")) settings.play_timer = parse_bool(v);
+        else if (!strcmp(k, "perf_stats")) settings.perf_stats = parse_bool(v);
+        else if (!strcmp(k, "auto_quality")) settings.auto_quality = parse_bool(v);
+        else if (!strcmp(k, "merged_pass")) settings.merged_pass = parse_bool(v);
+        else if (!strcmp(k, "avx2")) settings.avx2 = parse_bool(v);
+        else if (!strcmp(k, "gpu_effects")) settings.gpu_effects = parse_bool(v);
         else if (!strcmp(k, "texture_pack")) snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", v);
         else if (!strcmp(k, "dump_tiles")) settings.dump_tiles = parse_bool(v);
         else if (!strcmp(k, "audio")) settings.audio = atoi(v);
@@ -152,6 +161,11 @@ void settings_save(const char *path) {
     fprintf(f, "rumble=%d\n", settings.rumble);
     fprintf(f, "fast_speed=%d\n", settings.fast_speed);
     fprintf(f, "play_timer=%d\n", settings.play_timer);
+    fprintf(f, "perf_stats=%d\n", settings.perf_stats);
+    fprintf(f, "auto_quality=%d\n", settings.auto_quality);
+    fprintf(f, "merged_pass=%d\n", settings.merged_pass);
+    fprintf(f, "avx2=%d\n", settings.avx2);
+    fprintf(f, "gpu_effects=%d\n", settings.gpu_effects);
     fprintf(f, "texture_pack=%s\n", settings.texture_pack);
     fprintf(f, "dump_tiles=%d\n", settings.dump_tiles);
     fprintf(f, "audio=%d\n", settings.audio);
@@ -216,6 +230,11 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_RUMBLE:     snprintf(out, n, "%s", settings.rumble == 2 ? "Strong" : settings.rumble ? "Light" : "Off"); break;
     case OPT_FAST:       snprintf(out, n, "%d\xC3\x97", settings.fast_speed + 2); break;
     case OPT_TIMER:      snprintf(out, n, "%s", settings.play_timer ? "On" : "Off"); break;
+    case OPT_PERF_STATS: snprintf(out, n, "%s", settings.perf_stats ? "On" : "Off"); break;
+    case OPT_AUTO_QUALITY: snprintf(out, n, "%s", settings.auto_quality ? "On" : "Off"); break;
+    case OPT_MERGED:     snprintf(out, n, "%s", settings.merged_pass ? "On" : "Off"); break;
+    case OPT_AVX2:       snprintf(out, n, "%s", !settings.avx2 ? "Off" : cpu_has_avx2 || !gpu_effects_running ? "On" : "On (not on this CPU)"); break;
+    case OPT_GPU:        snprintf(out, n, "%s", !settings.gpu_effects ? "Off" : gpu_effects_running ? "On" : "On (from the next start)"); break;
     case OPT_RANDOMIZER:
         if (!settings.randomizer) snprintf(out, n, "Off");
         else snprintf(out, n, "%s (seed %u)", settings.randomizer == 2 ? "Items + weapons" : "Items", settings.randomizer_seed);
@@ -329,6 +348,11 @@ void settings_option_change(int id, int dir) {
     case OPT_RUMBLE:   settings.rumble = settings_cycle(settings.rumble, 3, dir); break;
     case OPT_FAST:     settings.fast_speed = settings_cycle(settings.fast_speed, 3, dir); break;
     case OPT_TIMER:    settings.play_timer = !settings.play_timer; break;
+    case OPT_PERF_STATS: settings.perf_stats = !settings.perf_stats; break;
+    case OPT_AUTO_QUALITY: settings.auto_quality = !settings.auto_quality; break;
+    case OPT_MERGED:   settings.merged_pass = !settings.merged_pass; break;
+    case OPT_AVX2:     settings.avx2 = !settings.avx2; break;
+    case OPT_GPU:      settings.gpu_effects = !settings.gpu_effects; break;
     case OPT_RANDOMIZER: {
         bool was_off = !settings.randomizer;
         settings.randomizer = settings_cycle(settings.randomizer, 3, dir);
