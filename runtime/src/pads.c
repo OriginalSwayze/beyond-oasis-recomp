@@ -32,11 +32,11 @@ static void close_id(SDL_JoystickID id) {
     int i = find(id);
     if (i < 0) return;
     SDL_GameControllerClose(pads[i]);
-    pads[i] = pads[count - 1];
-    ids[i] = ids[count - 1];
+    /* The others keep the order they came in. */
+    for (int k = i; k < count - 1; k++) { pads[k] = pads[k + 1]; ids[k] = ids[k + 1]; }
     count--;
-    if (active == count) active = i;    /* the last one moved into the gap */
-    if (active >= count) active = count - 1;
+    if (active > i) active--;
+    else if (active == i) active = count ? 0 : -1;
 }
 
 void pads_init(void) {

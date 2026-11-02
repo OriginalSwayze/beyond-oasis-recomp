@@ -34,13 +34,33 @@ static size_t scaled_cap;
 /* Source pixel with the edges clamped. */
 #define SRC(x, y) src[(size_t)((y) < 0 ? 0 : (y) >= h ? h - 1 : (y)) * pitch + ((x) < 0 ? 0 : (x) >= w ? w - 1 : (x))]
 
-static void scale2x(const uint32_t *src, int pitch, int w, int h, uint32_t *dst) {
+/* ---- Dither ---------------------------------------------------------------------------- *
+ * Games shade with dither: checkerboards and one-pixel stripes of two colours. To an edge
+ * scaler every pixel of it is an edge, and rounding them all smears the pattern into
+ * blobs. A pixel is dither when it differs from both neighbours on a line, those two
+ * match, and the pattern repeats two pixels on; such pixels are scaled as plain blocks,
+ * so the pattern stays crisp while real edges and curves are still rounded. The test
+ * looks at the original layer: after a first 2x pass dither is blocks, no longer dither. */
+typedef struct { const uint32_t *src; int pitch, w, h, k; } Dither;   /* the 1x layer; k: how many times smaller */
+
+static inline bool dithered(const Dither *d, int x, int y) {
+    if (!d) return false;
+    const uint32_t *src = d->src;
+    int pitch = d->pitch, w = d->w, h = d->h;
+    x /= d->k; y /= d->k;
+    uint32_t E = SRC(x, y), D = SRC(x - 1, y), F = SRC(x + 1, y);
+    if (D == F && D != E && (SRC(x - 2, y) == E || SRC(x + 2, y) == E)) return true;
+    uint32_t B = SRC(x, y - 1), H = SRC(x, y + 1);
+    return B == H && B != E && (SRC(x, y - 2) == E || SRC(x, y + 2) == E);
+}
+
+static void scale2x(const uint32_t *src, int pitch, int w, int h, uint32_t *dst, const Dither *dt) {
     int dw = w * 2;
     for (int y = 0; y < h; y++) {
         uint32_t *d0 = dst + (size_t)(y * 2) * dw, *d1 = d0 + dw;
         for (int x = 0; x < w; x++) {
             uint32_t B = SRC(x, y - 1), D = SRC(x - 1, y), E = src[(size_t)y * pitch + x], F = SRC(x + 1, y), H = SRC(x, y + 1);
-            if (B != H && D != F) {
+            if (B != H && D != F && !dithered(dt, x, y)) {
                 d0[x * 2]     = D == B ? D : E;
                 d0[x * 2 + 1] = B == F ? F : E;
                 d1[x * 2]     = D == H ? D : E;
@@ -52,7 +72,7 @@ static void scale2x(const uint32_t *src, int pitch, int w, int h, uint32_t *dst)
     }
 }
 
-static void scale3x(const uint32_t *src, int pitch, int w, int h, uint32_t *dst) {
+static void scale3x(const uint32_t *src, int pitch, int w, int h, uint32_t *dst, const Dither *dt) {
     int dw = w * 3;
     for (int y = 0; y < h; y++) {
         uint32_t *d0 = dst + (size_t)(y * 3) * dw, *d1 = d0 + dw, *d2 = d1 + dw;
@@ -61,7 +81,7 @@ static void scale3x(const uint32_t *src, int pitch, int w, int h, uint32_t *dst)
             uint32_t D = SRC(x - 1, y), E = src[(size_t)y * pitch + x], F = SRC(x + 1, y);
             uint32_t G = SRC(x - 1, y + 1), H = SRC(x, y + 1), I = SRC(x + 1, y + 1);
             uint32_t *o0 = d0 + x * 3, *o1 = d1 + x * 3, *o2 = d2 + x * 3;
-            if (B != H && D != F) {
+            if (B != H && D != F && !dithered(dt, x, y)) {
                 o0[0] = D == B ? D : E;
                 o0[1] = (D == B && E != C) || (B == F && E != A) ? B : E;
                 o0[2] = B == F ? F : E;
@@ -114,13 +134,14 @@ static int xbr_corner(const uint32_t *src, int pitch, int w, int h, int x, int y
 }
 
 /* Rows y0..y1 of the n-times picture (n = 2, 3 or 4, in one pass). */
-static void xbr_rows(const uint32_t *src, int pitch, int w, int h, int n, uint32_t *dst, int y0, int y1) {
+static void xbr_rows(const uint32_t *src, int pitch, int w, int h, int n, uint32_t *dst, int y0, int y1, const Dither *dt) {
     int dw = w * n;
     for (int y = y0; y < y1; y++)
         for (int x = 0; x < w; x++) {
             uint32_t E = src[(size_t)y * pitch + x];
             uint32_t *o = dst + (size_t)(y * n) * dw + x * n;
             for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) o[j * dw + i] = E;
+            if (dithered(dt, x, y)) continue;
             uint32_t L = SRC(x - 1, y), R = SRC(x + 1, y), U = SRC(x, y - 1), Dn = SRC(x, y + 1);
             for (int c = 0; c < 4; c++) {
                 int mx = (c & 1) ? 1 : -1, my = (c & 2) ? 1 : -1;
@@ -138,19 +159,31 @@ static void xbr_rows(const uint32_t *src, int pitch, int w, int h, int n, uint32
         }
 }
 
-static void xbr(const uint32_t *src, int pitch, int w, int h, int n, uint32_t *dst) { xbr_rows(src, pitch, w, h, n, dst, 0, h); }
+static void xbr(const uint32_t *src, int pitch, int w, int h, int n, uint32_t *dst, const Dither *dt) { xbr_rows(src, pitch, w, h, n, dst, 0, h, dt); }
 
 /* Scales w x h pixels (row pitch `pitch`) into dst (w*scale wide, no padding). */
-static void scale_any(const uint32_t *src, int pitch, int w, int h, int scale, uint32_t *dst, uint32_t *tmp) {
-    if (scale == 1) for (int y = 0; y < h; y++) memcpy(dst + (size_t)y * w, src + (size_t)y * pitch, (size_t)w * 4);
-    else if (hd_scaler == 1) {
-        if (scale == 6) { xbr(src, pitch, w, h, 3, tmp); xbr(tmp, w * 3, w * 3, h * 3, 2, dst); }
-        else xbr(src, pitch, w, h, scale, dst);
+/* Sharp: every pixel a plain block, the pixel art exactly as drawn. */
+static void blocks(const uint32_t *src, int pitch, int w, int h, int n, uint32_t *dst) {
+    int dw = w * n;
+    for (int y = 0; y < h; y++) {
+        uint32_t *row = dst + (size_t)(y * n) * dw;
+        for (int x = 0; x < w; x++) for (int i = 0; i < n; i++) row[x * n + i] = src[(size_t)y * pitch + x];
+        for (int j = 1; j < n; j++) memcpy(row + (size_t)j * dw, row, (size_t)dw * 4);
     }
-    else if (scale == 6) { scale3x(src, pitch, w, h, tmp); scale2x(tmp, w * 3, w * 3, h * 3, dst); }
-    else if (scale == 3) scale3x(src, pitch, w, h, dst);
-    else if (scale == 4) { scale2x(src, pitch, w, h, tmp); scale2x(tmp, w * 2, w * 2, h * 2, dst); }
-    else scale2x(src, pitch, w, h, dst);
+}
+
+static void scale_any(const uint32_t *src, int pitch, int w, int h, int scale, uint32_t *dst, uint32_t *tmp) {
+    Dither d1 = { src, pitch, w, h, 1 }, d2 = { src, pitch, w, h, 2 }, d3 = { src, pitch, w, h, 3 };
+    if (scale == 1) for (int y = 0; y < h; y++) memcpy(dst + (size_t)y * w, src + (size_t)y * pitch, (size_t)w * 4);
+    else if (hd_scaler == 2) blocks(src, pitch, w, h, scale, dst);
+    else if (hd_scaler == 1) {
+        if (scale == 6) { xbr(src, pitch, w, h, 3, tmp, &d1); xbr(tmp, w * 3, w * 3, h * 3, 2, dst, &d3); }
+        else xbr(src, pitch, w, h, scale, dst, &d1);
+    }
+    else if (scale == 6) { scale3x(src, pitch, w, h, tmp, &d1); scale2x(tmp, w * 3, w * 3, h * 3, dst, &d3); }
+    else if (scale == 3) scale3x(src, pitch, w, h, dst, &d1);
+    else if (scale == 4) { scale2x(src, pitch, w, h, tmp, &d1); scale2x(tmp, w * 2, w * 2, h * 2, dst, &d2); }
+    else scale2x(src, pitch, w, h, dst, &d1);
 }
 
 /* ---- Motion ----------------------------------------------------------------------- *
@@ -349,23 +382,25 @@ static int scale_job(void *arg) {
 
 static int scaled_with = -1;            /* hd_scaler the cached layers were made with */
 
-typedef struct { const uint32_t *src; uint32_t *dst; int pitch, w, h, scale, y0, y1; } XbrJob;
+typedef struct { const uint32_t *src; uint32_t *dst; int pitch, w, h, scale, y0, y1; Dither dt; } XbrJob;
 
 static int xbr_job(void *arg) {
     XbrJob *j = arg;
-    xbr_rows(j->src, j->pitch, j->w, j->h, j->scale, j->dst, j->y0, j->y1);
+    xbr_rows(j->src, j->pitch, j->w, j->h, j->scale, j->dst, j->y0, j->y1, &j->dt);
     return 0;
 }
 
 /* One xBR pass over the three layers, every layer in bands over all cores. */
-static void xbr_pass(const uint32_t *const src[3], int pitch, int w, int h, int n, uint32_t *const dst[3]) {
+static void xbr_pass(const uint32_t *const src[3], int pitch, int w, int h, int n, uint32_t *const dst[3],
+                     const uint32_t *const orig[3], int k) {
     XbrJob xj[3 * MAX_WORKERS];
     Job jobs[3 * MAX_WORKERS];
     int per = (workers() + 2) / 3, count = 0;
     if (per < 1) per = 1;
     for (int l = 0; l < 3; l++)
-        for (int k = 0; k < per; k++, count++) {
-            xj[count] = (XbrJob){ src[l], dst[l], pitch, w, h, n, h * k / per, h * (k + 1) / per };
+        for (int b = 0; b < per; b++, count++) {
+            xj[count] = (XbrJob){ src[l], dst[l], pitch, w, h, n, h * b / per, h * (b + 1) / per,
+                                  { orig[l], HD_MAX_W, hd_frame.w, hd_frame.h, k } };
             jobs[count] = (Job){ xbr_job, &xj[count] };
         }
     for (int at = 0; at < count; at += MAX_WORKERS) run_jobs(jobs + at, count - at > MAX_WORKERS ? MAX_WORKERS : count - at);
@@ -407,10 +442,10 @@ static void scale_planes(int scale) {
         int w = hd_frame.w, h = hd_frame.h;
         if (scale == 6) {               /* 3x, then 2x of that */
             const uint32_t *mid[3] = { temp[0], temp[1], temp[2] };
-            xbr_pass(layers, HD_MAX_W, w, h, 3, temp);
-            xbr_pass(mid, w * 3, w * 3, h * 3, 2, scaled);
+            xbr_pass(layers, HD_MAX_W, w, h, 3, temp, layers, 1);
+            xbr_pass(mid, w * 3, w * 3, h * 3, 2, scaled, layers, 3);
         } else {
-            xbr_pass(layers, HD_MAX_W, w, h, scale, scaled);
+            xbr_pass(layers, HD_MAX_W, w, h, scale, scaled, layers, 1);
         }
         scaled_gen = hd_serial;
         scaled_scale = scale;
@@ -760,8 +795,33 @@ const uint32_t *hd_sharpen(const uint32_t *src, int w, int h, int pitch, int lev
  * The bright and the strongly coloured pixels (fire, magic, gems, the HUD's gold) are
  * gathered into a picture an eighth the size, blurred at two sizes, and laid over the
  * picture with a screen blend, so they glow into their surroundings. The glow is made
- * once per game frame, not for every in-between picture. */
-typedef struct { const uint32_t *src; uint32_t *dst; int w, h, pitch, y0, y1; } PostJob;
+ * once per game frame, not for every in-between picture.
+ *
+ * Neon (level 3) gathers the scenery's saturated, bright colours instead (signs, lamp
+ * bulbs, lit windows) whatever their brightness, and never the characters (sprites) or
+ * the HUD (the window), so a red jacket does not glow; the glow is wider and stronger,
+ * and buzzes and now and then flickers like a neon tube. */
+typedef struct { const uint32_t *src; uint32_t *dst; int w, h, pitch, y0, y1; bool light; int hdr; float k; } PostJob;
+
+/* ---- HDR look ------------------------------------------------------------------------ *
+ * The picture's range stretched the way an HDR grade does it on an ordinary screen:
+ * shadows pressed down, highlights lifted (an S curve that keeps black and white where
+ * they are), and the muted colours made richer while the already vivid ones are left
+ * alone (vibrance), so neon and fire stand out against the night. */
+static inline float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+static uint8_t hdr_curve[3][256];       /* [strength 1-2][value] */
+
+static void make_hdr_curve(void) {
+    if (hdr_curve[1][255]) return;
+    for (int k = 1; k <= 2; k++)
+        for (int i = 0; i < 256; i++) {
+            float x = i / 255.f, a = k == 2 ? .55f : .35f;
+            float sc = x * x * (3 - 2 * x);                 /* smoothstep: the S */
+            float y = x + (sc - x) * a;
+            y = powf(y, k == 2 ? 1.08f : 1.04f);            /* a little deeper in the shadows */
+            hdr_curve[k][i] = (uint8_t)(clamp01(y) * 255 + .5f);
+        }
+}
 
 static float *bloom, *bloom_tmp;
 static int bloom_w, bloom_h, bloom_f;
@@ -798,7 +858,15 @@ static void blur_bloom(float *img, int r) {
     }
 }
 
-static void make_bloom(const uint32_t *src, int w, int h, int pitch, int level) {
+/* Is picture pixel (x, y) scenery: no character's sprite and not the HUD on top? */
+static bool scenery_at(int x, int y, int scale) {
+    int gx = x / scale, gy = y / scale;
+    if (gy < 0 || gy >= hd_frame.h || gx < 0 || gx >= hd_frame.w) return true;
+    if ((hd_frame.s[gy][gx] >> 16) & 0x0F) return false;
+    return !((hd_frame.a[gy][gx] >> 16) & HD_WINDOW);
+}
+
+static void make_bloom(const uint32_t *src, int w, int h, int pitch, int level, int scale) {
     int f = w / 160 > 1 ? w / 160 : 1;
     int bw = (w + f - 1) / f, bh = (h + f - 1) / f;
     if (bw != bloom_w || bh != bloom_h || f != bloom_f) {
@@ -823,6 +891,10 @@ static void make_bloom(const uint32_t *src, int w, int h, int pitch, int level) 
                      * Sunlit ground is bright but neither, so a daylight scene does not wash out. */
                     float vivid = (mx - mn) * mx;
                     float glow = fmaxf((lum - threshold) / (1 - threshold), (vivid - .5f) / .5f) * (mx > .6f);
+                    if (level == 3) {   /* neon: saturated and bright scenery */
+                        float sat = mx > 0 ? (mx - mn) / mx : 0;
+                        glow = sat > .45f && mx > .55f && scenery_at(x, y, scale) ? (sat - .45f) / .55f * (mx - .4f) / .6f * 1.35f : 0;
+                    }
                     if (glow > 0) { acc[0] += r * glow; acc[1] += g * glow; acc[2] += b * glow; }
                     n++;
                 }
@@ -834,8 +906,13 @@ static void make_bloom(const uint32_t *src, int w, int h, int pitch, int level) 
     memcpy(wide, bloom, sizeof(float) * 3 * (size_t)bw * bh);
     blur_bloom(bloom, 1);
     blur_bloom(wide, 5);
-    for (size_t i = 0; i < (size_t)3 * bw * bh; i++) bloom[i] = bloom[i] * .6f + wide[i] * 1.1f;
-    light_k = level >= 2 ? .75f : .45f;
+    if (level == 3) {                   /* neon: a wider, stronger halo */
+        blur_bloom(wide, 4);
+        for (size_t i = 0; i < (size_t)3 * bw * bh; i++) bloom[i] = bloom[i] * .8f + wide[i] * 1.35f;
+    } else {
+        for (size_t i = 0; i < (size_t)3 * bw * bh; i++) bloom[i] = bloom[i] * .6f + wide[i] * 1.1f;
+    }
+    light_k = level == 3 ? .85f : level >= 2 ? .75f : .45f;
 }
 
 static int *col_x0, *col_x1;            /* per picture column: the two glow cells it lies between */
@@ -858,7 +935,9 @@ static void make_columns(int w) {
 
 static int post_rows(void *arg) {
     const PostJob *j = arg;
-    int f = bloom_f, bw = bloom_w, bh = bloom_h;
+    int f = bloom_f > 0 ? bloom_f : 1, bw = bloom_w, bh = bloom_h;
+    const uint8_t *curve = hdr_curve[j->hdr];
+    float vib = j->hdr == 2 ? .55f : .35f;
     for (int y = j->y0; y < j->y1; y++) {
         const uint32_t *s = j->src + (size_t)y * j->pitch;
         uint32_t *o = j->dst + (size_t)y * j->w;
@@ -868,7 +947,17 @@ static int post_rows(void *arg) {
         y0 = y0 < 0 ? 0 : y0 >= bh ? bh - 1 : y0; y1 = y1 < 0 ? 0 : y1 >= bh ? bh - 1 : y1;
         for (int x = 0; x < j->w; x++) {
             uint32_t p = s[x];
+            if (j->hdr) p = (uint32_t)(curve[(p >> 16) & 255] << 16 | curve[(p >> 8) & 255] << 8 | curve[p & 255]);
             float r = ((p >> 16) & 255) * (1 / 255.f), g = ((p >> 8) & 255) * (1 / 255.f), b = (p & 255) * (1 / 255.f);
+            if (j->hdr) {                   /* vibrance: more colour where there is little */
+                float mx = fmaxf(r, fmaxf(g, b)), mn = fminf(r, fminf(g, b)), avg = (r + g + b) / 3;
+                float sat = mx > 0 ? (mx - mn) / mx : 0, kv = 1 + vib * (1 - sat);
+                r = clamp01(avg + (r - avg) * kv); g = clamp01(avg + (g - avg) * kv); b = clamp01(avg + (b - avg) * kv);
+            }
+            if (!j->light) {
+                o[x] = (uint32_t)((int)(r * 255 + .5f) << 16 | (int)(g * 255 + .5f) << 8 | (int)(b * 255 + .5f));
+                continue;
+            }
             int x0 = col_x0[x], x1 = col_x1[x];
             float tx = col_tx[x];
             const float *a = bloom + ((size_t)y0 * bw + x0) * 3, *bb = bloom + ((size_t)y0 * bw + x1) * 3;
@@ -876,7 +965,7 @@ static int post_rows(void *arg) {
             float l[3];
             for (int k = 0; k < 3; k++) {
                 float top = a[k] + (bb[k] - a[k]) * tx, bot = c[k] + (d[k] - c[k]) * tx;
-                l[k] = fminf((top + (bot - top) * ty) * light_k, 1);
+                l[k] = fminf((top + (bot - top) * ty) * j->k, 1);
             }
             r = 1 - (1 - r) * (1 - l[0]); g = 1 - (1 - g) * (1 - l[1]); b = 1 - (1 - b) * (1 - l[2]);
             o[x] = (uint32_t)((int)(r * 255 + .5f) << 16 | (int)(g * 255 + .5f) << 8 | (int)(b * 255 + .5f));
@@ -896,7 +985,8 @@ const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPo
     static size_t cap;
     bool light = p->lighting > 0;
     bool world_fx = p->world && (p->elements || p->footsteps || combat_active(p));
-    if (light || world_fx) {
+    int hdr = p->hdr < 0 ? 0 : p->hdr > 2 ? 2 : p->hdr;
+    if (light || world_fx || hdr) {
         size_t need = (size_t)w * h;
         if (need > cap) { free(buf); buf = malloc(need * 4); cap = buf ? need : 0; }
         if (buf) {
@@ -904,11 +994,19 @@ const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPo
                 static unsigned made_for;
                 static int made_w, made_level;
                 if (made_for != hd_serial || made_w != w || made_level != p->lighting) {
-                    make_bloom(src, w, h, pitch, p->lighting);   /* once per game frame */
+                    make_bloom(src, w, h, pitch, p->lighting, p->scale);   /* once per game frame */
                     made_for = hd_serial; made_w = w; made_level = p->lighting;
                 }
                 make_columns(w);
-                PostJob pj = { src, buf, w, h, pitch, 0, 0 };
+            }
+            if (light || hdr) {
+                if (hdr) make_hdr_curve();
+                float k = light_k;
+                if (p->lighting == 3) {         /* neon: a slow buzz, and now and then a flicker */
+                    k *= .94f + .06f * sinf(p->t * 7.3f);
+                    if (hash32((uint32_t)(p->t * 24)) % 160 == 0) k *= .55f;
+                }
+                PostJob pj = { src, buf, w, h, pitch, 0, 0, light, hdr, k };
                 run_bands(post_part, &pj, h);
             } else {
                 for (int y = 0; y < h; y++) memcpy(buf + (size_t)y * w, src + (size_t)y * pitch, (size_t)w * 4);

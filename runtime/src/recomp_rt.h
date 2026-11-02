@@ -9,7 +9,11 @@
 #include "genesis.h"
 
 extern unsigned char m68ki_cycles[][0x10000];
-#define CYC(op) USE_CYCLES(m68ki_cycles[0][op])
+/* An instruction's cycles are charged before its body runs, where the interpreter charges
+ * them after; recomp_charged keeps them, so a VDP status or HV read inside the instruction
+ * sees the same point in the line as the interpreter (machine_cycles_in_line). */
+extern int recomp_charged;
+#define CYC(op) (recomp_charged = m68ki_cycles[0][op], USE_CYCLES(recomp_charged))
 
 #define D(n) REG_D[n]
 #define BAIL 0x80000000u                /* returned with a PC: interpret this instruction */

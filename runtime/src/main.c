@@ -166,6 +166,7 @@ static HdPost finishing(int scale, float t) {
     const uint8_t *layer = bus.ram + 0x1716;
     HdPost p = { settings.sharpen, settings.lighting, settings.elements, settings.footsteps,
                  false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
+    p.hdr = settings.hdr;
     p.world = (layer[0x27] & 1) && !vdp_opts.mask_sides;
     p.cam_x = (float)(int16_t)(layer[0] << 8 | layer[1]);
     p.cam_y = (float)(int16_t)(layer[4] << 8 | layer[5]);
@@ -232,6 +233,19 @@ static void play_menu_sound(int kind) {
 }
 
 /* Largest rectangle with the game's display aspect that fits the window. */
+/* The window for Window N×: N times the game's size, or the largest whole N that fits the
+ * screen's usable area (without the taskbar, and leaving room for the title bar), so a big
+ * N on a small screen is never cut off. */
+static void window_size(int *w, int *h) {
+    SDL_Rect area;
+    int room_w = 1 << 30, room_h = 1 << 30;
+    if (SDL_GetDisplayUsableBounds(0, &area) == 0) { room_w = area.w; room_h = area.h - 40; }
+    int s = settings.window_scale;
+    while (s > 1 && (frame_width() * s * 15 / 14 > room_w || 224 * s > room_h)) s--;
+    *w = frame_width() * s * 15 / 14;
+    *h = 224 * s;
+}
+
 static SDL_Rect display_rect(int win_w, int win_h) {
     int fw = frame_width(), fh = vdp_screen_height();
     double par = (4.0 / 3.0) / (320.0 / 224.0);
@@ -330,6 +344,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--widescreen") && i + 1 < argc) { settings.widescreen = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--overclock") && i + 1 < argc) { settings.overclock = atoi(argv[++i]); test_overrides = true; }   /* percent */
         else if (!strcmp(argv[i], "--sharpen") && i + 1 < argc) { settings.sharpen = atoi(argv[++i]) & 3; test_overrides = true; }   /* 0-3 */
+        else if (!strcmp(argv[i], "--hdr") && i + 1 < argc) { settings.hdr = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--lighting") && i + 1 < argc) { settings.lighting = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--elements") && i + 1 < argc) { settings.elements = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--footsteps") && i + 1 < argc) { settings.footsteps = atoi(argv[++i]) != 0; test_overrides = true; }
@@ -339,7 +354,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--water") && i + 1 < argc) { settings.water = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--texture-pack") && i + 1 < argc) { snprintf(settings.texture_pack, sizeof settings.texture_pack, "%s", argv[++i]); test_overrides = true; }
         else if (!strcmp(argv[i], "--dump-tiles") && i + 1 < argc) { settings.dump_tiles = atoi(argv[++i]) != 0; test_overrides = true; }
-        else if (!strcmp(argv[i], "--scaler") && i + 1 < argc) { settings.scaler = atoi(argv[++i]) != 0; test_overrides = true; }   /* 0 edge, 1 smooth */
+        else if (!strcmp(argv[i], "--scaler") && i + 1 < argc) { settings.scaler = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0 edge, 1 smooth, 2 sharp */
         else if (!strcmp(argv[i], "--audio") && i + 1 < argc) { settings.audio = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--volume") && i + 1 < argc) { settings.volume = atoi(argv[++i]); test_overrides = true; }   /* 0-100 */
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) { settings.filter = atoi(argv[++i]) % FILTER_COUNT; test_overrides = true; }   /* 0 off, 1 scanlines, 2 CRT, 3 LCD */
@@ -802,8 +817,9 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    SDL_Window *win = SDL_CreateWindow("Beyond Oasis", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                       frame_width() * settings.window_scale * 15 / 14, 224 * settings.window_scale,
+    int start_w, start_h;
+    window_size(&start_w, &start_h);
+    SDL_Window *win = SDL_CreateWindow("Beyond Oasis", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, start_w, start_h,
                                        SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
                                        (settings.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);

@@ -71,8 +71,9 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "volume")) settings.volume = atoi(v);
         else if (!strcmp(k, "ost_mode")) settings.ost_mode = atoi(v);
         else if (!strcmp(k, "sharpen")) settings.sharpen = atoi(v);
-        else if (!strcmp(k, "scaler")) settings.scaler = !strcmp(v, "smooth");
+        else if (!strcmp(k, "scaler")) settings.scaler = !strcmp(v, "smooth") ? 1 : !strcmp(v, "sharp") ? 2 : 0;
         else if (!strcmp(k, "lighting")) settings.lighting = atoi(v);
+        else if (!strcmp(k, "hdr_look")) settings.hdr = atoi(v);
         else if (!strcmp(k, "elements")) settings.elements = parse_bool(v);
         else if (!strcmp(k, "footsteps")) settings.footsteps = parse_bool(v);
         else if (!strcmp(k, "water")) settings.water = parse_bool(v);
@@ -105,6 +106,7 @@ void settings_load(const char *path) {
     if (settings.ost_mode < 0 || settings.ost_mode >= OST_MODE_COUNT) settings.ost_mode = OST_MODE_ALL;
     if (settings.sharpen < 0 || settings.sharpen > 3) settings.sharpen = 0;
     if (settings.lighting < 0 || settings.lighting > 2) settings.lighting = 0;
+    if (settings.hdr < 0 || settings.hdr > 2) settings.hdr = 0;
     if (settings.audio < 0 || settings.audio > 2) settings.audio = 0;
     if (settings.cheat_attack < 0 || settings.cheat_attack > 3) settings.cheat_attack = 0;
     if (settings.cheat_speed < 0 || settings.cheat_speed > 2) settings.cheat_speed = 0;
@@ -140,8 +142,9 @@ void settings_save(const char *path) {
     fprintf(f, "volume=%d\n", settings.volume);
     fprintf(f, "ost_mode=%d\n", settings.ost_mode);
     fprintf(f, "sharpen=%d\n", settings.sharpen);
-    fprintf(f, "scaler=%s\n", settings.scaler ? "smooth" : "edge");
+    fprintf(f, "scaler=%s\n", settings.scaler == 2 ? "sharp" : settings.scaler ? "smooth" : "edge");
     fprintf(f, "lighting=%d\n", settings.lighting);
+    fprintf(f, "hdr_look=%d\n", settings.hdr);
     fprintf(f, "elements=%d\n", settings.elements);
     fprintf(f, "footsteps=%d\n", settings.footsteps);
     fprintf(f, "water=%d\n", settings.water);
@@ -203,7 +206,8 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_MUSIC:      snprintf(out, n, "%s", settings.launcher_music ? "On" : "Off"); break;
     case OPT_OST_MODE:   snprintf(out, n, "%s", ost_modes[settings.ost_mode]); break;
     case OPT_SHARPEN:    snprintf(out, n, "%s", sharpen_names[settings.sharpen]); break;
-    case OPT_SCALER:     snprintf(out, n, "%s", settings.scaler ? "Smooth (xBR)" : "Edge"); break;
+    case OPT_SCALER:     snprintf(out, n, "%s", settings.scaler == 2 ? "Sharp" : settings.scaler ? "Smooth (xBR)" : "Edge"); break;
+    case OPT_HDR:        snprintf(out, n, "%s", settings.hdr == 2 ? "Strong" : settings.hdr ? "On" : "Off"); break;
     case OPT_LIGHTING:   snprintf(out, n, "%s", settings.lighting == 2 ? "Bright" : settings.lighting ? "Soft" : "Off"); break;
     case OPT_ELEMENTS:   snprintf(out, n, "%s", settings.elements ? "On" : "Off"); break;
     case OPT_FOOTSTEPS:  snprintf(out, n, "%s", settings.footsteps ? "On" : "Off"); break;
@@ -315,7 +319,8 @@ void settings_option_change(int id, int dir) {
     case OPT_MUSIC:    settings.launcher_music = !settings.launcher_music; break;
     case OPT_OST_MODE: settings.ost_mode = settings_cycle(settings.ost_mode, OST_MODE_COUNT, dir); break;
     case OPT_SHARPEN:  settings.sharpen = settings_cycle(settings.sharpen, 4, dir); break;
-    case OPT_SCALER:   settings.scaler = !settings.scaler; break;
+    case OPT_SCALER:   settings.scaler = settings_cycle(settings.scaler, 3, dir); break;
+    case OPT_HDR:      settings.hdr = settings_cycle(settings.hdr, 3, dir); break;
     case OPT_LIGHTING: settings.lighting = settings_cycle(settings.lighting, 3, dir); break;
     case OPT_ELEMENTS: settings.elements = !settings.elements; break;
     case OPT_FOOTSTEPS: settings.footsteps = !settings.footsteps; break;

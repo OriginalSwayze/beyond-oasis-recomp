@@ -38,7 +38,7 @@ static const Item tab_items[TABS][MAX_ROWS] = {
       { ITEM_OPTION, "Scaler", OPT_SCALER }, { ITEM_OPTION, "Filter", OPT_FILTER },
       { ITEM_OPTION, "Sharpening", OPT_SHARPEN }, { ITEM_OPTION, "Smooth motion", OPT_SMOOTH },
       { ITEM_OPTION, "Sprite flicker fix", OPT_FLICKER }, { ITEM_OPTION, "Slowdown fix", OPT_OVERCLOCK } },
-    { { ITEM_OPTION, "Lighting", OPT_LIGHTING }, { ITEM_OPTION, "Spirit effects", OPT_ELEMENTS },
+    { { ITEM_OPTION, "Lighting", OPT_LIGHTING }, { ITEM_OPTION, "HDR look", OPT_HDR }, { ITEM_OPTION, "Spirit effects", OPT_ELEMENTS },
       { ITEM_OPTION, "Water", OPT_WATER }, { ITEM_OPTION, "Footsteps", OPT_FOOTSTEPS },
       { ITEM_OPTION, "Combat info", OPT_COMBAT } },
     { { ITEM_OPTION, "Infinite health", OPT_CHEAT_HEALTH }, { ITEM_OPTION, "Infinite spirit", OPT_CHEAT_SPIRIT },
@@ -49,7 +49,7 @@ static const Item tab_items[TABS][MAX_ROWS] = {
       { ITEM_OPTION, "Rumble", OPT_RUMBLE }, { ITEM_OPTION, "Play timer", OPT_TIMER },
       { ITEM_OPTION, "Texture pack", OPT_TEXPACK }, { ITEM_OPTION, "Dump tiles", OPT_DUMP } },
 };
-static const int tab_count[TABS] = { 9, 10, 5, 6, 8 };
+static const int tab_count[TABS] = { 9, 10, 6, 6, 8 };
 
 /* What each option and action does, for the card on the right. */
 static const char *about(const Item *it) {
@@ -69,7 +69,8 @@ static const char *about(const Item *it) {
     case OPT_ASPECT: return "The shape of the widescreen picture.";
     case OPT_INTEGER: return "Scales by whole numbers only, so every game pixel is the same size (black borders around the picture).";
     case OPT_INTERNAL: return "Draws each layer at a higher resolution, rounding the edges of the pixel art. Native is the original look; 6x (2544 x 1344) is for 1440p and 4K screens and needs a fast CPU.";
-    case OPT_SCALER: return "How the layers are scaled for the internal resolution: Edge rounds corners, Smooth (xBR) follows curves and slopes.";
+    case OPT_SCALER: return "How the layers are scaled for the internal resolution: Edge rounds corners, Smooth (xBR) follows curves and slopes, Sharp keeps every pixel square, exactly as drawn. Edge and Smooth leave dither patterns crisp.";
+    case OPT_HDR: return "A high-dynamic-range grade for any screen: deeper shadows, brighter highlights and richer colour, so fire, magic and gems stand out. Strong goes further.";
     case OPT_FILTER: return "Scanlines, a curved CRT tube or an LCD grid laid over the picture, like the screens of the time.";
     case OPT_SHARPEN: return "Crisper edges after scaling, without halos: soft edges are sharpened, hard pixel edges are left alone.";
     case OPT_SMOOTH: return "The game moves things 30 times a second; this draws each sprite between its moves, so motion is fluid on fast screens.";

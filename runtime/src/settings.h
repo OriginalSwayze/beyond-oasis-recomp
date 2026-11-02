@@ -16,8 +16,9 @@ typedef struct {
     bool smooth_motion;                 /* draw between the game's 30 Hz ticks (hd.c, motion.c) */
     int  filter;                        /* FILTER_* (filter.h): off, scanlines, CRT, LCD */
     int  sharpen;                       /* sharpening: 0 off, 1 light, 2 medium, 3 strong (hd_sharpen) */
-    int  scaler;                        /* layer scaler: 0 edge (Scale2x/3x), 1 smooth (xBR rules) */
+    int  scaler;                        /* layer scaler: 0 edge (Scale2x/3x), 1 smooth (xBR rules), 2 sharp (plain blocks) */
     int  lighting;                      /* glow of bright pixels: 0 off, 1 soft, 2 bright (hd_post) */
+    int  hdr;                           /* HDR look: 0 off, 1 on, 2 strong (hd_post) */
     bool elements;                      /* particles from spirits and magic (fx.c) */
     bool footsteps;                     /* dust, grass and splashes where Ali walks (fx.c) */
     bool water;                         /* water shimmers, foams, glints and reflects (hd_water) */
@@ -67,7 +68,7 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_MUSIC, OPT_OST_MODE,          /* launcher music on/off, soundtrack player mode */
        OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AUDIO, OPT_ELEMENTS, OPT_FOOTSTEPS, OPT_WATER,
        OPT_TEXPACK, OPT_DUMP,
-       OPT_COMBAT, OPT_RUMBLE, OPT_FAST, OPT_TIMER, OPT_RANDOMIZER };
+       OPT_COMBAT, OPT_RUMBLE, OPT_FAST, OPT_TIMER, OPT_RANDOMIZER, OPT_HDR };
 enum { OST_MODE_ALL, OST_MODE_REPEAT, OST_MODE_SHUFFLE, OST_MODE_COUNT };
 void settings_set_volume_fraction(float v);         /* sets volume from a slider (0-1), in steps of 5 */                    /* all three cheats as presets: Off, Health, Health + spirit, All */
 void settings_option_text(int id, char *out, size_t n);

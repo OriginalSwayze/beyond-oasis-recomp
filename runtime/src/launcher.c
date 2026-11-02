@@ -586,9 +586,10 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Filter", OPT_FILTER, "Scanlines, a curved CRT tube or an LCD grid over the picture." },
       { ROW_OPTION, "Sharpening", OPT_SHARPEN, "Crisper edges after scaling, without halos (contrast-adaptive)." },
       { ROW_OPTION, "Internal resolution", OPT_INTERNAL, "Redraws each layer at a higher resolution; 6x (4K) needs a fast CPU." },
-      { ROW_OPTION, "Scaler", OPT_SCALER, "Edge rounds corners; Smooth follows curves and slopes (xBR)." },
+      { ROW_OPTION, "Scaler", OPT_SCALER, "Edge rounds corners; Smooth follows curves (xBR); Sharp keeps pixels square." },
       { ROW_OPTION, "Texture pack", OPT_TEXPACK, "High-resolution tile replacements from a folder in texture_packs." } },
     { { ROW_OPTION, "Lighting", OPT_LIGHTING, "Fire, magic and bright light glow into their surroundings." },
+      { ROW_OPTION, "HDR look", OPT_HDR, "Deeper shadows, brighter highlights, richer colour." },
       { ROW_OPTION, "Spirit effects", OPT_ELEMENTS, "The spirits and their magic give off embers, drops, wisps or leaves." },
       { ROW_OPTION, "Water", OPT_WATER, "Water swells, foams at the shore, glints and reflects what stands above it." },
       { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." },
@@ -612,7 +613,7 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Move speed", OPT_CHEAT_SPEED, "Ali moves 1.5x or 2x as fast; walls still stop him." },
       { ROW_OPTION, "Randomizer", OPT_RANDOMIZER, "Chests and drops give other items; keys and upgrades stay put." } },
 };
-static const int tab_count[TABS] = { 9, 5, 9, 5, 6 };
+static const int tab_count[TABS] = { 9, 6, 9, 5, 6 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define CASE_X 84                       /* the steelbook */

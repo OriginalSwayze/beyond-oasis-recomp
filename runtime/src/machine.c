@@ -23,9 +23,11 @@ static int overrun;                     /* cycles the last run() went past its b
  * coverage.bin so the static tracer can learn code it could not find alone. */
 uint8_t coverage[ROM_SIZE / 16];
 
+int recomp_charged;                     /* native code: the current instruction's cycles, charged early */
+
 /* Position in the line in real 68000 clocks (overclocked cycles count proportionally less). */
 int machine_cycles_in_line(void) {
-    return line_cycle_base + (seg_done + piece_start - m68ki_remaining_cycles) * 100 / machine_opts.overclock;
+    return line_cycle_base + (seg_done + piece_start - m68ki_remaining_cycles - recomp_charged) * 100 / machine_opts.overclock;
 }
 
 /* ---- Recompiled code dispatch ----------------------------------------------
@@ -175,6 +177,7 @@ static void verify_hook(uint32_t pc) {
     snap_take(snap_before);
     irq_taken = false;
     uint32_t ret = fn(pc), exit = ret & 0xFFFFFF;
+    recomp_charged = 0;                 /* the interpreter runs the block next */
     bool usable = !(ret & BAIL) && !irq_taken; /* no bail, and no interrupt taken by an SR change */
     if (usable) snap_take(snap_native);
     snap_restore(snap_before);
@@ -263,6 +266,7 @@ static void run(int cycles) {
                     if (ret & BAIL) break;
                     fn = REG_PC < ROM_SIZE ? recomp_fn[REG_PC >> 1] : NULL;
                 }
+                recomp_charged = 0;
                 seg_done += piece_start - m68ki_remaining_cycles;
                 stat_native_cycles += (uint64_t)(piece_start - m68ki_remaining_cycles);
                 cpu_clock += (uint64_t)(piece_start - m68ki_remaining_cycles);

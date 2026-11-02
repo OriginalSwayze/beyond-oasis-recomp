@@ -88,7 +88,7 @@ extern bool hd_water;
  * particles, sharpening. */
 typedef struct {
     int   sharpen;                      /* 0-3 */
-    int   lighting;                     /* 0 off, 1 soft, 2 bright: bright pixels glow */
+    int   lighting;                     /* 0 off, 1 soft, 2 bright: bright pixels glow; 3 neon: the scenery's neon */
     bool  elements;                     /* particles from the spirits and their magic (fx.c) */
     bool  footsteps;                    /* dust, grass and splashes where Ali walks (fx.c) */
     bool  world;                        /* the picture shows the game world (not a menu or story scene) */
@@ -96,6 +96,7 @@ typedef struct {
     float t;                            /* seconds, for animations */
     int   scale;                        /* picture pixels per game pixel */
     int   extra;                        /* widescreen game pixels on each side */
+    int   hdr;                          /* HDR look: 0 off, 1 on, 2 strong */
 } HdPost;
 /* Returns the finished picture (row pitch w): src itself when nothing is on, else a copy
  * valid until the next call. */
