@@ -8,6 +8,7 @@
  * launcher_art.cache next to the executable. Everything is drawn in software into one
  * ui_px (also used for headless screenshots), at the window's pixel scale. */
 #include "launcher.h"
+#include "game.h"
 #include "ost.h"
 #include "launcher_scene.h"
 #include "pads.h"
@@ -40,7 +41,7 @@ static Art armlet, logo;
 
 #define ART_MAGIC    0x34524142u       /* cache file tag (bump when the capture changes) */
 
-static char cache_path[1100];
+static char cache_path[1100], launcher_base[1024];
 
 static void art_free(Art *a) { free(a->rgb); free(a->mask); memset(a, 0, sizeof *a); }
 
@@ -93,6 +94,16 @@ static bool title_shown(const uint32_t *fb, int *last) {
     return gold > 900 && teal > 25000 && still;
 }
 
+/* The title screen by the game's own state, in every version (their title screens differ):
+ * $FF00FF goes from 3 (the intro) to 2, and $FF189B holds 8 while the title is up, for a
+ * few checks so its fade-in has begun. */
+static bool title_reached(const uint32_t *fb, int *last) {
+    (void)fb;
+    bool on = bus.ram[0x00FF] == 2 && bus.ram[0x189B] == 8;
+    *last = on ? (*last < 0 ? 1 : *last + 1) : 0;
+    return *last >= 6;
+}
+
 /* Runs the game until `shown` accepts a frame (checked every few frames), pressing Start
  * every `press_every` frames if nonzero. Returns false if it never appears. */
 static bool run_until(uint32_t *fb, bool (*shown)(const uint32_t *, int *), int press_every, int limit) {
@@ -131,8 +142,9 @@ static bool art_load_cache(void) {
     for (int i = 0; ok && i < 2; i++) {
         Art *a = arts[i];
         art_free(a);
-        ok = fread(&a->w, 4, 1, f) == 1 && fread(&a->h, 4, 1, f) == 1 && a->w > 0 && a->h > 0 && a->w <= 320 && a->h <= 224;
+        ok = fread(&a->w, 4, 1, f) == 1 && fread(&a->h, 4, 1, f) == 1 && a->w >= 0 && a->h >= 0 && a->w <= 320 && a->h <= 224;
         if (!ok) break;
+        if (!a->w || !a->h) { ok = a == &logo; a->w = a->h = 0; continue; }   /* no logo: lettered */
         a->rgb = malloc((size_t)a->w * a->h * 4);
         a->mask = malloc((size_t)a->w * a->h);
         ok = fread(a->rgb, 4, (size_t)a->w * a->h, f) == (size_t)a->w * a->h &&
@@ -157,7 +169,9 @@ static void art_capture(void) {
     machine_reset();
     if (run_until(fb, armlet_shown, 0, 2400)) art_crop(&armlet, fb, 320, is_lit, 224);
     machine_reset();
-    if (run_until(fb, title_shown, 100, 3000)) {
+    /* The lettering of the USA title screen; the others' title screens are different
+     * pictures, and the case letters their titles instead (game->title). */
+    if (!strcmp(game->id, "us") && run_until(fb, title_shown, 100, 3000)) {
         /* Find the lettering by its gold, then take whole letterforms inside that box. */
         Art gold = { 0 };
         art_crop(&gold, fb, 320, is_gold, 140);
@@ -185,7 +199,7 @@ static void art_capture(void) {
     vdp_opts.mask_sides = mask;
     widescreen_patches(extra);
     pad_state[0] = 0;
-    if (armlet.w && logo.w) art_save_cache();
+    if (armlet.w && (logo.w || strcmp(game->id, "us"))) art_save_cache();
 }
 
 static bool rom_ok;
@@ -194,6 +208,9 @@ static void art_prepare(void) {
     art_free(&armlet); art_free(&logo);
     rom_ok = settings.rom_path[0] && !bus_load_rom(settings.rom_path);
     if (!rom_ok) return;
+    char own[64];                       /* each version's own title art */
+    game_file_name(own, sizeof own, "launcher_art.cache");
+    snprintf(cache_path, sizeof cache_path, "%s%s", launcher_base, own);
     if (!art_load_cache()) art_capture();
 }
 
@@ -238,7 +255,7 @@ static struct {
 static uint32_t note_song(uint32_t pc) {
     (void)pc;
     if ((D(0) & 0xFF00) == 0x0100) title_song = (int)(D(0) & 0xFF);
-    return 0x06042A;                    /* on to the driver, as `bra` at $060004 does */
+    return game->driver_cmd_go;         /* on to the driver, as the `bra` at driver_cmd does */
 }
 
 static bool music_to_title(void) {
@@ -246,9 +263,9 @@ static bool music_to_title(void) {
     widescreen_patches(0);
     memset(bus.sram, 0xFF, SRAM_SIZE);
     machine_reset();
-    machine_override(0x060004, note_song);
-    bool ok = run_until(music_fb, title_shown, 100, 3000);
-    machine_override(0x060004, NULL);
+    machine_override(game->driver_cmd, note_song);
+    bool ok = run_until(music_fb, title_reached, 100, 3000);
+    machine_override(game->driver_cmd, NULL);
     return ok;
 }
 
@@ -593,15 +610,16 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Spirit effects", OPT_ELEMENTS, "The spirits and their magic give off embers, drops, wisps or leaves." },
       { ROW_OPTION, "Water", OPT_WATER, "Water swells, foams at the shore, glints and reflects what stands above it." },
       { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." },
-      { ROW_OPTION, "Combat info", OPT_COMBAT, "Damage numbers rise from enemies; health bars show what they have left." } },
-    { { ROW_ROM, "ROM", 0, "Your Beyond Oasis (USA) cartridge file." },
+      { ROW_OPTION, "Combat info", OPT_COMBAT, "Damage numbers rise from enemies; health bars show what they have left." },
+      { ROW_OPTION, "Rumble", OPT_RUMBLE, "The controller rumbles on hits, kills, when Ali is hit and on summons." } },
+    { { ROW_ROM, "ROM", 0, "Your cartridge file. Add another country's to play in its language." },
+      { ROW_OPTION, "Language", OPT_LANGUAGE, "The version of the game played: each country's cartridge has its own language." },
       { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
       { ROW_OPTION, "Sprite flicker fix", OPT_FLICKER, "Lifts the hardware's sprites-per-line limit, so nothing flickers." },
       { ROW_OPTION, "Slowdown fix", OPT_OVERCLOCK, "A faster 68000, so busy scenes no longer slow down." },
       { ROW_OPTION, "Rewind", OPT_REWIND_ALL, "Hold the rewind key to step back in time." },
       { ROW_CONTROLS, "Controls", 0, "Keyboard keys and controller buttons for every action." },
       { ROW_OUTFIT, "Ali's outfit", 0, "Colours and animations for his clothes, hair, skin and jewellery." },
-      { ROW_OPTION, "Rumble", OPT_RUMBLE, "The controller rumbles on hits, kills, when Ali is hit and on summons." },
       { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER, "Off starts the game directly (show_launcher=1 in settings.ini brings it back)." } },
     { { ROW_OPTION, "Launcher music", OPT_MUSIC, NULL }, { ROW_TRACK, "Track", 0, NULL },
       { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL },
@@ -618,7 +636,7 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Merged finishing pass", OPT_MERGED, "The CPU's effects in one pass over the picture." },
       { ROW_OPTION, "AVX2 pixel loops", OPT_AVX2, "Eight pixels at a time, on CPUs that have AVX2." } },
 };
-static const int tab_count[TABS] = { 9, 6, 9, 5, 6, 5 };
+static const int tab_count[TABS] = { 9, 7, 9, 5, 6, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define CASE_X 84                       /* the steelbook */
@@ -1016,7 +1034,11 @@ static void build_case(void) {
     float cx = CASE_X + CASE_W / 2.f, foot = CASE_Y + CASE_H - 92;
     foil_frame(&case_surf, 18, 8);
     float bottom = logo.w ? foil_art(&case_surf, &logo, cx, CASE_Y + 46, 320, FOIL_GOLD, 1.0f, .7f) : CASE_Y + 150;
-    if (!logo.w) foil_text(&case_surf, "BEYOND OASIS", "Palatino Linotype", 44, 700, 6, cx, CASE_Y + 110, -.9f, FOIL_GOLD);
+    if (!logo.w) {                      /* the version's title, smaller for the longer ones */
+        int len = (int)strlen(game ? game->title : "BEYOND OASIS");
+        foil_text(&case_surf, game ? game->title : "BEYOND OASIS", "Palatino Linotype", len > 12 ? 44 * 12 / len : 44, 700,
+                  len > 12 ? 4 : 6, cx, CASE_Y + 110, -.9f, FOIL_GOLD);
+    }
     float room = foot - 24 - (bottom + 26);               /* the armlet fills the space down to the rule */
     float width = armlet.w ? fminf(350, room * armlet.w / (float)armlet.h) : 0;
     if (armlet.w) foil_art(&case_surf, &armlet, cx, bottom + 26 + (room - width * armlet.h / armlet.w) / 2, width, FOIL_ART, .9f, .6f);
@@ -1086,12 +1108,12 @@ static void render(float t) {
 static void update_rom_status(void) {
     if (rom_ok) snprintf(rom_status, sizeof rom_status, "Verified \xE2\x9C\x93");
     else if (!settings.rom_path[0]) snprintf(rom_status, sizeof rom_status, "Not selected");
-    else snprintf(rom_status, sizeof rom_status, "Not the USA cartridge");
+    else snprintf(rom_status, sizeof rom_status, "Not a version of the game");
 }
 
 static void init_common(void) {
     char *bp = SDL_GetBasePath();
-    snprintf(cache_path, sizeof cache_path, "%slauncher_art.cache", bp ? bp : "");
+    snprintf(launcher_base, sizeof launcher_base, "%s", bp ? bp : "");
     settings_set_base(bp ? bp : "");
     art_prepare();                      /* (may run the intro, which draws over hd_frame) */
     preview_load(bp ? bp : "");
@@ -1129,6 +1151,15 @@ int launcher_screenshot(const char *png, int width, int tab, float t) {
 }
 
 /* ---- ROM picker ------------------------------------------------------------------ */
+/* The ROM played changed (picked, or another language): its own title art and music. */
+static void reload_rom(void) {
+    music_stop();
+    art_prepare();
+    update_rom_status();
+    foil_free(&case_surf);              /* the new ROM's art: emboss the case again */
+    music_start();
+}
+
 static void choose_rom(SDL_Window *win) {
 #ifdef _WIN32
     wchar_t file[1024] = L"";
@@ -1138,19 +1169,16 @@ static void choose_rom(SDL_Window *win) {
     ofn.lpstrFilter = L"Genesis / Mega Drive ROM (*.md;*.bin;*.gen;*.smd)\0*.md;*.bin;*.gen;*.smd\0All files\0*.*\0";
     ofn.lpstrFile = file;
     ofn.nMaxFile = 1024;
-    ofn.lpstrTitle = L"Choose your Beyond Oasis (USA) ROM";
+    ofn.lpstrTitle = L"Choose your Beyond Oasis / Story of Thor ROM";
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameW(&ofn)) return;
     char path[1024];
     WideCharToMultiByte(CP_UTF8, 0, file, -1, path, sizeof path, NULL, NULL);
     for (char *p = path; *p; p++) if (*p == '\\') *p = '/';
-    snprintf(settings.rom_path, sizeof settings.rom_path, "%s", path);
-    remove(cache_path);
-    music_stop();
-    art_prepare();
-    update_rom_status();
-    foil_free(&case_surf);              /* the new ROM's art: emboss the case again */
-    music_start();
+    /* A version this build has becomes the one played (and its language); any other file
+     * is kept as picked, so the row says what is wrong with it. */
+    if (!settings_use_rom(path)) snprintf(settings.rom_path, sizeof settings.rom_path, "%s", path);
+    reload_rom();
 #else
     (void)win;
 #endif
@@ -1183,6 +1211,7 @@ static void row_action(SDL_Window *win, int dir) {
         if (row->id == OPT_VOLUME && !dir) return;
         settings_option_change(row->id, dir ? dir : 1);
         if (row->id == OPT_MUSIC) music_request(-1, 0, settings.launcher_music, !settings.launcher_music);
+        if (row->id == OPT_LANGUAGE) reload_rom();
     }
     ui.changed_item = ui.selected;
     ui.changed_dir = dir ? dir : 1;

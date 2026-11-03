@@ -13,6 +13,7 @@
  * that object. Sprites added any other way (the HUD, menus, text) have no object and
  * never move between ticks. */
 #include "motion.h"
+#include "game.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -77,10 +78,9 @@ static void take_tick(void) {
 /* Called after each native block has run: the anchor registers are still as the block
  * found them (none of these blocks change them), and $A98E adds its piece itself. */
 void motion_block(uint32_t pc) {
-    switch (pc) {
-    case 0xAB4A: case 0xAECC: case 0xB0C4: anchor_at((int16_t)D(1), (int16_t)A(4)); break;
-    case 0xA98E: anchor_at((int16_t)D(2), (int16_t)D(3)); break;
-    }
+    const GameVersion *g = game;
+    if (pc == g->anchor_d1_a4[0] || pc == g->anchor_d1_a4[1] || pc == g->anchor_d1_a4[2]) anchor_at((int16_t)D(1), (int16_t)A(4));
+    else if (pc == g->anchor_d2_d3) anchor_at((int16_t)D(2), (int16_t)D(3));
     int count = ram16(COUNT);
     if (count != seen_count) {
         if (count < seen_count) {       /* a new list */
@@ -92,15 +92,13 @@ void motion_block(uint32_t pc) {
         if (count > seen_count) built = true;
         seen_count = count;
     }
-    switch (pc) {
     /* Back in the object loops: that object's drawing is over. */
-    case 0xA1BA: case 0xA1D0: case 0xA1F8: case 0xA258: case 0xA270: case 0xA2A6: pending = -1; break;
-    case 0x1FBE:                        /* V blank: about to send the list to the VDP */
+    for (int k = 0; k < 6; k++) if (pc == g->object_drawn[k]) pending = -1;
+    if (pc == g->vblank_send_list) {    /* V blank: about to send the list to the VDP */
         if (built) take_tick();
         built = false;
         build_anchor_count = 0;
         pending = -1;
-        break;
     }
 }
 

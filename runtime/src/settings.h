@@ -5,8 +5,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+/* One ROM per version of the game (game.h's GAME_VERSION_COUNT, config/versions.json order). */
+#define SETTINGS_VERSIONS 6
+
 typedef struct {
-    char rom_path[1024];
+    char rom_path[1024];                /* the ROM played: the one for `language` */
+    char rom_paths[SETTINGS_VERSIONS][1024];   /* each version's ROM, "" if not chosen */
+    char language[8];                   /* the version played (its id: us, eu, fr, de, es, jp) */
     bool widescreen;
     int  aspect_w, aspect_h;            /* target aspect ratio when widescreen is on */
     bool fullscreen;
@@ -74,7 +79,8 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_SHARPEN, OPT_SCALER, OPT_LIGHTING, OPT_AUDIO, OPT_ELEMENTS, OPT_FOOTSTEPS, OPT_WATER,
        OPT_TEXPACK, OPT_DUMP,
        OPT_COMBAT, OPT_RUMBLE, OPT_FAST, OPT_TIMER, OPT_RANDOMIZER, OPT_HDR,
-       OPT_PERF_STATS, OPT_AUTO_QUALITY, OPT_MERGED, OPT_AVX2, OPT_GPU };
+       OPT_PERF_STATS, OPT_AUTO_QUALITY, OPT_MERGED, OPT_AVX2, OPT_GPU,
+       OPT_LANGUAGE };                  /* the version played: each has its own language */
 /* Set by the game when it knows: the GPU effects are running (the renderer is OpenGL and
  * the shader built), and whether the CPU has AVX2. The launcher leaves them false. */
 extern bool gpu_effects_running, cpu_has_avx2;
@@ -86,6 +92,12 @@ void settings_option_change(int id, int dir);
  * Sharpening, can read "Off" too but have more steps. */
 bool settings_option_is_switch(int id);
 int  settings_cycle(int v, int count, int dir);     /* (v + dir) wrapped into 0..count-1 */
+
+/* Makes the ROM at path the one played, if it is a version this build has: remembers it as
+ * that version's ROM and switches the language to it. False if it is none of them. */
+bool settings_use_rom(const char *path);
+/* How many languages there are to choose from: versions this build has, with a ROM. */
+int  settings_language_count(void);
 
 /* Widescreen pixels to add on each side for the current settings. */
 int  settings_extra_width(void);

@@ -4,6 +4,7 @@
 #include "filter.h"
 #include "input.h"
 #include "texpack.h"
+#include "game.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +43,15 @@ void settings_set_base(const char *dir) { snprintf(base_dir, sizeof base_dir, "%
 
 static bool parse_bool(const char *v) { return !strcmp(v, "1") || !strcmp(v, "true") || !strcmp(v, "on"); }
 
+_Static_assert(SETTINGS_VERSIONS == GAME_VERSION_COUNT, "settings.h: one ROM per version");
+
+/* config/versions.json order, for the versions this build does not have too. */
+static const char *const version_ids[SETTINGS_VERSIONS] = { "us", "eu", "fr", "de", "es", "jp" };
+static int version_index(const char *id) {
+    for (int i = 0; i < SETTINGS_VERSIONS; i++) if (!strcmp(id, version_ids[i])) return i;
+    return -1;
+}
+
 void settings_load(const char *path) {
     input_defaults();
     outfit_defaults();
@@ -55,6 +65,9 @@ void settings_load(const char *path) {
         *eq = 0;
         const char *k = line, *v = eq + 1;
         if (!strcmp(k, "rom_path")) snprintf(settings.rom_path, sizeof settings.rom_path, "%s", v);
+        else if (!strcmp(k, "language")) snprintf(settings.language, sizeof settings.language, "%s", v);
+        else if (!strncmp(k, "rom_", 4) && version_index(k + 4) >= 0)
+            snprintf(settings.rom_paths[version_index(k + 4)], sizeof settings.rom_paths[0], "%s", v);
         else if (!strcmp(k, "widescreen")) settings.widescreen = parse_bool(v);
         else if (!strcmp(k, "aspect")) sscanf(v, "%d:%d", &settings.aspect_w, &settings.aspect_h);
         else if (!strcmp(k, "fullscreen")) settings.fullscreen = parse_bool(v);
@@ -126,6 +139,31 @@ void settings_load(const char *path) {
     if (settings.ost_track < -1 || settings.ost_track > 0xFF) settings.ost_track = -1;
     if (settings.rewind_mb < 8 || settings.rewind_mb > 2048) settings.rewind_mb = 64;
     if (settings.state_slot < 1 || settings.state_slot > 9) settings.state_slot = 1;
+    /* The language picks the ROM played (an older settings.ini has only rom_path). */
+    int lang = version_index(settings.language);
+    if (lang >= 0 && settings.rom_paths[lang][0]) snprintf(settings.rom_path, sizeof settings.rom_path, "%s", settings.rom_paths[lang]);
+}
+
+bool settings_use_rom(const char *path) {
+    const GameVersion *v = bus_rom_version(path);
+    if (!v) return false;
+    int i = version_index(v->id);
+    snprintf(settings.rom_paths[i], sizeof settings.rom_paths[0], "%s", path);
+    snprintf(settings.rom_path, sizeof settings.rom_path, "%s", path);
+    snprintf(settings.language, sizeof settings.language, "%s", v->id);
+    return true;
+}
+
+/* The languages to choose from, in config/versions.json order. */
+static int languages(int *out) {
+    int n = 0;
+    for (int i = 0; i < SETTINGS_VERSIONS; i++) if (game_versions[i] && settings.rom_paths[i][0]) out[n++] = i;
+    return n;
+}
+
+int settings_language_count(void) {
+    int list[SETTINGS_VERSIONS];
+    return languages(list);
 }
 
 void settings_save(const char *path) {
@@ -133,6 +171,9 @@ void settings_save(const char *path) {
     if (!f) return;
     fprintf(f, "# Beyond Oasis Recomp settings\n");
     fprintf(f, "rom_path=%s\n", settings.rom_path);
+    fprintf(f, "language=%s\n", settings.language);
+    for (int i = 0; i < SETTINGS_VERSIONS; i++)
+        if (settings.rom_paths[i][0]) fprintf(f, "rom_%s=%s\n", version_ids[i], settings.rom_paths[i]);
     fprintf(f, "widescreen=%d\n", settings.widescreen);
     fprintf(f, "aspect=%d:%d\n", settings.aspect_w, settings.aspect_h);
     fprintf(f, "fullscreen=%d\n", settings.fullscreen);
@@ -235,6 +276,11 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_MERGED:     snprintf(out, n, "%s", settings.merged_pass ? "On" : "Off"); break;
     case OPT_AVX2:       snprintf(out, n, "%s", !settings.avx2 ? "Off" : cpu_has_avx2 || !gpu_effects_running ? "On" : "On (not on this CPU)"); break;
     case OPT_GPU:        snprintf(out, n, "%s", !settings.gpu_effects ? "Off" : gpu_effects_running ? "On" : "On (from the next start)"); break;
+    case OPT_LANGUAGE: {
+        int i = version_index(settings.language);
+        snprintf(out, n, "%s", i >= 0 && game_versions[i] ? game_versions[i]->language : "English");
+        break;
+    }
     case OPT_RANDOMIZER:
         if (!settings.randomizer) snprintf(out, n, "Off");
         else snprintf(out, n, "%s (seed %u)", settings.randomizer == 2 ? "Items + weapons" : "Items", settings.randomizer_seed);
@@ -365,6 +411,15 @@ void settings_option_change(int id, int dir) {
     case OPT_MERGED:   settings.merged_pass = !settings.merged_pass; break;
     case OPT_AVX2:     settings.avx2 = !settings.avx2; break;
     case OPT_GPU:      settings.gpu_effects = !settings.gpu_effects; break;
+    case OPT_LANGUAGE: {                /* the next version with a ROM (switching it restarts the game) */
+        int list[SETTINGS_VERSIONS], n = languages(list), at = 0;
+        if (n < 2) break;
+        for (int k = 0; k < n; k++) if (list[k] == version_index(settings.language)) at = k;
+        int i = list[settings_cycle(at, n, dir)];
+        snprintf(settings.language, sizeof settings.language, "%s", version_ids[i]);
+        snprintf(settings.rom_path, sizeof settings.rom_path, "%s", settings.rom_paths[i]);
+        break;
+    }
     case OPT_RANDOMIZER: {
         bool was_off = !settings.randomizer;
         settings.randomizer = settings_cycle(settings.randomizer, 3, dir);

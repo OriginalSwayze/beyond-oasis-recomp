@@ -1,8 +1,10 @@
 # Beyond Oasis Recomp
 
-A native PC port of **Beyond Oasis (USA, Sega Genesis)** built from your own ROM.
-No game data is included in this repository: every tool reads your ROM and
-checks its SHA-1 (`2944910c07c02eace98c17d78d07bef7859d386a`).
+A native PC port of **Beyond Oasis (Sega Genesis)**, also sold as **The Story of Thor**,
+built from your own ROM. It plays in every language the game came out in: English, French,
+German, Spanish and Japanese (see [Languages](#languages)). No game data is included in this
+repository: every tool reads your ROM and checks its SHA-1 (the list is in
+`config/versions.json`).
 
 It is a static recompilation, not a decompilation: at build time the game's 68000 machine
 code is translated into C from your ROM, and anything not yet covered runs on an
@@ -10,7 +12,8 @@ interpreter.
 
 ## Playing it
 
-**You need your own Beyond Oasis (USA) ROM.** It is not included and never will be, and
+**You need your own ROM of the game:** Beyond Oasis (USA), or The Story of Thor from
+Europe, France, Germany, Spain or Japan. It is not included and never will be, and
 there is no ready-made game .exe to download: the built game contains the game's own code,
 translated to C, so it can only be made on your PC from your copy. The installer does that
 for you. It needs 64-bit Windows 10 or 11 and an internet connection for the first install.
@@ -25,10 +28,11 @@ for you. It needs 64-bit Windows 10 or 11 and an internet connection for the fir
 4. **Install folder:** keep the default (`%LOCALAPPDATA%\Programs\Beyond Oasis`, no
    administrator rights needed) or **Browse** for another, then **Next**. Plan for about
    700 MB.
-5. **Your ROM:** **Browse** to your Beyond Oasis (USA) ROM (`.md`, `.bin` or `.gen`, or a
-   `.zip` with one inside), or drop it on the window. It is checked by its SHA-1 at once: a
-   green tick means it is the right one; otherwise Setup says why not (a hack, another
-   region, a headered `.smd` dump). Then **Install**.
+5. **Your ROMs:** **Browse** to your ROM (`.md`, `.bin` or `.gen`, or a `.zip` with one
+   inside), or drop it on the window. Pick more than one, from different countries, to switch
+   between their languages in the game; **Add** picks more. Each is checked by its SHA-1 at
+   once: a green tick with its language means it is one Setup knows; otherwise Setup says why
+   not (a hack, a version it does not know, a headered `.smd` dump). Then **Install**.
 6. **Installing:** Setup downloads the build tools it needs from their publishers
    ([Node.js](https://nodejs.org/), [CMake](https://cmake.org/),
    [Ninja](https://ninja-build.org/) and [LLVM-MinGW](https://github.com/mstorsjo/llvm-mingw),
@@ -593,6 +597,40 @@ Rewind records a snapshot every frame as the change from the previous one (about
 per frame in play), up to `rewind_mb` in `settings.ini` (default 64). Holding the rewind
 key steps back one frame per frame, redrawing each with the input it was played with.
 
+## Languages
+
+Each country's cartridge has its own language: the translations were sold as separate
+cartridges, with their own code. Every one of them is recompiled the same way, and all the
+enhancements work in each.
+
+| Version | Language | Console |
+|---|---|---|
+| Beyond Oasis (USA) | English | NTSC, 60 Hz |
+| The Story of Thor (Europe) | English | PAL, 50 Hz |
+| La Légende de Thor (France) | French | PAL, 50 Hz |
+| The Story of Thor (Germany) | German | PAL, 50 Hz |
+| The Story of Thor (Spain) | Spanish (dialogue; its menus are in English, as on the cartridge) | PAL, 50 Hz |
+| The Story of Thor: Hikari o Tsugumono (Japan) | Japanese | NTSC, 60 Hz |
+
+* **Picking one.** Give Setup a ROM of each version you want (or pick one in the launcher's
+  **Game** tab, **ROM** row). **Language** in the launcher's Game tab and in the pause
+  menu's **More** tab then switches between them. In the pause menu the switch starts that
+  version from its title screen: unsaved progress is lost.
+* **Its own saves.** Each version keeps its own save RAM, save states and caches
+  (`save-fr.srm`, `states-fr\`, ...; the USA version's keep their old names), so a save of
+  one never loads into another.
+* **PAL versions run as on a European console:** 50 frames a second, a 240-line picture
+  (widescreen keeps two more rows of the map valid for it) and the slightly slower PAL sound
+  clocks. Smooth motion makes 50 Hz look fluid on any display.
+* **How it works.** The translations moved the game's code, so the places the enhancements
+  hook into (widescreen, smooth motion, the cheats, the speed statistics, the sound driver)
+  are at other addresses in each version. `tools/map-versions.mjs` finds each one by the
+  USA code around it and checks the instruction there; the result is
+  `config/version-addresses.json` (addresses only), so building a version needs only its
+  own ROM. The launcher's case letters each version's title (its own title screen is a
+  different picture), and the title screen is recognised by the game's own state, the same
+  in every version.
+
 ## Widescreen
 
 The game draws a 320-pixel screen; widescreen adds up to 80 pixels on each side
@@ -626,8 +664,8 @@ You need:
 * [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 18 or newer,
   [CMake](https://cmake.org/) 3.20 or newer, [Ninja](https://ninja-build.org/) and
   [Clang](https://releases.llvm.org/)
-* Your own Beyond Oasis (USA) cartridge dump (SHA-1 above). It is not included and never
-  will be.
+* Your own cartridge dump of one or more versions (SHA-1s in `config/versions.json`). It is
+  not included and never will be.
 
 Clone with the submodules (the third-party code below), or the build cannot find them:
 
@@ -640,20 +678,24 @@ git clone --recursive <this repository's URL>
 Then, in the repository's folder:
 
 ```
-node tools/setup.mjs "<path to Beyond Oasis (USA) ROM>"
+node tools/setup.mjs "<path to a ROM>" ["<another version's ROM>" ...]
 node tools/disasm.mjs
 cmake -S . -B build/cmake -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build/cmake
 build/cmake/BeyondOasis.exe "<path to ROM>"
 ```
 
-`setup.mjs` checks the ROM and remembers where it is (`local.json`, never committed); the
-build recompiles it into `generated/` (also never committed).
+`setup.mjs` checks each ROM, finds which version it is and remembers where it is
+(`local.json`, never committed); the build recompiles every version set up into
+`generated/<id>/` (also never committed), all in one game. `tools/map-versions.mjs` (needs
+the USA ROM) finds the runtime's hook addresses in the other versions again after one is
+added to `config/addresses.json` or `config/patches.json`.
 
 The tracer finds most of the code on its own; the rest is code it has seen running.
 `config/coverage.txt` lists those addresses (addresses only, nothing from the ROM), so a
 fresh build is as complete as a played one. After playing, `node tools/save-coverage.mjs`
-adds what that play reached to it.
+adds what that play reached to it (`node tools/save-coverage.mjs fr` for another version:
+its list is `config/coverage-fr.txt`).
 
 Default controls (all remappable, see Controls below):
 

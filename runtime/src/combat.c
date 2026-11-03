@@ -69,7 +69,7 @@ static void add_number(const Slot *s, int value, bool big) {
 }
 
 void combat_frame(const HdFrame *f, bool world, float cam_x, float cam_y, bool live) {
-    if (live) { session_s += 1 / 59.922743; total.play_s += 1 / 59.922743; }
+    if (live) { session_s += machine_frame_s(); total.play_s += machine_frame_s(); }
     for (int i = 0; i < nnumbers; ) {          /* numbers rise and go */
         if (++numbers[i].age >= 54) { memmove(numbers + i, numbers + i + 1, sizeof numbers[0] * (size_t)(--nnumbers - i)); continue; }
         i++;

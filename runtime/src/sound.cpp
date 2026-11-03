@@ -12,10 +12,11 @@ extern "C" {
 
 namespace {
 
-constexpr uint32_t YM_CLOCK = 7670453;      // NTSC 68000 clock
+// The chips run from the console's clock, which a PAL console has slightly slower
+// (sound_reset() picks them for the cartridge loaded).
 constexpr uint32_t YM_DIVIDER = 144;        // clocks per output sample
-constexpr double   YM_RATE = double(YM_CLOCK) / YM_DIVIDER;
-constexpr double   PSG_CLOCK = 3579545.0 / 16.0;
+double YM_RATE = 7670453.0 / YM_DIVIDER;    // NTSC 68000 clock
+double PSG_CLOCK = 3579545.0 / 16.0;
 
 class Ym : public ymfm::ymfm_interface {
 public:
@@ -206,9 +207,13 @@ int16_t sound_out[SOUND_OUT_MAX * 2];
 int     sound_out_count;
 int     sound_out_rate = 48000;
 int     sound_quality;
+bool    sound_pal;
 bool    sound_fm_enabled = true, sound_psg_enabled = true;
 
 void sound_reset(void) {
+    YM_RATE = (sound_pal ? 7600489.0 : 7670453.0) / YM_DIVIDER;
+    PSG_CLOCK = (sound_pal ? 3546893.0 : 3579545.0) / 16.0;
+    kernel_rate = 0;                        // the resampler's filter is for the old rate
     ym.chip.reset();
     ym.timer_left[0] = ym.timer_left[1] = -1;
     psg = Psg();

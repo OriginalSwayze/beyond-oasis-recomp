@@ -1,11 +1,12 @@
 # The installer's engine: Setup.exe unpacks the source into <Install>\source and runs this,
 # hidden, reading its progress. It can also be run by hand.
 #
-#   install.ps1 -Install <folder> -Rom <rom> [-NoSystemTools]
+#   install.ps1 -Install <folder> -Rom <rom>[|<rom>...] [-NoSystemTools]
 #
-# Checks the ROM, recompiles it to C and builds the game, then puts BeyondOasis.exe in
-# <Install>\ (its settings.ini there remembers the ROM; settings, saves and save states there
-# are kept on a reinstall). The build tools are used from PATH when they will do, else
+# Checks the ROMs (any versions in config/versions.json: each is a language), recompiles them
+# to C and builds the game, then puts BeyondOasis.exe in <Install>\ (its settings.ini there
+# remembers each version's ROM; settings, saves and save states there are kept on a
+# reinstall). The build tools are used from PATH when they will do, else
 # downloaded once into <Install>\source\toolchain (the publishers' own releases, checked
 # against pinned SHA-256s; nothing is installed into Windows).
 #
@@ -108,8 +109,10 @@ function Main {
     foreach ($t in $Needed) { if ($t.Path) { $env:PATH = "$($t.Path);$env:PATH" } }
     if (-not (Test-Path (Join-Path $Root 'third_party\sdl2\CMakeLists.txt'))) { throw 'The source is incomplete: third_party is empty.' }
 
-    Progress 40 'Checking your ROM'
-    Run 'That file is not Beyond Oasis (USA), unchanged.' node tools/setup.mjs $Rom
+    Progress 40 'Checking your ROMs'
+    $roms = @($Rom -split '\|' | Where-Object { $_ })
+    if (Test-Path (Join-Path $Root 'local.json')) { Remove-Item (Join-Path $Root 'local.json') }   # only the ROMs given
+    Run 'A file is not Beyond Oasis or The Story of Thor, unchanged.' node tools/setup.mjs @roms
     Progress 45 'Finding the game''s code'
     Run 'The disassembler failed.' node tools/disasm.mjs
     if (-not (Test-Path (Join-Path $Root 'build\cmake\build.ninja'))) {
@@ -120,12 +123,23 @@ function Main {
     Run 'The build failed.' cmake --build build/cmake --target BeyondOasis
     Copy-Item (Join-Path $Root 'build\cmake\BeyondOasis.exe') $Install -Force
 
-    # The game remembers its ROM in settings.ini next to it.
+    # The game remembers each version's ROM in settings.ini next to it (rom_<id>), and plays
+    # the language chosen before if that version is still there, else the first.
     $ini = Join-Path $Install 'settings.ini'
     $utf8 = New-Object System.Text.UTF8Encoding $false
+    $paths = (Get-Content (Join-Path $Root 'local.json') -Raw | ConvertFrom-Json).roms
+    $ids = @($paths.PSObject.Properties | ForEach-Object { $_.Name })
     $lines = @()
-    if (Test-Path $ini) { $lines = @([IO.File]::ReadAllLines($ini, $utf8) | Where-Object { $_ -notmatch '^rom_path=' }) }
-    [IO.File]::WriteAllLines($ini, [string[]](@("rom_path=$Rom") + $lines), $utf8)
+    $language = $null
+    if (Test-Path $ini) {
+        $old = [IO.File]::ReadAllLines($ini, $utf8)
+        $chosen = $old | Where-Object { $_ -match '^language=(.+)$' } | ForEach-Object { $Matches[1] } | Select-Object -First 1
+        if ($chosen -and $ids -contains $chosen) { $language = $chosen }
+        $lines = @($old | Where-Object { $_ -notmatch '^(rom_path|rom_[a-z]+|language)=' })
+    }
+    if (-not $language) { $language = if ($ids -contains 'us') { 'us' } else { $ids[0] } }
+    $head = @("rom_path=$($paths.$language)", "language=$language") + @($ids | ForEach-Object { "rom_$_=$($paths.$_)" })
+    [IO.File]::WriteAllLines($ini, [string[]]($head + $lines), $utf8)
     Progress 100 'Done'
 }
 

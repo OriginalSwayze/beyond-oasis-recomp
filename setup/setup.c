@@ -36,12 +36,27 @@
 #define UNINST_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\BeyondOasisRecomp"
 #define VERSION    "1.4"
 #define ROM_NAME   "Beyond Oasis (USA)"
-#define ROM_SHA1   "2944910c07c02eace98c17d78d07bef7859d386a"
 
-/* ---- The ROM ---------------------------------------------------------------------------- */
-static char picked[MAX_PATH];           /* the ROM file to install (a zip's ROM is unpacked first) */
-static char shown[MAX_PATH];            /* what the player picked */
-static char problem[160];               /* why the last pick was not taken */
+/* ---- The ROMs --------------------------------------------------------------------------- *
+ * Each version of the cartridge is a language (config/versions.json); any of them builds. */
+#define VERSIONS 6
+static const struct { const char *name, *language, *sha1; } versions[VERSIONS] = {
+    { "Beyond Oasis (USA)", "English", "2944910c07c02eace98c17d78d07bef7859d386a" },
+    { "Story of Thor, The (Europe)", "English (Europe)", "178ef742dad227d4128fa81dddb116bad0cabe1d" },
+    { "Legende de Thor, La (France)", "Fran\xC3\xA7" "ais", "677e1fbf2f6f90dd5a016f3bd5f305547249205a" },
+    { "Story of Thor, The (Germany)", "Deutsch", "a82ffb7c4bf4b0f89f42a9cdc6600bc5bac1c854" },
+    { "Story of Thor, The (Spain)", "Espa\xC3\xB1" "ol", "0fcc02355176e1c96043f4d827a3ff88d2d272df" },
+    { "Story of Thor, The - Hikari o Tsugumono (Japan)", "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E", "54296f5cf1917c568bb29b0086641c282b8884bd" },
+};
+static char picked[VERSIONS][MAX_PATH]; /* each version's ROM file to install (a zip's ROM is unpacked first) */
+static char shown[VERSIONS][MAX_PATH];  /* what the player picked */
+static char problem[200];               /* why the last pick was not taken */
+
+static int picked_count(void) {
+    int n = 0;
+    for (int v = 0; v < VERSIONS; v++) n += picked[v][0] != 0;
+    return n;
+}
 static bool installed;                  /* the game is already in the folder */
 
 static bool sha1_file(const char *path, char out[41]) {
@@ -109,12 +124,21 @@ static void take_rom(const char *path) {
         if (!file[0]) { snprintf(problem, sizeof problem, "No ROM (.md, .bin or .gen) in that zip."); return; }
     }
     if (!sha1_file(file, sum)) { snprintf(problem, sizeof problem, "Could not read that file."); return; }
-    if (strcmp(sum, ROM_SHA1)) {
-        snprintf(problem, sizeof problem, "Not the ROM this needs: it takes " ROM_NAME ", unchanged (no hacks, other regions or headers).");
+    int v = 0;
+    while (v < VERSIONS && strcmp(sum, versions[v].sha1)) v++;
+    if (v == VERSIONS) {
+        snprintf(problem, sizeof problem, "Not a ROM this takes: Beyond Oasis or The Story of Thor (USA, Europe, France, Germany, Spain or Japan), unchanged (no hacks or headers).");
         return;
     }
-    snprintf(picked, MAX_PATH, "%s", file);
-    snprintf(shown, MAX_PATH, "%s", path);
+    /* A zip's ROM is unpacked to the same place each time: keep each version's apart. */
+    if (strcmp(file, path)) {
+        char own[MAX_PATH];
+        snprintf(own, sizeof own, "%s.%d", file, v);
+        MoveFileExA(file, own, MOVEFILE_REPLACE_EXISTING);
+        snprintf(file, sizeof file, "%s", own);
+    }
+    snprintf(picked[v], MAX_PATH, "%s", file);
+    snprintf(shown[v], MAX_PATH, "%s", path);
     problem[0] = 0;
 }
 
@@ -237,7 +261,7 @@ static void draw_page(float t) {
                  ? "Beyond Oasis is installed. Setup can build it again from your ROM, for example after downloading a newer Setup. Your settings, saves and save states stay as they are."
                  : "This installs Beyond Oasis as a native Windows program, with widescreen, higher resolutions and a high frame rate, lighting, water and spirit effects, cheats, save states, rewind and more.",
                  x, y + 62, w, 19, C_TEXT, 1);
-        y = wrap("No part of the game comes with it. You pick your own ROM of the cartridge, " ROM_NAME ", and it is translated into a PC program on this computer.",
+        y = wrap("No part of the game comes with it. You pick your own ROM of the cartridge, " ROM_NAME " or another country's version (The Story of Thor), and it is translated into a PC program on this computer.",
                  x, y + 14, w, 19, C_TEXT, 1);
         wrap("Setup downloads the build tools it needs from their publishers (Node.js, CMake, Ninja and LLVM-MinGW, about 260 MB, checked against pinned SHA-256s) into the install folder, unless they are already on this PC. Nothing is installed into Windows itself, and no administrator rights are needed.",
              x, y + 14, w, 17, C_DIM, 1);
@@ -254,27 +278,32 @@ static void draw_page(float t) {
         button(820, 596, 170, 52, "BACK", 0, B_BACK);
         break;
     case PAGE_ROM: {
-        title_text("YOUR ROM", 32, 5, x, y);
-        wrap("Pick your " ROM_NAME " ROM: a .md, .bin or .gen file, or a .zip with one inside. You can also drop it on this window. It is checked as you pick it.",
+        title_text("YOUR ROMS", 32, 5, x, y);
+        wrap("Pick your " ROM_NAME " ROM, or The Story of Thor from Europe, France, Germany, Spain or Japan: each version is a language you can switch between in the game. A .md, .bin or .gen file, or a .zip with one inside; pick several at once or drop them on this window. Each is checked as you pick it.",
              x, y + 58, w, 18, C_TEXT, 1);
-        float cy = 290;
-        bool ok = picked[0];
-        ui_panel(x, cy, w, 112, 14, rgb_hex(0x1C2130), rgb_hex(0x12151D), 1, ok ? C_GOLD : rgb_hex(0x2E3442), ok ? .9f : 1);
-        ui_fill_rect(x, cy + 14, 4, 84, ok ? C_GOLD : C_EMBER, 1);
-        title_text("Beyond Oasis", 28, 2, x + 26, cy + 16);
-        const char *state;
-        Rgb sc;
-        char buf[MAX_PATH + 40];
-        if (ok) {
-            const char *base = strrchr(shown, '\\');
-            if (!base) base = strrchr(shown, '/');
-            snprintf(buf, sizeof buf, "\xE2\x9C\x93  %s", base ? base + 1 : shown);
-            state = buf; sc = rgb_hex(0x9FDCA6);
-        } else if (problem[0]) { state = problem; sc = rgb_hex(0xF09A86); }
-        else if (installed) { state = "Installed. Pick the ROM again to build the game again."; sc = C_DIM; }
-        else { state = "No ROM picked yet."; sc = C_DIM; }
-        ui_draw_text(state, BODY, 16, 400, 0, x + 26, cy + 66, sc, sc, 1);
-        button(x + w - 200, cy + 30, 176, 52, "BROWSE", 0, B_ROM);
+        float cy = 300;
+        bool ok = picked_count() > 0;
+        ui_panel(x, cy, w, 214, 14, rgb_hex(0x1C2130), rgb_hex(0x12151D), 1, ok ? C_GOLD : rgb_hex(0x2E3442), ok ? .9f : 1);
+        ui_fill_rect(x, cy + 14, 4, 186, ok ? C_GOLD : C_EMBER, 1);
+        title_text("Your cartridges", 24, 2, x + 26, cy + 16);
+        /* One line per version picked: its language and file. */
+        float ly = cy + 62;
+        for (int v = 0; v < VERSIONS; v++) {
+            if (!picked[v][0]) continue;
+            const char *base = strrchr(shown[v], '\\');
+            if (!base) base = strrchr(shown[v], '/');
+            char buf[MAX_PATH + 80];
+            snprintf(buf, sizeof buf, "\xE2\x9C\x93  %s  \xE2\x80\x94  %s", versions[v].language, base ? base + 1 : shown[v]);
+            ui_draw_text(buf, BODY, 16, 400, 0, x + 26, ly, rgb_hex(0x9FDCA6), rgb_hex(0x9FDCA6), 1);
+            ly += 22;
+        }
+        const char *state = NULL;
+        Rgb sc = C_DIM;
+        if (problem[0]) { state = problem; sc = rgb_hex(0xF09A86); }
+        else if (!ok && installed) state = "Installed. Pick the ROM again to build the game again.";
+        else if (!ok) state = "No ROM picked yet.";
+        if (state) ui_draw_text(state, BODY, 16, 400, 0, x + 26, ok ? ly + 6 : ly, sc, sc, 1);
+        button(x + w - 200, cy + 16, 176, 52, ok ? "ADD" : "BROWSE", 0, B_ROM);
         button(1010, 596, 170, 52, "INSTALL", ok ? 1 : 2, B_NEXT);
         button(820, 596, 170, 52, "BACK", 0, B_BACK);
         break;
@@ -349,14 +378,23 @@ static void browse_folder(void) {
 }
 
 static void browse_rom(void) {
-    char file[MAX_PATH] = "";
+    static char files[16 * MAX_PATH];
+    files[0] = 0;
     OPENFILENAMEA of = { .lStructSize = sizeof of };
     of.lpstrFilter = "Genesis ROMs (*.md;*.bin;*.gen;*.zip)\0*.md;*.bin;*.gen;*.zip\0All files (*.*)\0*.*\0";
-    of.lpstrFile = file;
-    of.nMaxFile = MAX_PATH;
-    of.lpstrTitle = "Your " ROM_NAME " ROM";
-    of.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (GetOpenFileNameA(&of)) take_rom(file);
+    of.lpstrFile = files;
+    of.nMaxFile = sizeof files;
+    of.lpstrTitle = "Your Beyond Oasis / Story of Thor ROMs";
+    of.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_ALLOWMULTISELECT | OFN_EXPLORER;
+    if (!GetOpenFileNameA(&of)) return;
+    /* One file: its path. Several: the folder, then each name, each ending in a 0. */
+    const char *name = files + strlen(files) + 1;
+    if (!*name) { take_rom(files); return; }
+    for (; *name; name += strlen(name) + 1) {
+        char p[MAX_PATH];
+        snprintf(p, sizeof p, "%s\\%s", files, name);
+        take_rom(p);
+    }
 }
 
 /* ---- The install ----------------------------------------------------------------------- */
@@ -378,13 +416,21 @@ static void progress_line(const char *s) {
     SDL_UnlockMutex(lock);
 }
 
-static bool copy_rom(char *out) {
+/* Copies each ROM picked into <folder>\rom under its version's name; out gets their paths,
+ * separated by | for install.ps1. */
+static bool copy_roms(char *out, size_t n) {
     char dir[MAX_PATH];
     snprintf(dir, sizeof dir, "%s\\rom", folder);
     CreateDirectoryA(dir, NULL);
-    snprintf(out, MAX_PATH, "%s\\Beyond Oasis (USA).md", dir);
-    if (!_stricmp(out, picked)) return true;
-    return CopyFileA(picked, out, FALSE) != 0;
+    out[0] = 0;
+    for (int v = 0; v < VERSIONS; v++) {
+        if (!picked[v][0]) continue;
+        char to[MAX_PATH];
+        snprintf(to, sizeof to, "%s\\%s.md", dir, versions[v].name);
+        if (_stricmp(to, picked[v]) && !CopyFileA(picked[v], to, FALSE)) return false;
+        snprintf(out + strlen(out), n - strlen(out), "%s%s", out[0] ? "|" : "", to);
+    }
+    return out[0] != 0;
 }
 
 static int SDLCALL install_thread(void *arg) {
@@ -424,8 +470,8 @@ static int SDLCALL install_thread(void *arg) {
         if (!ok) { progress_line("@@error Could not unpack the source (Setup.exe may be damaged: download it again)."); return 1; }
     }
     /* The ROM, copied in, for the installer. */
-    char rom[MAX_PATH];
-    if (!copy_rom(rom)) { progress_line("@@error Could not copy the ROM into the install folder."); return 1; }
+    static char rom[VERSIONS * MAX_PATH];
+    if (!copy_roms(rom, sizeof rom)) { progress_line("@@error Could not copy the ROMs into the install folder."); return 1; }
     snprintf(cmd, sizeof cmd, "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%s\\tools\\install.ps1\" -Install \"%s\" -Rom \"%s\"",
              src, folder, rom);
     SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
@@ -561,7 +607,7 @@ static bool act(int id) {
     }
     if (id == B_NEXT) {
         if (page == PAGE_ROM) {
-            if (!picked[0]) return true;
+            if (!picked_count()) return true;
             prog = (typeof(prog)){ 0 };
             page = PAGE_INSTALL;
             SDL_CreateThread(install_thread, "install", NULL);
@@ -596,9 +642,11 @@ static void find_installed(void) {
     char p[MAX_PATH];
     snprintf(p, sizeof p, "%s\\" GAME_EXE, folder);
     installed = GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES;
-    /* A reinstall offers the ROM it was built from, if it is still there. */
-    snprintf(p, sizeof p, "%s\\rom\\Beyond Oasis (USA).md", folder);
-    if (installed && GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES) take_rom(p);
+    /* A reinstall offers the ROMs it was built from, if they are still there. */
+    for (int v = 0; installed && v < VERSIONS; v++) {
+        snprintf(p, sizeof p, "%s\\rom\\%s.md", folder, versions[v].name);
+        if (GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES) take_rom(p);
+    }
 }
 
 int main(int argc, char **argv) {
@@ -615,11 +663,11 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--shot") && i + 2 < argc) { page = atoi(argv[++i]); shot = argv[++i]; }
         else if (!strcmp(argv[i], "--install-test")) install_test = true;
     }
-    if (!picked[0]) find_installed();
+    if (!picked_count()) find_installed();
     lock = SDL_CreateMutex();
     if (install_test) {
         print_progress = true;
-        if (!picked[0]) { printf("@@error %s\n", problem[0] ? problem : "No ROM: pass --rom FILE."); return 1; }
+        if (!picked_count()) { printf("@@error %s\n", problem[0] ? problem : "No ROM: pass --rom FILE."); return 1; }
         install_thread(NULL);
         return prog.failed ? 1 : 0;
     }

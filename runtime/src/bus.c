@@ -1,11 +1,17 @@
 /* 68000 memory map: cartridge ROM/SRAM, work RAM, Z80 area, I/O and VDP. */
 #include "genesis.h"
+#include "game.h"
 #include <stdio.h>
 #include <string.h>
 
 Bus bus;
+const GameVersion *game;
 
-static const char ROM_SHA1[] = "2944910c07c02eace98c17d78d07bef7859d386a";
+const GameVersion *game_version_by_id(const char *id) {
+    for (int i = 0; i < GAME_VERSION_COUNT; i++)
+        if (game_versions[i] && !strcmp(game_versions[i]->id, id)) return game_versions[i];
+    return NULL;
+}
 
 /* ---- SHA-1, only used to verify the user's ROM ---------------------------- */
 static uint32_t rol32(uint32_t v, int n) { return (v << n) | (v >> (32 - n)); }
@@ -42,24 +48,53 @@ static void sha1_hex(const uint8_t *data, size_t len, char out[41]) {
     for (int i = 0; i < 5; i++) sprintf(out + i * 8, "%08x", h[i]);
 }
 
-const char *bus_load_rom(const char *path) {
+void game_file_name(char *out, size_t n, const char *name) {
+    if (!game || !strcmp(game->id, "us")) { snprintf(out, n, "%s", name); return; }
+    const char *dot = strrchr(name, '.');
+    int stem = dot ? (int)(dot - name) : (int)strlen(name);
+    snprintf(out, n, "%.*s-%s%s", stem, name, game->id, dot ? dot : "");
+}
+
+/* Reads a ROM file into buf and finds which of this build's versions it is; NULL with
+ * *why set if it is none of them. */
+static const GameVersion *read_rom(const char *path, uint8_t *buf, const char **why) {
     static char msg[256];
     FILE *f = fopen(path, "rb");
     if (!f) {
         snprintf(msg, sizeof msg, "cannot open %s", path);
-        return msg;
+        *why = msg;
+        return NULL;
     }
-    size_t n = fread(bus.rom, 1, ROM_SIZE, f);
+    size_t n = fread(buf, 1, ROM_SIZE, f);
     int extra = fgetc(f);
     fclose(f);
-    if (n != ROM_SIZE || extra != EOF) return "wrong file size: this is not Beyond Oasis (USA)";
+    if (n != ROM_SIZE || extra != EOF) { *why = "wrong file size: this is not Beyond Oasis or The Story of Thor"; return NULL; }
     char hex[41];
-    sha1_hex(bus.rom, ROM_SIZE, hex);
-    if (strcmp(hex, ROM_SHA1) != 0) {
-        snprintf(msg, sizeof msg, "SHA-1 %s does not match Beyond Oasis (USA)", hex);
-        return msg;
-    }
+    sha1_hex(buf, ROM_SIZE, hex);
+    for (int i = 0; i < GAME_VERSION_COUNT; i++)
+        if (game_versions[i] && !strcmp(hex, game_versions[i]->sha1)) return game_versions[i];
+    snprintf(msg, sizeof msg, "SHA-1 %s is not a version of the game this build has", hex);
+    *why = msg;
     return NULL;
+}
+
+static uint8_t rom_buf[ROM_SIZE];
+
+/* Loads a ROM of one of the versions this build has and makes it `game`. A file that is
+ * not one leaves the loaded ROM and `game` as they were. */
+const char *bus_load_rom(const char *path) {
+    const char *why = NULL;
+    const GameVersion *v = read_rom(path, rom_buf, &why);
+    if (!v) return why;
+    memcpy(bus.rom, rom_buf, ROM_SIZE);
+    game = v;
+    return NULL;
+}
+
+/* The version a ROM file is (of the ones this build has), or NULL; nothing is loaded. */
+const GameVersion *bus_rom_version(const char *path) {
+    const char *why;
+    return read_rom(path, rom_buf, &why);
 }
 
 /* ---- Reads ------------------------------------------------------------------ */

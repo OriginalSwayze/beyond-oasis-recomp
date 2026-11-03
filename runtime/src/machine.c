@@ -1,6 +1,7 @@
 /* Frame/scanline scheduler, interrupts, and the hand-off between the Musashi
  * interpreter and recompiled or hand-written code. */
 #include "genesis.h"
+#include "game.h"
 #include "m68k.h"
 #include "m68kcpu.h"
 #include "recomp_rt.h"
@@ -33,20 +34,18 @@ int machine_cycles_in_line(void) {
 /* ---- Recompiled code dispatch ----------------------------------------------
  * recomp_fn[pc / 2] is the native function for a block starting at pc. Hand-written
  * C replacements (the decompilation) register here too and win over generated code. */
-extern const RecompEntry *const recomp_tables[];
 static RecompBlock recomp_fn[ROM_SIZE / 2];
 MachineOptions machine_opts = { .recomp = true, .overclock = 100 };
 uint64_t stat_wait_cycles, stat_total_cycles;
 uint32_t stat_ticks, stat_late_ticks;
 
-/* The main loop's waits. A game tick runs its logic, waits for the first V blank
- * ($8B72), draws, and waits for the tick countdown ($FF1654) to run out ($8ACA);
- * $8B56/$8B7C wait for the V blank's display work. Blocks may start at the branch too. */
+/* The main loop's waits (game->tick_waits, USA addresses here). A game tick runs its logic,
+ * waits for the first V blank ($8B72), draws, and waits for the tick countdown ($FF1654) to
+ * run out ($8ACA); $8B56/$8B7C wait for the V blank's display work. Blocks may start at the
+ * branch too. */
 static bool is_wait(uint32_t pc) {
-    switch (pc) {
-    case 0x8ACA: case 0x8AD0: case 0x8B72: case 0x8B7A: case 0x8B56: case 0x8B5E: case 0x8B7C: case 0x8B84: return true;
-    default: return false;
-    }
+    for (int k = 0; k < 8; k++) if (pc == game->tick_waits[k]) return true;
+    return false;
 }
 
 /* Called for every native block: counts spare time, ticks, and ticks that arrived at
@@ -56,7 +55,7 @@ static void note_block(uint32_t at, int cycles) {
     motion_block(at);
     if (is_wait(at)) stat_wait_cycles += (uint64_t)cycles;
     /* A tick arrives from the code just before the wait (not back from an interrupt). */
-    if (at == 0x8ACA && last >= 0x8AA6 && last <= 0x8AC4) {
+    if (at == game->tick_end_wait && last >= game->tick_from[0] && last <= game->tick_from[1]) {
         stat_ticks++;
         if (bus.ram[0x1654] == 0 && bus.ram[0x1655] == 0) stat_late_ticks++;
     }
@@ -68,8 +67,8 @@ static void recomp_init(void);
 static uint8_t overridden[ROM_SIZE / 16];  /* one bit per even address replaced by machine_override() */
 
 static RecompBlock generated_fn(uint32_t pc) {
-    for (int t = 0; recomp_tables[t]; t++)
-        for (const RecompEntry *e = recomp_tables[t]; e->fn; e++) if (e->pc == pc) return e->fn;
+    for (int t = 0; game->tables[t]; t++)
+        for (const RecompEntry *e = game->tables[t]; e->fn; e++) if (e->pc == pc) return e->fn;
     return NULL;
 }
 
@@ -82,12 +81,16 @@ void machine_override(uint32_t pc, RecompBlock fn) {
     else overridden[pc >> 4] &= (uint8_t)~bit;
 }
 
+/* The loaded version's code; filled again when a ROM of another version has loaded (overrides
+ * are installed after this, for the version they were made for). */
 static void recomp_init(void) {
-    static bool done;
-    if (done) return;
-    done = true;
-    for (int t = 0; recomp_tables[t]; t++)
-        for (const RecompEntry *e = recomp_tables[t]; e->fn; e++) recomp_fn[e->pc >> 1] = e->fn;
+    static const GameVersion *done;
+    if (!game || done == game) return;
+    done = game;
+    memset(recomp_fn, 0, sizeof recomp_fn);
+    memset(overridden, 0, sizeof overridden);
+    for (int t = 0; game->tables[t]; t++)
+        for (const RecompEntry *e = game->tables[t]; e->fn; e++) recomp_fn[e->pc >> 1] = e->fn;
 }
 
 int gen_int_ack(int level) {
@@ -197,6 +200,8 @@ void gen_instr_hook(unsigned int pc) {
     if (machine_opts.verify) verify_hook(pc);
 }
 
+double machine_frame_s(void) { return game_is_pal() ? 1.0 / 49.701459 : 1.0 / 59.922743; }
+
 void machine_reset(void) {
     vdp_reset();
     memset(bus.ram, 0, sizeof bus.ram);
@@ -204,7 +209,9 @@ void machine_reset(void) {
     bus.z80_reset = true;               /* the Z80 is held in reset at power on */
     bus.z80_busreq = false;
     z80_reset_cpu();
+    sound_pal = game_is_pal();
     sound_reset();
+    recomp_init();                      /* the loaded version's code */
     m68k_init();
     m68k_set_cpu_type(M68K_CPU_TYPE_68000);
     m68k_pulse_reset();
@@ -296,7 +303,8 @@ void machine_run_frame(uint32_t *fb, int pitch) {
     sound_out_count = 0;
     if (vdp_opts.extra_width) widescreen_frame();
     int height = vdp_screen_height();
-    for (int line = 0; line < LINES_NTSC; line++) {
+    int lines = game_is_pal() ? LINES_PAL : LINES_NTSC;
+    for (int line = 0; line < lines; line++) {
         vdp.line = line;
         line_cycle_base = 0;
         if (line < height && fb) vdp_render_line(line, fb + (size_t)line * pitch);

@@ -1,0 +1,41 @@
+{
+  "comment": "Code addresses in Beyond Oasis (USA) that the runtime hooks (machine_override, motion_block); tools/lib/versions.mjs finds each one in the other versions. Code-level patches are in config/patches.json.",
+  "vblank_send_list": "001FBE",
+  "tick_end_wait": "008ACA",
+  "tick_waits": [
+    "008ACA",
+    "008AD0",
+    "008B72",
+    "008B7A",
+    "008B56",
+    "008B5E",
+    "008B7C",
+    "008B84"
+  ],
+  "tick_from": [
+    "008AA6",
+    "008AC4"
+  ],
+  "scroll_column": "0023CC",
+  "scroll_row": "002512",
+  "init_layer": "00D7C0",
+  "clear_plane_at": "00D950",
+  "redraw_rect": "00DC26",
+  "anchor_d1_a4": [
+    "00AB4A",
+    "00AECC",
+    "00B0C4"
+  ],
+  "anchor_d2_d3": "00A98E",
+  "object_drawn": [
+    "00A1BA",
+    "00A1D0",
+    "00A1F8",
+    "00A258",
+    "00A270",
+    "00A2A6"
+  ],
+  "driver_update": "060000",
+  "driver_cmd": "060004",
+  "driver_cmd_go": "06042A"
+}

@@ -9,6 +9,9 @@
 #define ROM_SIZE        0x300000
 #define SRAM_SIZE       0x4000          /* bytes on the odd addresses $200001-$203FFF */
 #define LINES_NTSC      262
+#define LINES_PAL       313
+/* Seconds per frame of the console the loaded cartridge expects (PAL: 50 Hz). */
+double machine_frame_s(void);
 #define CYCLES_PER_LINE 488             /* 68000 clocks per scanline (53.693175 MHz / 7 / 15.7 kHz) */
 #define MAX_EXTRA_WIDTH 80              /* widescreen pixels per side, at most: the game streams 41 of the
                                            plane's 64 columns, leaving room for 11 more on each side */
@@ -26,8 +29,11 @@ typedef struct {
 
 extern Bus bus;
 
-/* Returns NULL on success, else a message describing why the ROM was rejected. */
+/* Returns NULL on success, else a message describing why the ROM was rejected. Any version
+ * this build has loads, and becomes `game` (game.h). */
 const char *bus_load_rom(const char *path);
+struct GameVersion;
+const struct GameVersion *bus_rom_version(const char *path);   /* which version a file is, or NULL */
 uint8_t  bus_read8(uint32_t a);
 uint16_t bus_read16(uint32_t a);
 void     bus_write8(uint32_t a, uint8_t v);
@@ -137,6 +143,7 @@ extern bool    sound_fm_enabled, sound_psg_enabled;
  * anti-aliased PSG, no DC offset; 2 rich: clean with wider stereo and a light room reverb.
  * Only the sound that comes out changes, never the machine's state. */
 extern int     sound_quality;
+extern bool    sound_pal;              /* PAL console clocks (set before sound_reset) */
 void    sound_end_frame(void);          /* machine.c, after each frame: the output effects */
 void    sound_reset(void);
 void    sound_advance(int m68k_cycles);

@@ -1,15 +1,18 @@
+// Usage: node tools/disasm.mjs [version id, default the first set up]
 // Traces the ROM and writes:
-//   build/disasm/beyond_oasis.asm  - readable listing of discovered code
+//   build/disasm/beyond_oasis.asm  - readable listing of discovered code (beyond_oasis-<id>.asm
+//                                    for a version other than the USA one)
 //   build/analysis.json            - blocks, functions and unresolved jumps (input to the recompiler)
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROOT, loadRom } from './lib/rom.mjs';
+import { ROOT, loadRoms } from './lib/rom.mjs';
 import { format } from './lib/m68k.mjs';
 import { trace } from './lib/trace.mjs';
 import { loadExtraEntries } from './lib/inputs.mjs';
 
-const rom = loadRom();
-const extra = loadExtraEntries();
+const roms = loadRoms();
+const { version, rom } = roms.find((r) => r.version.id === process.argv[2]) || roms[0];
+const extra = loadExtraEntries(version.id);
 
 const t = trace(rom, extra);
 
@@ -29,7 +32,7 @@ for (const b of t.blocks) {
 
 const dir = join(ROOT, 'build', 'disasm');
 mkdirSync(dir, { recursive: true });
-writeFileSync(join(dir, 'beyond_oasis.asm'), out.join('\n') + '\n');
+writeFileSync(join(dir, version.id === 'us' ? 'beyond_oasis.asm' : `beyond_oasis-${version.id}.asm`), out.join('\n') + '\n');
 
 const codeBytes = t.blocks.reduce((n, b) => n + (b.end - b.start), 0);
 writeFileSync(join(ROOT, 'build', 'analysis.json'), JSON.stringify({

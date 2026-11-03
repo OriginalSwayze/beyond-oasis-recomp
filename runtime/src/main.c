@@ -3,6 +3,7 @@
  *   BeyondOasis.exe --headless N --shot F.bmp  run N frames without a window, save the last frame
  *   headless extras: --press "FRAME:BUTTONS[:FRAMES],..." --shots EVERY DIR --widescreen 0|1 */
 #include "genesis.h"
+#include "game.h"
 #include "settings.h"
 #include "png.h"
 #include "launcher.h"
@@ -87,10 +88,16 @@ static uint16_t scripted_pad(int frame) {
 static char base_dir[1024];
 
 static void path_in_base(char *out, size_t n, const char *name) { snprintf(out, n, "%s%s", base_dir, name); }
+/* A file of the version loaded (game_file_name), next to the executable. */
+static void game_path_in_base(char *out, size_t n, const char *name) {
+    char own[128];
+    game_file_name(own, sizeof own, name);
+    path_in_base(out, n, own);
+}
 
 static void save_coverage(void) {
     char p[1100];
-    path_in_base(p, sizeof p, "coverage.bin");
+    game_path_in_base(p, sizeof p, "coverage.bin");
     /* Merge with earlier runs so coverage accumulates across play sessions. */
     FILE *f = fopen(p, "rb");
     if (f) {
@@ -106,14 +113,14 @@ static void save_coverage(void) {
 static void save_sram(void) {
     if (!bus.sram_dirty) return;
     char p[1100];
-    path_in_base(p, sizeof p, "save.srm");
+    game_path_in_base(p, sizeof p, "save.srm");
     FILE *f = fopen(p, "wb");
     if (f) { fwrite(bus.sram, 1, SRAM_SIZE, f); fclose(f); bus.sram_dirty = false; }
 }
 
 static void load_sram(void) {
     char p[1100];
-    path_in_base(p, sizeof p, "save.srm");
+    game_path_in_base(p, sizeof p, "save.srm");
     memset(bus.sram, 0xFF, SRAM_SIZE);
     FILE *f = fopen(p, "rb");
     if (f) { if (fread(bus.sram, 1, SRAM_SIZE, f) != SRAM_SIZE) { /* keep what was read */ } fclose(f); }
@@ -136,6 +143,26 @@ static int save_png(const char *path) { return png_write(path, framebuffer, fram
 static int save_shot(const char *path) {
     size_t n = strlen(path);
     return n > 4 && !strcmp(path + n - 4, ".png") ? save_png(path) : save_bmp(path);
+}
+
+static void load_menu_sounds(void);
+
+/* The pause menu changed the language: save this version's save RAM, load the other
+ * version's ROM, with its own save RAM. False if the language did not change, or its ROM
+ * would not load (the language goes back). */
+static bool switch_version(void) {
+    if (!game || !strcmp(game->id, settings.language)) return false;
+    save_sram();
+    const char *err = bus_load_rom(settings.rom_path);
+    if (err) {                          /* the ROM and `game` are as they were */
+        fprintf(stderr, "could not switch to %s: %s\n", settings.rom_path, err);
+        for (int i = 0; i < GAME_VERSION_COUNT; i++)
+            if (game_versions[i] == game) settings_use_rom(settings.rom_paths[i]);
+        return false;
+    }
+    load_menu_sounds();                 /* this version's (it runs the ROM to the title) */
+    load_sram();
+    return true;
 }
 
 static void apply_settings(void) {
@@ -202,8 +229,9 @@ static int menu_pcm_frames[4];
 static SDL_AudioDeviceID menu_audio;
 
 static void load_menu_sounds(void) {
+    for (int k = 0; k < 4; k++) { free(menu_pcm[k]); menu_pcm[k] = NULL; menu_pcm_frames[k] = 0; }
     char path[1100];
-    path_in_base(path, sizeof path, "menu_sounds.cache");
+    game_path_in_base(path, sizeof path, "menu_sounds.cache");
     FILE *f = fopen(path, "rb");
     if (!f) {
         if (!launcher_make_menu_sounds(path)) return;
@@ -433,6 +461,8 @@ int main(int argc, char **argv) {
     bool save_preview = false;          /* --save-preview: keep the last frame for the launcher's previews */
     int save_to = 0;
     int load_from = 0;
+    int switch_at = -1;
+    const char *switch_to = NULL;
     bool rom_from_args = false;         /* a ROM path was given on the command line */
     bool test_overrides = false;        /* settings overridden on the command line: don't save them */
     const char *hd_shot = NULL;
@@ -575,6 +605,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--states-base") && i + 1 < argc) savestate_init(argv[++i]);  /* e.g. "test_" -> test_states/ */
         else if (!strcmp(argv[i], "--slot") && i + 1 < argc) { settings.state_slot = atoi(argv[++i]); test_overrides = true; }
         else if (!strcmp(argv[i], "--load") && i + 1 < argc) load_from = atoi(argv[++i]);   /* load a slot first */
+        else if (!strcmp(argv[i], "--switch-language") && i + 2 < argc) { switch_at = atoi(argv[++i]); switch_to = argv[++i]; }
         else if (!strcmp(argv[i], "--poke") && i + 1 < argc) cheats_add_codes(argv[++i]);   /* FFxxxx:VV[VV],... */
         else if (!strcmp(argv[i], "--cheat") && i + 1 < argc) {
             /* --cheat health|spirit|weapons|double|quadruple|onehit|fast|veryfast: turn a built-in cheat on for this run. */
@@ -655,11 +686,14 @@ int main(int argc, char **argv) {
     const char *err = settings.rom_path[0] ? bus_load_rom(settings.rom_path) : "no ROM selected";
     if (err) {
         char msg[1400];
-        snprintf(msg, sizeof msg, "Could not load the Beyond Oasis (USA) ROM:\n%s\n\nPath: %s", err, settings.rom_path);
+        snprintf(msg, sizeof msg, "Could not load the game's ROM:\n%s\n\nPath: %s", err, settings.rom_path);
         if (headless_frames) fprintf(stderr, "%s\n", msg);
         else SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Beyond Oasis Recomp", msg, NULL);
         return 1;
     }
+    /* The ROM played is its version's ROM and sets the language (an older settings.ini
+     * named only the USA ROM). */
+    settings_use_rom(settings.rom_path);
     if (!headless_frames && rom_from_args) {
         /* Remember a ROM path given on the command line, but not the other options
          * given there (--filter, --widescreen, ...): those are for this run. */
@@ -697,6 +731,13 @@ int main(int argc, char **argv) {
         for (int f = 0; f < headless_frames; f++) {
             if (profile_frames && f == headless_frames - profile_frames) pc_profile = calloc(ROM_SIZE / 2, 4);
             pad_state[0] = scripted_pad(f);
+            /* --switch-language F ID: at frame F, change the language as the pause menu does. */
+            if (f == switch_at && switch_to) {
+                for (int k = 0; k < SETTINGS_VERSIONS && strcmp(settings.language, switch_to); k++)
+                    settings_option_change(OPT_LANGUAGE, 1);
+                if (switch_version()) { apply_settings(); machine_reset(); }
+                fprintf(stderr, "frame %d: switched to %s\n", f, game->name);
+            }
             if (f == check_from) len_a = state_save(snap_a, sizeof snap_a);
             if (f == check_to) len_b = state_save(snap_b, sizeof snap_b);
             if (rewind_check && f == headless_frames - rewind_check) len_ref = state_save(snap_ref, sizeof snap_ref);
@@ -1056,7 +1097,6 @@ int main(int argc, char **argv) {
                          message_until = SDL_GetPerformanceCounter() + SDL_GetPerformanceFrequency() * 2; } while (0)
     char shown_title[160] = "";
 
-    const double frame_s = 1.0 / 59.922743;     /* NTSC Genesis refresh rate */
     Uint64 freq = SDL_GetPerformanceFrequency(), next = SDL_GetPerformanceCounter(), start = next;
     SDL_Texture *menu_tex = NULL;
     int menu_tex_w = 0, menu_tex_h = 0;
@@ -1082,6 +1122,13 @@ int main(int argc, char **argv) {
                 switch (menu_event(&e)) {
                 case MENU_CLOSE: case MENU_LOADED: menu_close(); break;
                 case MENU_SETTINGS:
+                    if (switch_version()) {     /* another language: that version starts */
+                        apply_settings();
+                        machine_reset();
+                        rewind_reset(settings.rewind ? (size_t)settings.rewind_mb << 20 : 0);
+                        menu_close();
+                        break;
+                    }
                     apply_settings();
                     SDL_SetWindowFullscreen(win, settings.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
                     if (settings.rewind != was_rewind) rewind_reset(settings.rewind ? (size_t)settings.rewind_mb << 20 : 0);
@@ -1144,7 +1191,7 @@ int main(int argc, char **argv) {
             SDL_RenderCopy(ren, menu_tex, NULL, NULL);
             SDL_RenderPresent(ren);
             if (strcmp(shown_title, "Beyond Oasis - Paused")) { SDL_SetWindowTitle(win, "Beyond Oasis - Paused"); strcpy(shown_title, "Beyond Oasis - Paused"); }
-            next += (Uint64)(frame_s * freq);
+            next += (Uint64)(machine_frame_s() * freq);
             Uint64 now = SDL_GetPerformanceCounter();
             if (now < next) SDL_Delay((Uint32)((next - now) * 1000 / freq));
             else next = now;
@@ -1152,10 +1199,10 @@ int main(int argc, char **argv) {
         }
 
         /* One pass of this loop is one display refresh: vsync paces it. A game frame runs
-         * whenever one is due (60 times a second, on any display), and every refresh shows
+         * whenever one is due (60 times a second, 50 for a PAL cartridge, on any display), and every refresh shows
          * the moment it is now, so motion is even at 60, 120, 144 Hz and up. */
         Uint64 now = SDL_GetPerformanceCounter();
-        const Uint64 frame_ticks = (Uint64)(frame_s * freq);
+        const Uint64 frame_ticks = (Uint64)(machine_frame_s() * freq);
         if (now >= next) {
             Uint64 game_t0 = SDL_GetPerformanceCounter();
             const Uint8 *keys = SDL_GetKeyboardState(NULL);
@@ -1189,7 +1236,7 @@ int main(int argc, char **argv) {
             save_sram();
 
             char title[160];
-            if (rewinding) snprintf(title, sizeof title, "Beyond Oasis - Rewinding (%.1f s left)", rewind_frames() / 60.0);
+            if (rewinding) snprintf(title, sizeof title, "Beyond Oasis - Rewinding (%.1f s left)", rewind_frames() * machine_frame_s());
             else if (fast_now) snprintf(title, sizeof title, "Beyond Oasis - Fast-forward %d\xC3\x97", settings.fast_speed + 2);
             else if (SDL_GetPerformanceCounter() < message_until) snprintf(title, sizeof title, "Beyond Oasis - %s", message);
             else snprintf(title, sizeof title, "Beyond Oasis");

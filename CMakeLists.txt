@@ -40,23 +40,37 @@ add_library(ymfm STATIC third_party/ymfm/src/ymfm_opn.cpp third_party/ymfm/src/y
 target_include_directories(ymfm PUBLIC third_party/ymfm/src)
 target_compile_options(ymfm PRIVATE -w)
 
-# ---- Recompiled game code (generated from the user's ROM) -------------------------
-set(RECOMP_SOURCES ${CMAKE_SOURCE_DIR}/generated/recomp_table.c)
-foreach(i RANGE 0 15)
-  if(i LESS 10)
-    set(id "0${i}")
-  else()
-    set(id "${i}")
-  endif()
-  list(APPEND RECOMP_SOURCES ${CMAKE_SOURCE_DIR}/generated/recomp_${id}.c)
+# ---- Recompiled game code (generated from the user's ROMs) ------------------------
+# One folder per version in config/versions.json; a version not set up in local.json gets
+# empty files, so the list of sources is always the same.
+set(RECOMP_SOURCES ${CMAKE_SOURCE_DIR}/generated/versions.c)
+file(READ ${CMAKE_SOURCE_DIR}/config/versions.json VERSIONS_JSON)
+string(JSON VERSION_COUNT LENGTH "${VERSIONS_JSON}" versions)
+math(EXPR VERSION_LAST "${VERSION_COUNT} - 1")
+foreach(v RANGE 0 ${VERSION_LAST})
+  string(JSON vid GET "${VERSIONS_JSON}" versions ${v} id)
+  list(APPEND RECOMP_SOURCES ${CMAKE_SOURCE_DIR}/generated/${vid}/version.c)
+  foreach(i RANGE 0 15)
+    if(i LESS 10)
+      set(id "0${i}")
+    else()
+      set(id "${i}")
+    endif()
+    list(APPEND RECOMP_SOURCES ${CMAKE_SOURCE_DIR}/generated/${vid}/recomp_${id}.c)
+  endforeach()
 endforeach()
 file(GLOB RECOMP_TOOLS ${CMAKE_SOURCE_DIR}/tools/*.mjs ${CMAKE_SOURCE_DIR}/tools/lib/*.mjs)
+file(GLOB RECOMP_CONFIG ${CMAKE_SOURCE_DIR}/config/*.json ${CMAKE_SOURCE_DIR}/config/coverage*.txt)
+set(RECOMP_DEPENDS ${RECOMP_TOOLS} ${RECOMP_CONFIG})
+if(EXISTS ${CMAKE_SOURCE_DIR}/local.json)
+  list(APPEND RECOMP_DEPENDS ${CMAKE_SOURCE_DIR}/local.json)      # a ROM added or moved
+endif()
 add_custom_command(
   OUTPUT ${RECOMP_SOURCES}
   COMMAND node ${CMAKE_SOURCE_DIR}/tools/recomp.mjs
-  DEPENDS ${RECOMP_TOOLS} ${CMAKE_SOURCE_DIR}/config/patches.json
+  DEPENDS ${RECOMP_DEPENDS}
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  COMMENT "Recompiling the ROM to C")
+  COMMENT "Recompiling the ROMs to C")
 add_library(recomp STATIC ${RECOMP_SOURCES})
 target_include_directories(recomp PRIVATE runtime/src)
 target_link_libraries(recomp PRIVATE musashi)

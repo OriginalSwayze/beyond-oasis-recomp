@@ -1,5 +1,6 @@
-/* The sound driver lives at $060000: `jsr $060000` once a frame (from the game's V blank)
- * runs the music, `jsr $060004` with a command in d0 starts a song or sound effect.
+/* The sound driver lives at $060000 (game->driver_update, the same in every version so far):
+ * `jsr $060000` once a frame (from the game's V blank) runs the music, `jsr $060004` with a
+ * command in d0 starts a song or sound effect.
  *
  * ost_start() parks the game: the 68000 loops on a `bra.s *` in work RAM with interrupts
  * masked, so the game's code never runs again and nothing else touches the Z80 or the
@@ -10,9 +11,8 @@
 #include "ost.h"
 
 #include "recomp_rt.h"
+#include "game.h"
 
-#define DRIVER_UPDATE 0x060000
-#define DRIVER_CMD    0x060004
 #define RETURN_HERE   0x0001FC          /* in the cartridge header */
 #define PARK          0xFFF000          /* the idle loop, in game RAM the driver does not use */
 #define PARK_SP       0xFFFE00
@@ -67,9 +67,9 @@ static bool enqueue(uint32_t entry, uint16_t d0) {
     return true;
 }
 
-bool ost_command(uint16_t cmd) { return enqueue(DRIVER_CMD, cmd); }
+bool ost_command(uint16_t cmd) { return enqueue(game->driver_cmd, cmd); }
 
 void ost_frame(void) {
-    enqueue(DRIVER_UPDATE, 0);
+    enqueue(game->driver_update, 0);
     if (!running && queued) start_next();
 }

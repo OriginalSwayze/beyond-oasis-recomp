@@ -1,0 +1,11 @@
+{
+  "comment": "The cartridges this builds from. Each is the same game; the translations moved its code, so the runtime's hooks into the USA code (config/addresses.json and config/patches.json) are found in the others by tools/map-versions.mjs. title: as sold, lettered on the launcher's case. region: the console the cartridge expects (us = overseas NTSC, eu = overseas PAL, jp = domestic NTSC).",
+  "versions": [
+    { "id": "us", "name": "Beyond Oasis (USA)", "title": "BEYOND OASIS", "language": "English", "region": "us", "sha1": "2944910c07c02eace98c17d78d07bef7859d386a" },
+    { "id": "eu", "name": "Story of Thor, The (Europe)", "title": "THE STORY OF THOR", "language": "English (Europe)", "region": "eu", "sha1": "178ef742dad227d4128fa81dddb116bad0cabe1d" },
+    { "id": "fr", "name": "Legende de Thor, La (France)", "title": "LA LÉGENDE DE THOR", "language": "Français", "region": "eu", "sha1": "677e1fbf2f6f90dd5a016f3bd5f305547249205a" },
+    { "id": "de", "name": "Story of Thor, The (Germany)", "title": "THE STORY OF THOR", "language": "Deutsch", "region": "eu", "sha1": "a82ffb7c4bf4b0f89f42a9cdc6600bc5bac1c854" },
+    { "id": "es", "name": "Story of Thor, The (Spain)", "title": "THE STORY OF THOR", "language": "Español", "region": "eu", "sha1": "0fcc02355176e1c96043f4d827a3ff88d2d272df" },
+    { "id": "jp", "name": "Story of Thor, The - Hikari o Tsugumono (Japan)", "title": "THE STORY OF THOR", "language": "日本語", "region": "jp", "sha1": "54296f5cf1917c568bb29b0086641c282b8884bd" }
+  ]
+}

@@ -19,12 +19,17 @@
  * scratch for the original too. */
 #include "genesis.h"
 #include "recomp_rt.h"
+#include "game.h"
 
 #define VDP_DATA  0xC00000
 #define VDP_CTRL  0xC00004
 #define BLANK_CELL 0x0780               /* tile entry sub_00D962 fills empty planes with */
 
 static int pad;                         /* extra columns kept valid on each side */
+/* The last of the rows the game keeps valid, from the top one: $1C (29 rows) for the 224-line
+ * picture, $1E (31 rows) in the PAL versions' 240-line one; it is the only change those
+ * versions made to these routines. */
+static int last_row(void) { return game_is_pal() ? 0x1E : 0x1C; }
 uint32_t patch_cull_left, patch_cull_widen;
 int patch_cam_margin;
 
@@ -59,7 +64,7 @@ static uint32_t map_cell(uint32_t layer, int col, int row) {
 static void draw_column(uint32_t layer, int col, int vcol) {
     int top = L16(layer, 0x0A), vtop = (L16(layer, 0x0C) >> 7) & 31;
     uint32_t base = (uint16_t)L16(layer, 0x1A);
-    for (int i = 0; i < 29; i++) vram_cell(base, vtop + i, vcol, map_cell(layer, col, top + i));
+    for (int i = 0; i <= last_row(); i++) vram_cell(base, vtop + i, vcol, map_cell(layer, col, top + i));
 }
 
 static void draw_row(uint32_t layer, int row, int vrow) {
@@ -127,8 +132,8 @@ static uint32_t scroll_row(uint32_t pc) {
         wr16(layer + 0x1E, (uint32_t)(steps - 1));
         if (++top >= h) top -= h;
         c = (((c & 0xF80) + 0x80) & 0xF80) | (c & 0x7E);
-        target = top + 0x1C;
-        vtarget = (c >> 7) + 0x1C;
+        target = top + last_row();
+        vtarget = (c >> 7) + last_row();
     } else {
         wr16(layer + 0x1E, (uint32_t)(steps + 1));
         if (--top < 0) top += h;
@@ -145,7 +150,7 @@ static uint32_t scroll_row(uint32_t pc) {
 
 /* Fills the columns visible with zero scroll (0..40+pad and the last `pad`) with the blank cell. */
 static void clear_plane(uint32_t base) {
-    for (int row = 0; row < 29; row++)
+    for (int row = 0; row <= last_row(); row++)
         for (int k = -pad; k <= 40 + pad; k++) vram_cell(base, row, k, BLANK_CELL);
 }
 
@@ -177,7 +182,7 @@ static uint32_t init_layer(uint32_t pc) {
             for (int k = 0; k < 64; k++)
                 vram_cell(base, row, k, map_cell(layer, w == 64 ? (left + k) % 64 : left + k, top + row));
     } else {
-        for (int row = 0; row < 29; row++)
+        for (int row = 0; row <= last_row(); row++)
             for (int k = -pad; k <= 40 + pad; k++) vram_cell(base, row, k, map_cell(layer, left + k, top + row));
     }
     interrupt_mask_after_vdp_access();
@@ -198,14 +203,14 @@ static uint32_t clear_plane_at(uint32_t pc) {
 static uint32_t redraw_rect(uint32_t pc) {
     (void)pc;
     uint32_t layer = A(3);
-    if (rd8(layer + 0x27) & 2) return 0xDD14;
+    if (rd8(layer + 0x27) & 2) return game->redraw_rect + 0xEE;   /* past the replaced part ($DD14) */
     int col = (int16_t)D(1) - L16(layer, 0x08), row = (int16_t)D(2) - L16(layer, 0x0A);
     int cols = (int16_t)D(3) + 1, rows = (int16_t)D(4) + 1;
     uint32_t src = A(1), stride = (uint32_t)(uint16_t)L16(layer, 0x20) * 2;
     if (col < -pad) { cols += col + pad; src += (uint32_t)(-pad - col) * 2; col = -pad; }
     if (cols > 42 + pad - col) cols = 42 + pad - col;
     if (row < 0) { rows += row; src += (uint32_t)(-row) << L16(layer, 0x24); row = 0; }
-    if (rows > 30 - row) rows = 30 - row;
+    if (rows > last_row() + 2 - row) rows = last_row() + 2 - row;
     if (cols <= 0 || rows <= 0) return return_to_caller(100);
     int vleft = (L16(layer, 0x0C) >> 1) & 63, vtop = (L16(layer, 0x0C) >> 7) & 31;
     uint32_t base = (uint16_t)L16(layer, 0x1A);
@@ -233,9 +238,10 @@ void widescreen_patches(int extra_width) {
     patch_cull_left = (uint32_t)extra_width;
     patch_cam_margin = extra_width;
     patch_cull_widen = (uint32_t)(extra_width + right);
-    machine_override(0x0023CC, on ? scroll_column : NULL);
-    machine_override(0x002512, on ? scroll_row : NULL);
-    machine_override(0x00D7C0, on ? init_layer : NULL);
-    machine_override(0x00D950, on ? clear_plane_at : NULL);
-    machine_override(0x00DC26, on ? redraw_rect : NULL);
+    if (!game) return;                  /* no ROM loaded yet: hooked when one is */
+    machine_override(game->scroll_column, on ? scroll_column : NULL);
+    machine_override(game->scroll_row, on ? scroll_row : NULL);
+    machine_override(game->init_layer, on ? init_layer : NULL);
+    machine_override(game->clear_plane_at, on ? clear_plane_at : NULL);
+    machine_override(game->redraw_rect, on ? redraw_rect : NULL);
 }
