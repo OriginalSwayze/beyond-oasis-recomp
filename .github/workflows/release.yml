@@ -4,6 +4,8 @@
 #     as a zip (setup/setup.c reads it back), which builds and installs the game;
 #   - the builder zip: the same files to unzip, for "Build Beyond Oasis.bat" (GitHub's own
 #     "Source code" zips leave the submodules out).
+# The release's description is docs/release-<tag>.md (what changed), if there is one,
+# followed by NOTES (how to install).
 name: Release
 
 on:
@@ -18,8 +20,8 @@ env:
     **Download `Beyond-Oasis-Setup-${{ github.ref_name }}.exe`** below and run it.
 
     1. Setup asks where to install (your user's Programs folder by default; no administrator rights needed).
-    2. Pick your own Beyond Oasis (USA) ROM (.md, .bin or .gen, or a .zip with one inside). It is checked as you pick it.
-    3. Setup downloads the build tools it needs (Node.js, CMake, Ninja and LLVM-MinGW, about 260 MB, from their publishers, checked against pinned SHA-256s) into the install folder, builds the game from your ROM (a few minutes), and adds Beyond Oasis to the Start menu.
+    2. Pick your own ROM: Beyond Oasis (USA), or The Story of Thor from Europe, France, Germany, Spain or Japan (.md, .bin or .gen, or a .zip with one inside). Pick several to switch between their languages in the game. Each is checked as you pick it.
+    3. Setup downloads the build tools it needs (Node.js, CMake, Ninja and LLVM-MinGW, about 260 MB, from their publishers, checked against pinned SHA-256s) into the install folder, builds the game from your ROMs (a few minutes), and adds Beyond Oasis to the Start menu.
 
     To update later, run the new Setup: it keeps your settings, saves and save states. To remove the game, use Settings > Apps > Beyond Oasis Recomp > Uninstall.
 
@@ -71,10 +73,15 @@ jobs:
           python -c "import struct,os; f=open('$name','ab'); f.write(struct.pack('<Q', os.path.getsize('source.zip'))); f.write(b'BOAPAYLD')"
           echo "SETUP=$name" >> "$GITHUB_ENV"
 
+      - name: Release notes
+        run: |
+          { if [ -f "docs/release-${GITHUB_REF_NAME}.md" ]; then cat "docs/release-${GITHUB_REF_NAME}.md"; echo; echo "---"; echo; fi
+            echo "$NOTES"; } > release-notes.md
+
       - uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.SETUP }}
-          body: ${{ env.NOTES }}
+          body_path: release-notes.md
 
   builder-zip:
     runs-on: ubuntu-latest
@@ -93,7 +100,12 @@ jobs:
           (cd stage && zip -qr9 "../${name}.zip" "Beyond Oasis Recomp")
           echo "ZIP=${name}.zip" >> "$GITHUB_ENV"
 
+      - name: Release notes
+        run: |
+          { if [ -f "docs/release-${GITHUB_REF_NAME}.md" ]; then cat "docs/release-${GITHUB_REF_NAME}.md"; echo; echo "---"; echo; fi
+            echo "$NOTES"; } > release-notes.md
+
       - uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.ZIP }}
-          body: ${{ env.NOTES }}
+          body_path: release-notes.md
