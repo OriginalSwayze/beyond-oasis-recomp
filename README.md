@@ -151,6 +151,7 @@ Other headless options:
 * `--load N`: load slot N (from the `--states-base` folder) before the first frame
 * `--cheat health|spirit|weapons|double|quadruple|onehit|fast|veryfast`: turn a built-in cheat on for this run (repeatable)
 * `--poke FFxxxx:VV[VV],...`: hold RAM bytes or words every frame (applied after the built-in cheats)
+* `--sound-log`: print each song or sound effect the game asks for (command, priority, the frame, and where in the game it came from)
 * `--wav F.wav`, `--pc-profile N` (hottest code over the last N frames: cycles per native block, instructions for interpreted code)
 
 ## Launcher
@@ -501,6 +502,14 @@ states and replays are the same in every mode:
   second in the village at full volume).
 * Rich: Clean, with the stereo widened a little and a light room reverb (four comb and
   two all-pass filters per side, after Freeverb) mixed in quietly.
+
+**Waterfalls no longer silence other sounds.** Near a waterfall, the game asks for its
+rushing sound ($039A) every 8 frames at priority $90, higher than most sound effects, and
+the sound driver drops a sound of lower priority while a higher one plays. On the console,
+Ali's running footsteps ($40) and many other effects were never heard anywhere near a
+waterfall. The waterfall now goes out below every sound effect (`driver_cmd_hook` in
+`runtime/src/main.c`), so anything else plays over it and the waterfall comes back within
+8 frames. This applies in every Audio mode.
 
 ## HD texture packs
 

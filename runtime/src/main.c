@@ -166,7 +166,32 @@ static bool switch_version(void) {
     return true;
 }
 
+/* Every song or sound effect the game asks its sound driver for passes here (d0: the
+ * command in the low word, its priority in bits 16-23, volume and pan above).
+ *
+ * The waterfall's rushing ($039A) is asked for every 8 frames at priority $90, louder than
+ * most sound effects, from anywhere in the area around a waterfall. The driver drops a
+ * sound of lower priority while it plays, so near a waterfall Ali's footsteps ($40) and
+ * many other sounds were never heard. It now goes out below every sound effect: anything
+ * else plays over it, and it comes back within 8 frames.
+ *
+ * --sound-log prints each command, the frame it came in and where the game asked from. */
+#define SOUND_WATERFALL 0x039A
+#define PRIORITY_BACKGROUND 0x30        /* below the quietest effect, the footsteps ($40) */
+static bool sound_log;
+static int sound_log_frame;
+static uint32_t driver_cmd_hook(uint32_t pc) {
+    (void)pc;
+    USE_CYCLES(10);                     /* the `bra.w` it stands in for */
+    if ((D(0) & 0xFFFF) == SOUND_WATERFALL) D(0) = (D(0) & 0xFF00FFFF) | PRIORITY_BACKGROUND << 16;
+    if (sound_log)
+        printf("frame %d: sound command %04X (d0 %08X) from %06X\n", sound_log_frame, (unsigned)(D(0) & 0xFFFF),
+               (unsigned)D(0), (unsigned)(rd32(A(7)) & 0xFFFFFF));
+    return game->driver_cmd_go;         /* on to the driver, as the `bra` at driver_cmd does */
+}
+
 static void apply_settings(void) {
+    machine_override(game->driver_cmd, driver_cmd_hook);
     vdp_opts.extra_width = settings_extra_width();
     widescreen_patches(vdp_opts.extra_width);
     vdp_opts.no_sprite_limit = settings.no_sprite_limit;
@@ -612,6 +637,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--states-base") && i + 1 < argc) savestate_init(argv[++i]);  /* e.g. "test_" -> test_states/ */
         else if (!strcmp(argv[i], "--slot") && i + 1 < argc) { settings.state_slot = atoi(argv[++i]); test_overrides = true; }
         else if (!strcmp(argv[i], "--load") && i + 1 < argc) load_from = atoi(argv[++i]);   /* load a slot first */
+        else if (!strcmp(argv[i], "--sound-log")) sound_log = true;
         else if (!strcmp(argv[i], "--switch-language") && i + 2 < argc) { switch_at = atoi(argv[++i]); switch_to = argv[++i]; }
         else if (!strcmp(argv[i], "--poke") && i + 1 < argc) cheats_add_codes(argv[++i]);   /* FFxxxx:VV[VV],... */
         else if (!strcmp(argv[i], "--cheat") && i + 1 < argc) {
@@ -737,6 +763,7 @@ int main(int argc, char **argv) {
         FILE *hf = hash_log ? fopen(hash_log, "w") : NULL;
         for (int f = 0; f < headless_frames; f++) {
             if (profile_frames && f == headless_frames - profile_frames) pc_profile = calloc(ROM_SIZE / 2, 4);
+            sound_log_frame = f;
             pad_state[0] = scripted_pad(f);
             /* --switch-language F ID: at frame F, change the language as the pause menu does. */
             if (f == switch_at && switch_to) {
