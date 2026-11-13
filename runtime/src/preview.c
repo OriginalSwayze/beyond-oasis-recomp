@@ -14,7 +14,7 @@
 #include "settings.h"
 #include "ui.h"
 
-typedef struct { int scale, scaler, sharpen, lighting, hdr, tone, blind; bool pack, water; } Look;
+typedef struct { int scale, scaler, sharpen, lighting, hdr, tone, blind, dynlight; bool pack, water; } Look;
 
 static struct { bool world; float cam_x, cam_y, focus_x, focus_y; } where;
 
@@ -60,7 +60,7 @@ bool preview_ready(void) { return hd_frame.h > 0 && hd_frame.w > 0; }
 /* ---- Which looks to compare ------------------------------------------------------------ */
 static Look look_now(void) {
     return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, settings.hdr, settings.tone,
-                   settings.color_blind, hd_texpack, settings.water };
+                   settings.color_blind, settings.dynlight, hd_texpack, settings.water };
 }
 
 /* The look without the option and with it, whether to show it 1:1, and the label of the
@@ -92,6 +92,11 @@ static bool looks_for(int option, Look *off, Look *on, bool *zoom, char *label, 
         off->lighting = 0;
         on->lighting = settings.lighting ? settings.lighting : 2;
         settings.lighting = on->lighting;
+        break;
+    case OPT_DYNLIGHT:
+        off->dynlight = 0;
+        on->dynlight = settings.dynlight ? settings.dynlight : 2;
+        settings.dynlight = on->dynlight;
         break;
     case OPT_HDR:
         off->hdr = 0;
@@ -156,7 +161,7 @@ static void render_look(const Look *l, Picture *out) {
     vdp_opts.color_blind = keep_blind;
     int scale = hd_w / (hd_frame.w > 0 ? hd_frame.w : 1);
     HdPost post = { .sharpen = l->sharpen, .lighting = l->lighting, .world = where.world, .cam_x = where.cam_x, .cam_y = where.cam_y,
-                    .t = 2.0f, .scale = scale < 1 ? 1 : scale, .extra = hd_frame.extra, .hdr = l->hdr };
+                    .t = 2.0f, .scale = scale < 1 ? 1 : scale, .extra = hd_frame.extra, .hdr = l->hdr, .dynlight = l->dynlight };
     const uint32_t *img = hd_post(hd_px, hd_w, hd_h, hd_w, &post);
     free(out->px);
     out->px = malloc((size_t)hd_w * hd_h * 4);

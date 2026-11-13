@@ -97,6 +97,7 @@ typedef struct {
     int   scale;                        /* picture pixels per game pixel */
     int   extra;                        /* widescreen game pixels on each side */
     int   hdr;                          /* HDR look: 0 off, 1 on, 2 strong */
+    int   dynlight;                     /* dynamic light: 0 off, 1 soft, 2 strong (light.c) */
 } HdPost;
 /* Returns the finished picture (row pitch w): src itself when nothing is on, else a copy
  * valid until the next call. */

@@ -18,6 +18,7 @@
 #include "outfit.h"
 #include "preview.h"
 #include "fx.h"
+#include "light.h"
 #include "combat.h"
 #include "recomp_rt.h"
 #include "automap.h"
@@ -200,7 +201,7 @@ static HdPost finishing(int scale, float t) {
     const uint8_t *layer = bus.ram + 0x1716;
     HdPost p = { .sharpen = settings.sharpen, .lighting = settings.lighting, .elements = settings.elements,
                  .footsteps = settings.footsteps, .t = t, .scale = scale < 1 ? 1 : scale, .extra = vdp_opts.extra_width,
-                 .hdr = settings.hdr };
+                 .hdr = settings.hdr, .dynlight = settings.dynlight };
     p.world = (layer[0x27] & 1) && !vdp_opts.mask_sides;
     p.cam_x = (float)(int16_t)(layer[0] << 8 | layer[1]);
     p.cam_y = (float)(int16_t)(layer[4] << 8 | layer[5]);
@@ -513,6 +514,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--merged") && i + 1 < argc) { settings.merged_pass = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--avx2") && i + 1 < argc) { settings.avx2 = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--hdr") && i + 1 < argc) { settings.hdr = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
+        else if (!strcmp(argv[i], "--dynlight") && i + 1 < argc) { settings.dynlight = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--tone") && i + 1 < argc) { settings.tone = atoi(argv[++i]) % VDP_TONES; test_overrides = true; }   /* 0-3 */
         else if (!strcmp(argv[i], "--color-blind") && i + 1 < argc) { settings.color_blind = atoi(argv[++i]) % VDP_BLINDS; test_overrides = true; }   /* 0-3 */
         else if (!strcmp(argv[i], "--lighting") && i + 1 < argc) { settings.lighting = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
@@ -958,7 +960,8 @@ int main(int argc, char **argv) {
                 SDL_Texture *res = NULL;
                 for (int k = 0; k < 11 && pixels; k++) {    /* the first builds the textures; the rest timed */
                     Uint64 t0 = SDL_GetPerformanceCounter();
-                    res = gpu_fx_finish(sr, hd_px, hd_w, hd_h, hd_w, &post, true);
+                    uint32_t *lit = light_apply(hd_px, hd_w, hd_h, hd_w, &post);   /* as the window does */
+                    res = gpu_fx_finish(sr, lit ? lit : hd_px, hd_w, hd_h, hd_w, &post, true);
                     if (res) { SDL_SetRenderTarget(sr, res); SDL_RenderReadPixels(sr, NULL, SDL_PIXELFORMAT_XRGB8888, pixels, hd_w * 4); SDL_SetRenderTarget(sr, NULL); }
                     if (k) ms += (double)(SDL_GetPerformanceCounter() - t0) * 1000 / SDL_GetPerformanceFrequency();
                 }
@@ -1287,12 +1290,14 @@ int main(int argc, char **argv) {
             HdPost post = finishing(hd_w / frame_width(), (float)(SDL_GetPerformanceCounter() - start) / freq);
             SDL_Texture *shown = NULL;
             if (gpu_effects_running && settings.gpu_effects && (post.lighting || post.hdr || post.sharpen)) {
-                /* The card grades, lights and sharpens; particles and numbers go on first. */
+                /* The card grades, lights and sharpens; dynamic light, particles and numbers go on first. */
+                uint32_t *pic = light_apply(hd_px, hd_w, hd_h, hd_w, &post);
+                if (!pic) pic = hd_px;
                 if (post.world && (post.elements || post.footsteps || combat_active(&post))) {
-                    fx_draw(hd_px, hd_w, hd_h, &post);
-                    combat_draw(hd_px, hd_w, hd_h, &post);
+                    fx_draw(pic, hd_w, hd_h, &post);
+                    combat_draw(pic, hd_w, hd_h, &post);
                 }
-                shown = gpu_fx_finish(ren, hd_px, hd_w, hd_h, hd_w, &post, iscale > 1);
+                shown = gpu_fx_finish(ren, pic, hd_w, hd_h, hd_w, &post, iscale > 1);
                 t_effects = SDL_GetPerformanceCounter();
                 t_upload = t_effects;
                 on_gpu = shown != NULL;

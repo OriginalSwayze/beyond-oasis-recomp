@@ -152,7 +152,7 @@ static void find_items(HdFrame *f, float cam_x, float cam_y) {
 
 /* The sprites that may give off elemental particles: the spirits and their magic, not Ali,
  * the enemies, people, items or the HUD. */
-static bool elemental(const HdFrame *f, int i) {
+bool fx_elemental(const HdFrame *f, int i) {
     const HdSprite *s = &f->sprites[i];
     if (!s->drawn || s->player || s->item || (s->attr & 0x8000)) return false;
     uint32_t obj;
@@ -190,7 +190,7 @@ void fx_game_frame(HdFrame *f, bool world, float cam_x, float cam_y) {
     if (!settings.elements || !world) return;
     for (int i = 0; i < 80; i++) {
         const HdSprite *s = &f->sprites[i];
-        if (!elemental(f, i)) continue;
+        if (!fx_elemental(f, i)) continue;
         /* Count each kind's pixels, keeping one at random of each to spawn from. */
         int count[4] = { 0, 0, 0, 0 }, px[4] = { 0 }, py[4] = { 0 };
         for (int y = 0; y < s->h; y++)

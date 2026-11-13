@@ -95,6 +95,7 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "scaler")) settings.scaler = !strcmp(v, "smooth") ? 1 : !strcmp(v, "sharp") ? 2 : 0;
         else if (!strcmp(k, "lighting")) settings.lighting = atoi(v);
         else if (!strcmp(k, "hdr_look")) settings.hdr = atoi(v);
+        else if (!strcmp(k, "dynamic_light")) settings.dynlight = atoi(v);
         else if (!strcmp(k, "color_tone")) { for (int i = 0; i < VDP_TONES; i++) if (!strcmp(v, tone_keys[i])) settings.tone = i; }
         else if (!strcmp(k, "color_blind")) { for (int i = 0; i < VDP_BLINDS; i++) if (!strcmp(v, blind_keys[i])) settings.color_blind = i; }
         else if (!strcmp(k, "elements")) settings.elements = parse_bool(v);
@@ -135,6 +136,7 @@ void settings_load(const char *path) {
     if (settings.sharpen < 0 || settings.sharpen > 3) settings.sharpen = 0;
     if (settings.lighting < 0 || settings.lighting > 2) settings.lighting = 0;
     if (settings.hdr < 0 || settings.hdr > 2) settings.hdr = 0;
+    if (settings.dynlight < 0 || settings.dynlight > 2) settings.dynlight = 0;
     if (settings.tone < 0 || settings.tone >= VDP_TONES) settings.tone = 0;
     if (settings.color_blind < 0 || settings.color_blind >= VDP_BLINDS) settings.color_blind = 0;
     if (settings.audio < 0 || settings.audio > 2) settings.audio = 0;
@@ -273,6 +275,7 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_SHARPEN:    snprintf(out, n, "%s", sharpen_names[settings.sharpen]); break;
     case OPT_SCALER:     snprintf(out, n, "%s", settings.scaler == 2 ? "Sharp" : settings.scaler ? "Smooth (xBR)" : "Edge"); break;
     case OPT_HDR:        snprintf(out, n, "%s", settings.hdr == 2 ? "Strong" : settings.hdr ? "On" : "Off"); break;
+    case OPT_DYNLIGHT:   snprintf(out, n, "%s", settings.dynlight == 2 ? "Strong" : settings.dynlight ? "Soft" : "Off"); break;
     case OPT_TONE:       snprintf(out, n, "%s", tone_names[settings.tone]); break;
     case OPT_BLIND:      snprintf(out, n, "%s", blind_names[settings.color_blind]); break;
     case OPT_LIGHTING:   snprintf(out, n, "%s", settings.lighting == 2 ? "Bright" : settings.lighting ? "Soft" : "Off"); break;
@@ -410,6 +413,7 @@ void settings_option_change(int id, int dir) {
     case OPT_SHARPEN:  settings.sharpen = settings_cycle(settings.sharpen, 4, dir); break;
     case OPT_SCALER:   settings.scaler = settings_cycle(settings.scaler, 3, dir); break;
     case OPT_HDR:      settings.hdr = settings_cycle(settings.hdr, 3, dir); break;
+    case OPT_DYNLIGHT: settings.dynlight = settings_cycle(settings.dynlight, 3, dir); break;
     case OPT_TONE:     settings.tone = settings_cycle(settings.tone, VDP_TONES, dir); break;
     case OPT_BLIND:    settings.color_blind = settings_cycle(settings.color_blind, VDP_BLINDS, dir); break;
     case OPT_LIGHTING: settings.lighting = settings_cycle(settings.lighting, 3, dir); break;

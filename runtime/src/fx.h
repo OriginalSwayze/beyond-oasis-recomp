@@ -11,6 +11,8 @@
  * (not Ali, the people, dropped items or the HUD), and moves the particles on. The camera
  * places them in the world. */
 void fx_game_frame(HdFrame *f, bool world, float cam_x, float cam_y);
+/* Whether sprite i is one of the spirits' or their magic's (not Ali, people, enemies, items or the HUD). */
+bool fx_elemental(const HdFrame *f, int i);
 void fx_clear(void);                    /* after a load, reset or scene change */
 
 /* Draws the particles onto a finished picture. */

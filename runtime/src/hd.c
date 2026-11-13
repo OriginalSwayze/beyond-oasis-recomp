@@ -9,6 +9,7 @@
 #include "hd.h"
 #include "motion.h"
 #include "fx.h"
+#include "light.h"
 #include "combat.h"
 #include "texpack.h"
 
@@ -1219,6 +1220,8 @@ bool hd_glow(const uint32_t *src, int w, int h, int pitch, const HdPost *p, cons
 const uint32_t *hd_post(const uint32_t *src, int w, int h, int pitch, const HdPost *p) {
     static uint32_t *buf;
     static size_t cap;
+    uint32_t *lit = light_apply(src, w, h, pitch, p);      /* dynamic light first: the rest goes on top */
+    if (lit) { src = lit; pitch = w; }
     bool light = p->lighting > 0;
     bool world_fx = p->world && (p->elements || p->footsteps || combat_active(p));
     int hdr = p->hdr < 0 ? 0 : p->hdr > 2 ? 2 : p->hdr;

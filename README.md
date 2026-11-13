@@ -131,7 +131,7 @@ Other headless options:
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
-* `--lighting N` (0-2), `--hdr N` (0-2), `--tone N` (0 original, 1 warm, 2 cool, 3 vivid), `--color-blind N` (0 off, 1 red-blind, 2 green-blind, 3 blue-blind), `--elements 0|1`, `--water 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1|2` (edge, smooth, sharp), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
+* `--lighting N` (0-2), `--dynlight N` (0-2), `--hdr N` (0-2), `--tone N` (0 original, 1 warm, 2 cool, 3 vivid), `--color-blind N` (0 off, 1 red-blind, 2 green-blind, 3 blue-blind), `--elements 0|1`, `--water 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1|2` (edge, smooth, sharp), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
 * `--bench N`: after each game frame, draw N pictures of it as the window does (layers put together at points between frames, then the finishing steps) and print the average times at the end: the game frame, putting the layers together (scaling layers, sprites, compositing) and the finishing steps. With `--shot F.png`, the last finished picture is saved. Use it with `--load N` and your own settings to see what a scene costs
 * `--merged 0|1`, `--avx2 0|1`: the Merged finishing pass and the AVX2 loops for this run
 * `--gpu-api direct3d11|opengl`: the renderer and GPU effects to use (with `--gpu-shot`, `--window-test` or a normal start)
@@ -203,7 +203,7 @@ emulated Z80, YM2612 and PSG; no audio is stored anywhere (`runtime/src/ost.c`):
 Keys: arrows select and change, Enter activates, Q / E (or Page Up / Down, LB / RB) switch
 tabs, [ and ] change the song, M turns the music on and off, Esc quits; the mouse and a
 controller work too. Pressing Play fades the music out; the game then starts from a reset
-with your real save RAM. "Show launcher at startup" turns the launcher off;
+with your real save RAM. "Show launcher at startup" (SPEED tab) turns the launcher off;
 `show_launcher=1` in `settings.ini` brings it back.
 
 ## Volume
@@ -228,7 +228,7 @@ saved; for a picture option, a live before/after on the paused frame (`runtime/s
 the renderer keeps every frame's layers, so the frame is drawn again without the option and
 with it (its value, or a typical one when it is off), joined by a dividing line that sweeps
 slowly across. Detail options (internal resolution, scaler, sharpening) show 1:1 pixels
-around the middle; scene-wide ones (lighting, HDR look, water, colour tone and colour-blind
+around the middle; scene-wide ones (lighting, dynamic light, HDR look, water, colour tone and colour-blind
 help) show the whole frame. Every other
 row explains what it changes. The launcher shows the same previews in a foil card over its case, on the
 frame the game saved last (`preview_frame.cache`, written when the menu opens and on quit).
@@ -418,6 +418,21 @@ pixels (fire, magic, gems, the HUD's gold) are gathered into a picture an eighth
 blurred at two sizes and laid over the picture with a screen blend. Sunlit ground is
 bright but neither, so daylight scenes do not wash out. The glow is made once per game
 frame, not for every in-between picture.
+
+"Dynamic light" (Off, Soft, Strong; `dynamic_light`) makes the spirits, their magic and
+fire light up what is around them (`runtime/src/light.c`). Once per game frame, the light
+sources are found in the captured layers: the bright, vivid pixels of the sprites Spirit
+effects gives particles to (so Ali, people, enemies, chests and the HUD give off none),
+and fire-coloured scenery (red brightest, then green, little blue, so red roofs and sand do
+not). Their light is gathered into cells of 4x4 game pixels and spread at two sizes, a tight
+pool and a wide one, then saturated softly so a crowd of lights cannot burn the picture
+out. Every picture is multiplied by it, so lit ground keeps its own texture, warmed or
+tinted by the light, rather than being covered by a glow. Dark places (from the scenery's
+mean brightness: interiors, caves, dungeons) also dim by up to a quarter (Soft) or nearly
+two fifths (Strong) so the light shows; daylight scenes are only ever lit. The HUD and the
+lights themselves are never dimmed. It costs about 1 ms a game frame for the light, and
+0.4 ms a picture at 4x to apply, and runs before the other effects, so it works with the
+CPU's and the GPU's.
 
 "HDR look" (Off, On, Strong; `hdr_look`) grades the picture the way an HDR grade does on an
 ordinary screen: an S curve presses the shadows down and lifts the highlights (black and
@@ -754,7 +769,7 @@ Ali ($FF1A72) and the spirit's slot ($FF1AA4). From that, whatever caused the hi
 * **Combat info** (EFFECTS): the damage rises from the enemy as a pixel-font number, gold
   for a one-hit kill; with health bars, a bar over the enemy shows what it has left (and a
   pale part catching up) for a few seconds after each hit.
-* **Rumble** (MORE): a light buzz on a hit, harder on a kill and when Ali is hit, a soft
+* **Rumble** (the launcher's GAME tab, the pause menu's MORE): a light buzz on a hit, harder on a kill and when Ali is hit, a soft
   one on a summon.
 * **Stats** (GAME): this session's play time and kills, and over all sessions the play
   time, enemies defeated, damage dealt and taken, biggest hit, hits taken and spirits

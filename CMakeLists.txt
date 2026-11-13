@@ -107,6 +107,7 @@ add_executable(BeyondOasis WIN32
   runtime/src/outfit.c
   runtime/src/preview.c
   runtime/src/fx.c
+  runtime/src/light.c
   runtime/src/gpu.c
   runtime/src/gpu_d3d11.c
   runtime/src/texpack.c

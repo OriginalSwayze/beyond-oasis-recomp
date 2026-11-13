@@ -612,14 +612,14 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Scaler", OPT_SCALER, "Edge rounds corners; Smooth follows curves (xBR); Sharp keeps pixels square." },
       { ROW_OPTION, "Texture pack", OPT_TEXPACK, "High-resolution tile replacements from a folder in texture_packs." } },
     { { ROW_OPTION, "Lighting", OPT_LIGHTING, "Fire, magic and bright light glow into their surroundings." },
+      { ROW_OPTION, "Dynamic light", OPT_DYNLIGHT, "Fire, magic and the spirits light up what is around them; dark places dim." },
       { ROW_OPTION, "HDR look", OPT_HDR, "Deeper shadows, brighter highlights, richer colour." },
       { ROW_OPTION, "Colour tone", OPT_TONE, "Warm sunlit gold, cool moonlit blue, or vivid colour." },
       { ROW_OPTION, "Colour-blind help", OPT_BLIND, "Moves apart colours a red-, green- or blue-blind eye sees as one." },
       { ROW_OPTION, "Spirit effects", OPT_ELEMENTS, "The spirits and their magic give off embers, drops, wisps or leaves." },
       { ROW_OPTION, "Water", OPT_WATER, "Water swells, foams at the shore, glints and reflects what stands above it." },
       { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." },
-      { ROW_OPTION, "Combat info", OPT_COMBAT, "Damage numbers rise from enemies; health bars show what they have left." },
-      { ROW_OPTION, "Rumble", OPT_RUMBLE, "The controller rumbles on hits, kills, when Ali is hit and on summons." } },
+      { ROW_OPTION, "Combat info", OPT_COMBAT, "Damage numbers rise from enemies; health bars show what they have left." } },
     { { ROW_ROM, "ROM", 0, "Your cartridge file. Add another country's to play in its language." },
       { ROW_OPTION, "Language", OPT_LANGUAGE, "The version of the game played: each country's cartridge has its own language." },
       { ROW_OPTION, "Smooth motion", OPT_SMOOTH, "Moves everything smoothly between the game's 30 Hz updates." },
@@ -628,7 +628,7 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Rewind", OPT_REWIND_ALL, "Hold the rewind key to step back in time." },
       { ROW_CONTROLS, "Controls", 0, "Keyboard keys and controller buttons for every action." },
       { ROW_OUTFIT, "Ali's outfit", 0, "Colours and animations for his clothes, hair, skin and jewellery." },
-      { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER, "Off starts the game directly (show_launcher=1 in settings.ini brings it back)." } },
+      { ROW_OPTION, "Rumble", OPT_RUMBLE, "The controller rumbles on hits, kills, when Ali is hit and on summons." } },
     { { ROW_OPTION, "Launcher music", OPT_MUSIC, NULL }, { ROW_TRACK, "Track", 0, NULL },
       { ROW_OPTION, "Player", OPT_OST_MODE, NULL }, { ROW_OPTION, "Volume", OPT_VOLUME, NULL },
       { ROW_OPTION, "Audio", OPT_AUDIO, NULL } },
@@ -642,9 +642,10 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Auto quality", OPT_AUTO_QUALITY, "Lowers the internal resolution while pictures fall behind the display." },
       { ROW_OPTION, "GPU effects", OPT_GPU, "Lighting, HDR and sharpening on the graphics card (Direct3D 11)." },
       { ROW_OPTION, "Merged finishing pass", OPT_MERGED, "The CPU's effects in one pass over the picture." },
-      { ROW_OPTION, "AVX2 pixel loops", OPT_AVX2, "Eight pixels at a time, on CPUs that have AVX2." } },
+      { ROW_OPTION, "AVX2 pixel loops", OPT_AVX2, "Eight pixels at a time, on CPUs that have AVX2." },
+      { ROW_OPTION, "Show launcher at startup", OPT_LAUNCHER, "Off starts the game directly (show_launcher=1 in settings.ini brings it back)." } },
 };
-static const int tab_count[TABS] = { 9, 9, 9, 5, 6, 5 };
+static const int tab_count[TABS] = { 9, 9, 9, 5, 6, 6 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define CASE_X 84                       /* the steelbook */
