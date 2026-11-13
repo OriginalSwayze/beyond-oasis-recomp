@@ -571,6 +571,7 @@ int main(int argc, char **argv) {
             settings.smooth_motion = true;
         }
         else if (!strcmp(argv[i], "--window-test") && i + 2 < argc) { window_test = atof(argv[++i]); window_test_png = argv[++i]; }
+        else if (!strcmp(argv[i], "--fx-stress")) fx_stress = true;
         else if (!strcmp(argv[i], "--bench") && i + 1 < argc) bench = atoi(argv[++i]);   /* pictures per game frame, as the window draws them */
         else if (!strcmp(argv[i], "--motion-check")) {
             /* --motion-check: from frame 300 on, check that the sprites shown are found in the

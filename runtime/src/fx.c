@@ -31,6 +31,8 @@ static inline float frand(void) { return (next() & 0xFFFFFF) / 16777216.f; }
 
 void fx_clear(void) { nparts = 0; have_cam = false; }
 
+bool fx_stress;
+
 static int kind_of(uint16_t c) {
     int r = (c >> 1) & 7, g = (c >> 5) & 7, b = (c >> 9) & 7;
     if (r >= 6 && g >= 2 && g <= 6 && b <= 2) return EMBER;
@@ -185,6 +187,9 @@ void fx_game_frame(HdFrame *f, bool world, float cam_x, float cam_y) {
         parts[n++] = *p;
     }
     nparts = n;
+    if (fx_stress && world)             /* testing: the screen kept full of every kind */
+        while (nparts < MAX_PARTICLES)
+            spawn((int)(next() % 7), cam_x + frand() * f->w, cam_y + frand() * f->h);
     if (settings.footsteps && world) footsteps(f, cam_x, cam_y);
     if (settings.elements && world) find_items(f, cam_x, cam_y);
     if (!settings.elements || !world) return;
@@ -224,38 +229,58 @@ static inline void glow(uint32_t *q, int r, int g, int b, int a) {    /* additiv
     *q = (uint32_t)((dr > 255 ? 255 : dr) << 16 | (dg > 255 ? 255 : dg) << 8 | (db > 255 ? 255 : db));
 }
 
-/* A soft round dot at (cx, cy) picture pixels, radius r. */
-static void dot(uint32_t *px, int w, int h, float cx, float cy, float r, int cr, int cg, int cb, float alpha, bool additive) {
+/* A soft round dot at (cx, cy) picture pixels, radius r, on rows ya to yb - 1 of the picture. */
+static void dot(uint32_t *px, int w, int ya, int yb, float cx, float cy, float r, int cr, int cg, int cb, float alpha, bool additive) {
     int x0 = (int)(cx - r - 1), x1 = (int)(cx + r + 1), y0 = (int)(cy - r - 1), y1 = (int)(cy + r + 1);
-    if (x1 < 0 || y1 < 0 || x0 >= w || y0 >= h) return;
-    for (int y = y0 < 0 ? 0 : y0; y <= y1 && y < h; y++)
-        for (int x = x0 < 0 ? 0 : x0; x <= x1 && x < w; x++) {
-            float dx = (x + .5f - cx) / r, dy = (y + .5f - cy) / r, d2 = dx * dx + dy * dy;
+    if (x1 < 0 || y1 < ya || x0 >= w || y0 >= yb) return;
+    float inv = 1 / r;
+    for (int y = y0 < ya ? ya : y0; y <= y1 && y < yb; y++) {
+        float dy = (y + .5f - cy) * inv, rest = 1 - dy * dy;
+        if (rest <= 0) continue;
+        /* Only the columns the circle covers on this row (with a pixel to spare: the test
+         * below decides). */
+        float half = sqrtf(rest) * r + 1;
+        int xa = (int)(cx - half), xb = (int)(cx + half);
+        if (xa < x0) xa = x0;
+        if (xb > x1) xb = x1;
+        uint32_t *row = px + (size_t)y * w;
+        for (int x = xa < 0 ? 0 : xa; x <= xb && x < w; x++) {
+            float dx = (x + .5f - cx) * inv, d2 = dx * dx + dy * dy;
             if (d2 >= 1) continue;
             int a = (int)((1 - d2) * alpha * 256);
-            if (additive) glow(&px[(size_t)y * w + x], cr, cg, cb, a);
-            else blend(&px[(size_t)y * w + x], cr, cg, cb, a);
+            if (additive) glow(&row[x], cr, cg, cb, a);
+            else blend(&row[x], cr, cg, cb, a);
         }
+    }
 }
 
-static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
+typedef struct { uint32_t *px; int w; const HdPost *p; } Band;
+
+/* Every particle, on rows ya to yb - 1: the picture is split into bands of rows over all
+ * cores, each drawing the particles in the same order, so the result is the same. */
+static void particle_band(void *ctx, int ya, int yb) {
+    const Band *bd = ctx;
+    uint32_t *px = bd->px;
+    int w = bd->w;
+    const HdPost *p = bd->p;
     float s = (float)p->scale;
     for (int i = 0; i < nparts; i++) {
         const Particle *q = &parts[i];
         float life = 1 - (float)q->age / q->life;
         float x = (q->x - p->cam_x) * s, y = (q->y - p->cam_y) * s;    /* made from picture positions: the sides are in */
         switch (q->kind) {
-        case EMBER: dot(px, w, h, x, y, s * 1.3f, 255, (int)(120 + 100 * life), 40, .9f * life, true); break;
-        case DROP:  dot(px, w, h, x, y, s * 1.0f, 150, 220, 255, .8f * life, true); break;
-        case WISP:  dot(px, w, h, x, y, s * 2.4f, 170, 110, 255, .35f * life, true); break;
-        case LEAF:  dot(px, w, h, x, y, s * 1.2f, 120, 220, 90, .85f * (life > .2f ? 1 : life * 5), false); break;
-        case DUST:  dot(px, w, h, x, y, s * (2 + 4 * (1 - life)), q->r, q->g, q->b, .65f * life, false); break;
-        case GRASS: dot(px, w, h, x, y, s * .9f, 90, 200, 70, .9f * life, false); break;
+        case EMBER: dot(px, w, ya, yb, x, y, s * 1.3f, 255, (int)(120 + 100 * life), 40, .9f * life, true); break;
+        case DROP:  dot(px, w, ya, yb, x, y, s * 1.0f, 150, 220, 255, .8f * life, true); break;
+        case WISP:  dot(px, w, ya, yb, x, y, s * 2.4f, 170, 110, 255, .35f * life, true); break;
+        case LEAF:  dot(px, w, ya, yb, x, y, s * 1.2f, 120, 220, 90, .85f * (life > .2f ? 1 : life * 5), false); break;
+        case DUST:  dot(px, w, ya, yb, x, y, s * (2 + 4 * (1 - life)), q->r, q->g, q->b, .65f * life, false); break;
+        case GRASS: dot(px, w, ya, yb, x, y, s * .9f, 90, 200, 70, .9f * life, false); break;
         default: {                      /* a ring on the water, widening */
             float rr = s * (2 + 7 * (1 - life));
+            if (y + rr * .45f + s < ya - 1 || y - rr * .45f - s > yb + 1) break;
             for (int a = 0; a < 24; a++) {
                 float ang = a * .2618f;
-                dot(px, w, h, x + cosf(ang) * rr, y + sinf(ang) * rr * .45f, s * .6f, 220, 235, 255, .5f * life, false);
+                dot(px, w, ya, yb, x + cosf(ang) * rr, y + sinf(ang) * rr * .45f, s * .6f, 220, 235, 255, .5f * life, false);
             }
         }
         }
@@ -263,6 +288,7 @@ static void draw_particles(uint32_t *px, int w, int h, const HdPost *p) {
 }
 
 void fx_draw(uint32_t *px, int w, int h, const HdPost *p) {
-    if (!p->world) return;
-    if (nparts) draw_particles(px, w, h, p);
+    if (!p->world || !nparts) return;
+    Band bd = { px, w, p };
+    hd_rows(particle_band, &bd, h);
 }

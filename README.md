@@ -133,6 +133,7 @@ Other headless options:
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
 * `--lighting N` (0-2), `--dynlight N` (0-2), `--hdr N` (0-2), `--tone N` (0 original, 1 warm, 2 cool, 3 vivid), `--color-blind N` (0 off, 1 red-blind, 2 green-blind, 3 blue-blind), `--elements 0|1`, `--water 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1|2` (edge, smooth, sharp), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
 * `--bench N`: after each game frame, draw N pictures of it as the window does (layers put together at points between frames, then the finishing steps) and print the average times at the end: the game frame, putting the layers together (scaling layers, sprites, compositing) and the finishing steps. With `--shot F.png`, the last finished picture is saved. Use it with `--load N` and your own settings to see what a scene costs
+* `--fx-stress`: keep the screen full of particles (the most there can be, of every kind), to measure the worst case with `--bench` or `--window-test`
 * `--merged 0|1`, `--avx2 0|1`: the Merged finishing pass and the AVX2 loops for this run
 * `--gpu-api direct3d11|opengl`: the renderer and GPU effects to use (with `--gpu-shot`, `--window-test` or a normal start)
 * `--gpu-shot GPU.png CPU.png`: at the end, finish the last frame on the graphics card (a hidden window, Direct3D 11 unless `--gpu-api` says otherwise, read back) and on the CPU, save both and print the card's time
@@ -462,7 +463,7 @@ list), dropped items and the HUD give none, whatever their colours. A dropped it
 object of the character list drawn as a single sprite of at most 16x16 that has stayed in
 place for a third of a second. Particles are placed
 in the world from the game's camera; a camera jump (a new scene) or loading a state clears
-them (`runtime/src/fx.c`).
+them (`runtime/src/fx.c`). The particles are drawn in bands of rows on all cores: a screen full of them (600) costs about 0.2 ms at 6x.
 
 "Water" (`water`): water is found by colour at the game's resolution (the plane pixel on
 top clearly blue, in runs at least five pixels wide, so blue details on land are left
