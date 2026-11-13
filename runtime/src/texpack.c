@@ -74,7 +74,7 @@ static void dump_tile(uint64_t key, int tile, int pal) {
     for (int y = 0; y < 8; y++)
         for (int x = 0; x < 8; x++) {
             int c = (x & 1) ? (p[y * 4 + x / 2] & 0xF) : (p[y * 4 + x / 2] >> 4);
-            px[y * 8 + x] = c ? 0xFF000000u | vdp_color_rgb(vdp.cram[(pal & 3) * 16 + c]) : 0;
+            px[y * 8 + x] = c ? 0xFF000000u | vdp_color_raw(vdp.cram[(pal & 3) * 16 + c]) : 0;
         }
     char path[1200];
     snprintf(path, sizeof path, "%s%016llx.png", dump_dir, (unsigned long long)key);

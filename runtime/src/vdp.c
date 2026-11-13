@@ -5,6 +5,7 @@
 #include "hd.h"
 #include "motion.h"
 #include "texpack.h"
+#include <math.h>
 #include <string.h>
 #include <stdio.h>
 #include "m68k.h"
@@ -285,6 +286,7 @@ static void draw_window(uint8_t *out, int w, int extra, int line) {
 
 static inline uint32_t layer_px(uint8_t v);
 static uint32_t rgb(uint16_t c, int mode);
+static uint32_t rgb_raw(uint16_t c, int mode);
 
 /* ---- The player's outfit ----------------------------------------------------- *
  * Sprite pixels set bit 7 of their byte when they are the player's and their colour
@@ -356,6 +358,7 @@ uint16_t vdp_outfit_color(uint16_t pick, int anim, uint16_t now, int ref, int ab
 }
 
 uint32_t vdp_color_rgb(uint16_t cram) { return rgb(cram, 1); }
+uint32_t vdp_color_raw(uint16_t cram) { return rgb_raw(cram, 1); }
 
 /* This line's outfit colours, from the band it is in on him. */
 static void outfit_for_line(int line) {
@@ -484,9 +487,70 @@ static void draw_sprites(uint8_t *out, int w, int extra, int line) {
     }
 }
 
-static uint32_t rgb(uint16_t c, int mode) {
+static uint32_t rgb_raw(uint16_t c, int mode) {
     const uint8_t *t = mode == 0 ? LEVEL_SHADOW : mode == 2 ? LEVEL_HIGHLIGHT : LEVEL_NORMAL;
     return (uint32_t)t[(c >> 1) & 7] << 16 | (uint32_t)t[(c >> 5) & 7] << 8 | t[(c >> 9) & 7];
+}
+
+/* ---- Colour tone and colour-blind help ------------------------------------------------ *
+ * The VDP has 512 colours in each of its three modes, so the tone and the colour-blind
+ * correction are worked out once for each (in linear light) into a table that rgb() reads:
+ * every picture, scaled or not, and every effect made from it gets them for nothing. The
+ * correction is daltonization: the colour as that eye sees it (Machado, Oliveira and
+ * Fernandes' matrices, full severity) is taken from the colour, and what that eye misses is
+ * moved into channels it can tell apart, at two thirds of the full shift so the scene keeps its
+ * colours. */
+static uint32_t rgb_lut[3][512];
+static int lut_tone = -1, lut_blind = -1;
+
+static float to_linear(float v) { return v <= .04045f ? v / 12.92f : powf((v + .055f) / 1.055f, 2.4f); }
+static uint8_t to_srgb(float v) {
+    v = v < 0 ? 0 : v > 1 ? 1 : v;
+    v = v <= .0031308f ? v * 12.92f : 1.055f * powf(v, 1 / 2.4f) - .055f;
+    return (uint8_t)(v * 255 + .5f);
+}
+
+static void grade(float c[3], int tone, int blind) {
+    static const float gains[VDP_TONES][3] = { { 1, 1, 1 }, { 1, .95f, .82f }, { .86f, .95f, 1 }, { 1, 1, 1 } };
+    for (int k = 0; k < 3; k++) c[k] *= gains[tone][k];
+    if (tone == VDP_TONE_VIVID) {
+        float y = .2126f * c[0] + .7152f * c[1] + .0722f * c[2];
+        for (int k = 0; k < 3; k++) c[k] = y + (c[k] - y) * 1.15f;
+    }
+    if (blind) {
+        static const float sim[4][3][3] = {
+            { { 0 } },
+            { { .152286f, 1.052583f, -.204868f }, { .114503f, .786281f, .099216f }, { -.003882f, -.048116f, 1.051998f } },
+            { { .367322f, .860646f, -.227968f }, { .280085f, .672501f, .047413f }, { -.011820f, .042940f, .968881f } },
+            { { 1.255528f, -.076749f, -.178779f }, { -.078411f, .930809f, .147602f }, { .004733f, .691367f, .303900f } },
+        };
+        float e[3];
+        for (int k = 0; k < 3; k++) e[k] = .65f * (c[k] - (sim[blind][k][0] * c[0] + sim[blind][k][1] * c[1] + sim[blind][k][2] * c[2]));
+        if (blind == VDP_BLIND_TRITAN) { c[0] += e[0] + .7f * e[2]; c[1] += e[1] + .7f * e[2]; }
+        else { c[1] += .7f * e[0] + e[1]; c[2] += .7f * e[0] + e[2]; }
+    }
+}
+
+static void make_lut(void) {
+    int tone = vdp_opts.tone, blind = vdp_opts.color_blind;
+    for (int mode = 0; mode < 3; mode++)
+        for (int i = 0; i < 512; i++) {
+            uint16_t cram = (uint16_t)((i & 7) << 1 | (i >> 3 & 7) << 5 | (i >> 6 & 7) << 9);
+            uint32_t v = rgb_raw(cram, mode);
+            if (tone || blind) {
+                float c[3] = { to_linear((v >> 16 & 255) / 255.f), to_linear((v >> 8 & 255) / 255.f), to_linear((v & 255) / 255.f) };
+                grade(c, tone, blind);
+                v = (uint32_t)to_srgb(c[0]) << 16 | (uint32_t)to_srgb(c[1]) << 8 | to_srgb(c[2]);
+            }
+            rgb_lut[mode][i] = v;
+        }
+    lut_tone = tone;
+    lut_blind = blind;
+}
+
+static uint32_t rgb(uint16_t c, int mode) {
+    if (vdp_opts.tone != lut_tone || vdp_opts.color_blind != lut_blind) make_lut();
+    return rgb_lut[mode][(c >> 1 & 7) | (c >> 5 & 7) << 3 | (c >> 9 & 7) << 6];
 }
 
 /* A layer pixel: the CRAM colour in bits 0-15 and the layer byte in bits 16-23 (the

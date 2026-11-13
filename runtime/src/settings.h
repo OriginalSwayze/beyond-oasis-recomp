@@ -24,6 +24,8 @@ typedef struct {
     int  scaler;                        /* layer scaler: 0 edge (Scale2x/3x), 1 smooth (xBR rules), 2 sharp (plain blocks) */
     int  lighting;                      /* glow of bright pixels: 0 off, 1 soft, 2 bright (hd_post) */
     int  hdr;                           /* HDR look: 0 off, 1 on, 2 strong (hd_post) */
+    int  tone;                          /* colour tone: VDP_TONE_* (vdp.c) */
+    int  color_blind;                   /* colour-blind help: VDP_BLIND_* (vdp.c) */
     bool elements;                      /* particles from spirits and magic (fx.c) */
     bool footsteps;                     /* dust, grass and splashes where Ali walks (fx.c) */
     bool water;                         /* water shimmers, foams, glints and reflects (hd_water) */
@@ -80,7 +82,7 @@ enum { OPT_WIDESCREEN, OPT_ASPECT, OPT_FULLSCREEN, OPT_INTEGER, OPT_WINDOW, OPT_
        OPT_TEXPACK, OPT_DUMP,
        OPT_COMBAT, OPT_RUMBLE, OPT_FAST, OPT_TIMER, OPT_RANDOMIZER, OPT_HDR,
        OPT_PERF_STATS, OPT_AUTO_QUALITY, OPT_MERGED, OPT_AVX2, OPT_GPU,
-       OPT_LANGUAGE };                  /* the version played: each has its own language */
+       OPT_LANGUAGE, OPT_TONE, OPT_BLIND };                  /* the version played: each has its own language */
 /* Set by the game when it knows: the GPU effects are running (the renderer is OpenGL and
  * the shader built), and whether the CPU has AVX2. The launcher leaves them false. */
 extern bool gpu_effects_running, cpu_has_avx2;

@@ -68,7 +68,7 @@ static uint32_t ground_at(const HdFrame *f, int x, int y) {
     uint32_t a = f->a[y][x], b = f->b[y][x];
     bool ao = (a >> 16) & 0x0F, ah = (a >> 16) & 0x40, bo = (b >> 16) & 0x0F, bh = (b >> 16) & 0x40;
     uint32_t top = ao && (ah || !(bo && bh)) ? a : bo ? b : 0;
-    return top ? vdp_color_rgb((uint16_t)top) : 0;
+    return top ? vdp_color_raw((uint16_t)top) : 0;
 }
 
 static void footsteps(const HdFrame *f, float cam_x, float cam_y) {

@@ -14,7 +14,7 @@
 #include "settings.h"
 #include "ui.h"
 
-typedef struct { int scale, scaler, sharpen, lighting; bool pack, water; } Look;
+typedef struct { int scale, scaler, sharpen, lighting, hdr, tone, blind; bool pack, water; } Look;
 
 static struct { bool world; float cam_x, cam_y, focus_x, focus_y; } where;
 
@@ -59,7 +59,8 @@ bool preview_ready(void) { return hd_frame.h > 0 && hd_frame.w > 0; }
 
 /* ---- Which looks to compare ------------------------------------------------------------ */
 static Look look_now(void) {
-    return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, hd_texpack, settings.water };
+    return (Look){ settings.internal_scale, settings.scaler, settings.sharpen, settings.lighting, settings.hdr, settings.tone,
+                   settings.color_blind, hd_texpack, settings.water };
 }
 
 /* The look without the option and with it, whether to show it 1:1, and the label of the
@@ -91,6 +92,21 @@ static bool looks_for(int option, Look *off, Look *on, bool *zoom, char *label, 
         off->lighting = 0;
         on->lighting = settings.lighting ? settings.lighting : 2;
         settings.lighting = on->lighting;
+        break;
+    case OPT_HDR:
+        off->hdr = 0;
+        on->hdr = settings.hdr ? settings.hdr : 1;
+        settings.hdr = on->hdr;
+        break;
+    case OPT_TONE:
+        off->tone = VDP_TONE_ORIGINAL;
+        on->tone = settings.tone ? settings.tone : VDP_TONE_WARM;
+        settings.tone = on->tone;
+        break;
+    case OPT_BLIND:
+        off->blind = VDP_BLIND_OFF;
+        on->blind = settings.color_blind ? settings.color_blind : VDP_BLIND_DEUTAN;
+        settings.color_blind = on->blind;
         break;
     case OPT_WATER:
         off->water = false; on->water = true;
@@ -124,6 +140,9 @@ static void render_look(const Look *l, Picture *out) {
     int keep_scaler = hd_scaler;
     bool keep_pack = hd_texpack, keep_water = hd_water;
     float keep_time = hd_time;
+    int keep_tone = vdp_opts.tone, keep_blind = vdp_opts.color_blind;
+    vdp_opts.tone = l->tone;
+    vdp_opts.color_blind = l->blind;
     hd_scaler = l->scaler;
     hd_texpack = l->pack;
     hd_water = l->water;
@@ -133,8 +152,11 @@ static void render_look(const Look *l, Picture *out) {
     hd_texpack = keep_pack;
     hd_water = keep_water;
     hd_time = keep_time;
+    vdp_opts.tone = keep_tone;
+    vdp_opts.color_blind = keep_blind;
     int scale = hd_w / (hd_frame.w > 0 ? hd_frame.w : 1);
-    HdPost post = { l->sharpen, l->lighting, false, false, where.world, where.cam_x, where.cam_y, 2.0f, scale < 1 ? 1 : scale, hd_frame.extra };
+    HdPost post = { .sharpen = l->sharpen, .lighting = l->lighting, .world = where.world, .cam_x = where.cam_x, .cam_y = where.cam_y,
+                    .t = 2.0f, .scale = scale < 1 ? 1 : scale, .extra = hd_frame.extra, .hdr = l->hdr };
     const uint32_t *img = hd_post(hd_px, hd_w, hd_h, hd_w, &post);
     free(out->px);
     out->px = malloc((size_t)hd_w * hd_h * 4);

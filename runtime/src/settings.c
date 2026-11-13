@@ -37,6 +37,10 @@ bool gpu_effects_running, cpu_has_avx2;
 
 static const char *filter_keys[FILTER_COUNT] = { "off", "scanlines", "crt", "lcd" };
 static const char *filter_names[FILTER_COUNT] = { "Off", "Scanlines", "CRT", "LCD" };
+static const char *tone_keys[VDP_TONES] = { "original", "warm", "cool", "vivid" };
+static const char *tone_names[VDP_TONES] = { "Original", "Warm", "Cool", "Vivid" };
+static const char *blind_keys[VDP_BLINDS] = { "off", "protanopia", "deuteranopia", "tritanopia" };
+static const char *blind_names[VDP_BLINDS] = { "Off", "Red-blind (protanopia)", "Green-blind (deuteranopia)", "Blue-blind (tritanopia)" };
 
 static char base_dir[1024];
 void settings_set_base(const char *dir) { snprintf(base_dir, sizeof base_dir, "%s", dir ? dir : ""); }
@@ -91,6 +95,8 @@ void settings_load(const char *path) {
         else if (!strcmp(k, "scaler")) settings.scaler = !strcmp(v, "smooth") ? 1 : !strcmp(v, "sharp") ? 2 : 0;
         else if (!strcmp(k, "lighting")) settings.lighting = atoi(v);
         else if (!strcmp(k, "hdr_look")) settings.hdr = atoi(v);
+        else if (!strcmp(k, "color_tone")) { for (int i = 0; i < VDP_TONES; i++) if (!strcmp(v, tone_keys[i])) settings.tone = i; }
+        else if (!strcmp(k, "color_blind")) { for (int i = 0; i < VDP_BLINDS; i++) if (!strcmp(v, blind_keys[i])) settings.color_blind = i; }
         else if (!strcmp(k, "elements")) settings.elements = parse_bool(v);
         else if (!strcmp(k, "footsteps")) settings.footsteps = parse_bool(v);
         else if (!strcmp(k, "water")) settings.water = parse_bool(v);
@@ -129,6 +135,8 @@ void settings_load(const char *path) {
     if (settings.sharpen < 0 || settings.sharpen > 3) settings.sharpen = 0;
     if (settings.lighting < 0 || settings.lighting > 2) settings.lighting = 0;
     if (settings.hdr < 0 || settings.hdr > 2) settings.hdr = 0;
+    if (settings.tone < 0 || settings.tone >= VDP_TONES) settings.tone = 0;
+    if (settings.color_blind < 0 || settings.color_blind >= VDP_BLINDS) settings.color_blind = 0;
     if (settings.audio < 0 || settings.audio > 2) settings.audio = 0;
     if (settings.cheat_attack < 0 || settings.cheat_attack > 3) settings.cheat_attack = 0;
     if (settings.cheat_speed < 0 || settings.cheat_speed > 2) settings.cheat_speed = 0;
@@ -195,6 +203,8 @@ void settings_save(const char *path) {
     fprintf(f, "scaler=%s\n", settings.scaler == 2 ? "sharp" : settings.scaler ? "smooth" : "edge");
     fprintf(f, "lighting=%d\n", settings.lighting);
     fprintf(f, "hdr_look=%d\n", settings.hdr);
+    fprintf(f, "color_tone=%s\n", tone_keys[settings.tone]);
+    fprintf(f, "color_blind=%s\n", blind_keys[settings.color_blind]);
     fprintf(f, "elements=%d\n", settings.elements);
     fprintf(f, "footsteps=%d\n", settings.footsteps);
     fprintf(f, "water=%d\n", settings.water);
@@ -263,6 +273,8 @@ void settings_option_text(int id, char *out, size_t n) {
     case OPT_SHARPEN:    snprintf(out, n, "%s", sharpen_names[settings.sharpen]); break;
     case OPT_SCALER:     snprintf(out, n, "%s", settings.scaler == 2 ? "Sharp" : settings.scaler ? "Smooth (xBR)" : "Edge"); break;
     case OPT_HDR:        snprintf(out, n, "%s", settings.hdr == 2 ? "Strong" : settings.hdr ? "On" : "Off"); break;
+    case OPT_TONE:       snprintf(out, n, "%s", tone_names[settings.tone]); break;
+    case OPT_BLIND:      snprintf(out, n, "%s", blind_names[settings.color_blind]); break;
     case OPT_LIGHTING:   snprintf(out, n, "%s", settings.lighting == 2 ? "Bright" : settings.lighting ? "Soft" : "Off"); break;
     case OPT_ELEMENTS:   snprintf(out, n, "%s", settings.elements ? "On" : "Off"); break;
     case OPT_FOOTSTEPS:  snprintf(out, n, "%s", settings.footsteps ? "On" : "Off"); break;
@@ -398,6 +410,8 @@ void settings_option_change(int id, int dir) {
     case OPT_SHARPEN:  settings.sharpen = settings_cycle(settings.sharpen, 4, dir); break;
     case OPT_SCALER:   settings.scaler = settings_cycle(settings.scaler, 3, dir); break;
     case OPT_HDR:      settings.hdr = settings_cycle(settings.hdr, 3, dir); break;
+    case OPT_TONE:     settings.tone = settings_cycle(settings.tone, VDP_TONES, dir); break;
+    case OPT_BLIND:    settings.color_blind = settings_cycle(settings.color_blind, VDP_BLINDS, dir); break;
     case OPT_LIGHTING: settings.lighting = settings_cycle(settings.lighting, 3, dir); break;
     case OPT_ELEMENTS: settings.elements = !settings.elements; break;
     case OPT_FOOTSTEPS: settings.footsteps = !settings.footsteps; break;

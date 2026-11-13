@@ -116,7 +116,7 @@ Other headless options:
 * `--hide-layers MASK`: hide plane A (1), plane B (2) or sprites (4)
 * `--state-check A B`: snapshot before frame A, run to B, reload and replay; both runs must end identical
 * `--rewind-check K`: record every frame, rewind K frames; must equal the snapshot taken then
-* `--launcher-shot F.png WIDTH TAB TIME`: render the launcher to a PNG with tab TAB (0-3) open, TIME seconds into its animations
+* `--launcher-shot F.png WIDTH TAB TIME`: render the launcher to a PNG with tab TAB (0-5: display, effects, game, music, cheats, speed) open, TIME seconds into its animations
 * `--no-launcher`: start the game directly this time
 * `--launcher-music-check SECONDS`: run the soundtrack player without an audio device; prints the title's song, each song change and the level every 30 seconds
 * `--ost-check SECONDS`: play every song for SECONDS and print its level per second (in tenths of its loudest second), then the menu sound effects' levels
@@ -131,7 +131,7 @@ Other headless options:
 * `--motion-check`: from frame 300 on, check that every frame's sprites are found in a tick the game built; prints how many sprites follow an object and the largest move
 * `--filter N`: use display filter N (0 off, 1 scanlines, 2 CRT, 3 LCD)
 * `--sharpen N`: sharpening 0-3 for this run (shows in `--filter-shot`)
-* `--lighting N` (0-2), `--hdr N` (0-2), `--elements 0|1`, `--water 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1|2` (edge, smooth, sharp), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
+* `--lighting N` (0-2), `--hdr N` (0-2), `--tone N` (0 original, 1 warm, 2 cool, 3 vivid), `--color-blind N` (0 off, 1 red-blind, 2 green-blind, 3 blue-blind), `--elements 0|1`, `--water 0|1`, `--footsteps 0|1`, `--texture-pack NAME`, `--dump-tiles 0|1`, `--scaler 0|1|2` (edge, smooth, sharp), `--audio N` (0 original, 1 clean, 2 rich): the effects for this run (`--filter-shot` also prints how long the finishing steps took)
 * `--bench N`: after each game frame, draw N pictures of it as the window does (layers put together at points between frames, then the finishing steps) and print the average times at the end: the game frame, putting the layers together (scaling layers, sprites, compositing) and the finishing steps. With `--shot F.png`, the last finished picture is saved. Use it with `--load N` and your own settings to see what a scene costs
 * `--merged 0|1`, `--avx2 0|1`: the Merged finishing pass and the AVX2 loops for this run
 * `--gpu-api direct3d11|opengl`: the renderer and GPU effects to use (with `--gpu-shot`, `--window-test` or a normal start)
@@ -140,7 +140,7 @@ Other headless options:
 * `--outfit a,b,...`, `--outfit-anims 0,1,...`: Ali's outfit colours and animations for this run (as `outfit_colors` and `outfit_anims` in `settings.ini`)
 * `--outfit-check F.png`: at the end, save Ali's sprites 6x in his current colours and list the colour indices he uses
 * `--outfit-shot`: with `--menu-shot`, render the outfit page over the menu
-* `--menu-tab TAB ROW`: with `--menu-shot`, open tab TAB (0 game, 1 display, 2 effects, 3 more) with row ROW selected (shows its preview card)
+* `--menu-tab TAB ROW`: with `--menu-shot`, open tab TAB (0 game, 1 display, 2 effects, 3 cheats, 4 more, 5 speed) with row ROW selected (shows its preview card)
 * `--save-preview`: at the end, save the frame for the launcher's previews (`preview_frame.cache`)
 * `--png-check F.png`: read a PNG with the built-in reader and print its size and a checksum of its pixels
 * `--objects`: at the end, list every sprite on screen with the object that drew it (its list, slot, type and first words)
@@ -155,18 +155,18 @@ Other headless options:
 ## Launcher
 
 Before the game starts, a launcher presents the game like a collector's steelbook on a
-dark night over the dunes: stars twinkle, mist drifts low and embers rise. The case is dark
-brushed steel with the title logo in polished gold, the Gold Armlet embossed into it, and
-the four spirits set in sockets below as glowing orbs with their emblems: Dytto (water),
-Efreet (fire), Bow (plant) and Shade (shadow). A raised double frame of holographic foil
-runs round it. The light drifts slowly and leans towards the mouse, like tilting a real
-case: the foil's colours shift with it, a glint sweeps across, and sparkles flash at their
-own angles.
+dark night: stars twinkle, soft lights drift out of focus and embers rise. The case is dark
+brushed steel with the title in polished gold and the Gold Armlet embossed into it, inside
+a raised double frame of holographic foil. The light drifts slowly and leans towards the
+mouse, like tilting a real case: the foil's colours shift with it, a glint sweeps across,
+and sparkles flash at their own angles. Everything fades in when the launcher opens.
 
-The settings sit on a tablet of the same steel, with a foil frame and one tab per spirit:
-DISPLAY, EFFECTS, GAME, MUSIC and CHEATS (the Gold Armlet's). The open tab's spirit glows
-in its socket on the case; its rows slide in, the highlight glides between rows, a changed
-value pulses, and the selected option's description shows under them.
+The settings sit on a tablet of the same steel, with a foil frame and six tabs, each with
+a line icon: DISPLAY, EFFECTS, GAME, MUSIC, CHEATS and SPEED. A holographic bar glides
+under the open tab; its rows slide in, the highlight glides between rows on springs,
+on/off options are switches whose knobs slide across, a changed value pulses, and the
+selected option's description shows under them. The keys for each action are shown as
+keycaps along the bottom, and a sheen runs over the Play button.
 
 The surfaces (`runtime/src/foil.c`) are height fields with a material per pixel (steel,
 holographic foil, gold, embossed art, engraved recesses), built once per window size and
@@ -174,8 +174,8 @@ shaded every frame for the light on the renderer's worker threads.
 
 The artwork comes from your ROM: on first start the launcher plays the intro silently
 (about two seconds), captures the armlet scene and the title screen, and caches them in
-`launcher_art.cache` next to the executable. The spirits' orbs and emblems are drawn from
-shapes. Everything is drawn in software every frame (about 6 ms at 720p, 13 ms at 1080p;
+`launcher_art.cache` next to the executable (always in the console's own colours, whatever
+the colour tone). Everything is drawn in software every frame (about 6 ms at 720p, 13 ms at 1080p;
 larger windows are drawn at 1080p and scaled up).
 
 ### Soundtrack player and sounds
@@ -216,17 +216,20 @@ click on the track sets it there (in steps of 5%).
 
 Esc pauses the game over a blurred, darkened copy of the last frame, with mist and embers
 drifting over it. The menu is a panel of the launcher's steel with "PAUSED" stamped into it
-in gold and a holographic frame, with one tab per spirit: GAME (resume, save and load the
-nine slots, rewind, reset, quit), DISPLAY, EFFECTS, CHEATS and MORE (volume, audio,
-Controls, Ali's outfit). Q / E, Page Up / Down or LB / RB switch tabs;
-the rows slide in, the highlight glides, and a changed value pulses.
+in gold and a holographic frame, with six tabs like the launcher's: GAME (resume, save and
+load the nine slots, the map, stats, rewind, reset, quit), DISPLAY, EFFECTS, CHEATS, MORE
+(language, volume, audio, Controls, Ali's outfit) and SPEED. Q / E, Page Up / Down or
+LB / RB switch tabs; the rows slide in, the highlight glides, switches slide, and a changed
+value pulses. The menu opens and closes with a short dissolve to and from the sharp game
+picture.
 
 The card on the right, framed in holographic foil, follows the selected row: the save slot's thumbnail and when it was
 saved; for a picture option, a live before/after on the paused frame (`runtime/src/preview.c`):
 the renderer keeps every frame's layers, so the frame is drawn again without the option and
 with it (its value, or a typical one when it is off), joined by a dividing line that sweeps
 slowly across. Detail options (internal resolution, scaler, sharpening) show 1:1 pixels
-around the middle; scene-wide ones (lighting) show the whole frame. Every other
+around the middle; scene-wide ones (lighting, HDR look, water, colour tone and colour-blind
+help) show the whole frame. Every other
 row explains what it changes. The launcher shows the same previews in a foil card over its case, on the
 frame the game saved last (`preview_frame.cache`, written when the menu opens and on quit).
 
@@ -420,6 +423,20 @@ frame, not for every in-between picture.
 ordinary screen: an S curve presses the shadows down and lifts the highlights (black and
 white stay where they are), and vibrance makes muted colours richer while leaving vivid
 ones alone, so fire, magic and gems stand out.
+
+"Colour tone" (Original, Warm, Cool, Vivid; `color_tone`) and "Colour-blind help" (Off,
+red-blind, green-blind, blue-blind; `color_blind=off|protanopia|deuteranopia|tritanopia`)
+change the console's own colours. The VDP has 512 colours in each of its normal, shadow and
+highlight modes, so both are worked out once for each of them (in linear light) into the
+table every pixel's colour comes from (`runtime/src/vdp.c`): every picture, at every
+internal resolution, with the CPU or the GPU effects, and every effect made from it follows
+for free. Warm and Cool shift the white balance towards sunlit gold or moonlit blue; Vivid
+adds saturation. Colour-blind help is daltonization: each colour as that eye sees it
+(Machado, Oliveira and Fernandes' simulation, full strength) is taken from the colour, and
+two thirds of what that eye misses is moved into channels it can tell apart, so reds and
+greens (or blues and yellows) that would look the same come apart while the scene keeps
+its colours. Water, footsteps and texture-pack dumps still look at the original colours,
+and texture-pack images are drawn as they are.
 
 "Spirit effects" (`elements`): after each game frame, the bright, vivid pixels of the
 sprites of the spirits and their magic give off particles by colour: fire colours embers

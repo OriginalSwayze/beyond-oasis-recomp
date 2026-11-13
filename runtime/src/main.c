@@ -178,6 +178,8 @@ static void apply_settings(void) {
     sound_quality = settings.audio;
     hd_scaler = settings.scaler;
     hd_water = settings.water;
+    vdp_opts.tone = settings.tone;
+    vdp_opts.color_blind = settings.color_blind;
     /* Texture packs: load a pack when it changes (it can be many images), dump on request. */
     static char loaded_pack[64] = "";
     static bool pack_tried;
@@ -196,9 +198,9 @@ static void apply_settings(void) {
  * plane A layer struct at $FF1716 holds it (+00 x, +04 y) while a map layer is active. */
 static HdPost finishing(int scale, float t) {
     const uint8_t *layer = bus.ram + 0x1716;
-    HdPost p = { settings.sharpen, settings.lighting, settings.elements, settings.footsteps,
-                 false, 0, 0, t, scale < 1 ? 1 : scale, vdp_opts.extra_width };
-    p.hdr = settings.hdr;
+    HdPost p = { .sharpen = settings.sharpen, .lighting = settings.lighting, .elements = settings.elements,
+                 .footsteps = settings.footsteps, .t = t, .scale = scale < 1 ? 1 : scale, .extra = vdp_opts.extra_width,
+                 .hdr = settings.hdr };
     p.world = (layer[0x27] & 1) && !vdp_opts.mask_sides;
     p.cam_x = (float)(int16_t)(layer[0] << 8 | layer[1]);
     p.cam_y = (float)(int16_t)(layer[4] << 8 | layer[5]);
@@ -511,6 +513,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--merged") && i + 1 < argc) { settings.merged_pass = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--avx2") && i + 1 < argc) { settings.avx2 = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--hdr") && i + 1 < argc) { settings.hdr = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
+        else if (!strcmp(argv[i], "--tone") && i + 1 < argc) { settings.tone = atoi(argv[++i]) % VDP_TONES; test_overrides = true; }   /* 0-3 */
+        else if (!strcmp(argv[i], "--color-blind") && i + 1 < argc) { settings.color_blind = atoi(argv[++i]) % VDP_BLINDS; test_overrides = true; }   /* 0-3 */
         else if (!strcmp(argv[i], "--lighting") && i + 1 < argc) { settings.lighting = atoi(argv[++i]) % 3; test_overrides = true; }   /* 0-2 */
         else if (!strcmp(argv[i], "--elements") && i + 1 < argc) { settings.elements = atoi(argv[++i]) != 0; test_overrides = true; }
         else if (!strcmp(argv[i], "--footsteps") && i + 1 < argc) { settings.footsteps = atoi(argv[++i]) != 0; test_overrides = true; }

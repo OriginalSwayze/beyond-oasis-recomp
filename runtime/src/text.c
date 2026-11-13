@@ -9,7 +9,7 @@
 #include <windows.h>
 
 TextMask text_render(const char *utf8, const char *face, int px, int weight, int tracking) {
-    TextMask m = { 0, 0, NULL };
+    TextMask m = { 0 };
     wchar_t wtext[512], wface[64];
     int n = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wtext, 512) - 1;
     MultiByteToWideChar(CP_UTF8, 0, face, -1, wface, 64);

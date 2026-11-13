@@ -65,7 +65,11 @@ typedef struct {
     bool hd_capture;                    /* keep each line's layers for hd_compose() (hd.h) */
     bool outfit;                        /* draw the player's sprites with vdp_outfit's colours */
     bool tile_refs;                     /* keep each pixel's tile reference for texture packs (texpack.h) */
+    int  tone;                          /* VDP_TONE_*: the colours' tone (vdp.c) */
+    int  color_blind;                   /* VDP_BLIND_*: colours moved where that eye can tell them apart */
 } VdpOptions;
+enum { VDP_TONE_ORIGINAL, VDP_TONE_WARM, VDP_TONE_COOL, VDP_TONE_VIVID, VDP_TONES };
+enum { VDP_BLIND_OFF, VDP_BLIND_PROTAN, VDP_BLIND_DEUTAN, VDP_BLIND_TRITAN, VDP_BLINDS };
 
 /* The player character's outfit colours (vdp.c). Some colours are shared by two parts of
  * him (his hair and the Gold Armlet, his headband and boots), so his body is split by
@@ -95,7 +99,8 @@ extern uint16_t vdp_player_cram[64];
 extern int      vdp_player_w, vdp_player_h;   /* 0 until he has been on screen */
 extern int      vdp_player_x, vdp_player_y;   /* where that picture was on screen (x from the left of the 320 area) */
 uint16_t vdp_outfit_shade(uint16_t pick, uint16_t now, int ref);   /* the colour an index gets */
-uint32_t vdp_color_rgb(uint16_t cram);                             /* 0x00RRGGBB */
+uint32_t vdp_color_rgb(uint16_t cram);                             /* 0x00RRGGBB, as shown (tone and colour-blind help) */
+uint32_t vdp_color_raw(uint16_t cram);                             /* 0x00RRGGBB, as the console makes it */
 
 extern Vdp vdp;
 extern VdpOptions vdp_opts;

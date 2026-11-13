@@ -1,6 +1,7 @@
-/* Launcher: a settings screen shown before the game. The Gold Armlet floats over a desert
- * at dusk with the four spirits circling it (launcher_scene.c); the settings sit on a stone
- * tablet with one tab per spirit, and the game's soundtrack plays through a built-in player,
+/* Launcher: a settings screen shown before the game. The game's case stands on the left like
+ * a collector's steelbook of dark brushed steel and holographic foil (foil.c), with the
+ * title from the ROM; the settings sit on a tablet of the same steel with six tabs, and the
+ * game's soundtrack plays through a built-in player,
  * with the game's own menu sounds for every choice.
  *
  * The artwork comes from the user's own ROM: the launcher runs the game's intro
@@ -160,7 +161,10 @@ static void art_capture(void) {
     static uint32_t fb[320 * 240];
     int extra = vdp_opts.extra_width;
     bool mask = vdp_opts.mask_sides;
+    int tone = vdp_opts.tone, blind = vdp_opts.color_blind;
     vdp_opts.extra_width = 0;
+    vdp_opts.tone = VDP_TONE_ORIGINAL;            /* the art is cached as the console draws it */
+    vdp_opts.color_blind = VDP_BLIND_OFF;
     widescreen_patches(0);
     /* Start from blank save RAM so the intro plays the same for everyone. */
     uint8_t *sram = malloc(SRAM_SIZE);
@@ -197,6 +201,8 @@ static void art_capture(void) {
     free(sram);
     vdp_opts.extra_width = extra;
     vdp_opts.mask_sides = mask;
+    vdp_opts.tone = tone;
+    vdp_opts.color_blind = blind;
     widescreen_patches(extra);
     pad_state[0] = 0;
     if (armlet.w && (logo.w || strcmp(game->id, "us"))) art_save_cache();
@@ -589,7 +595,7 @@ int launcher_ost_check(int seconds) {
     return ok ? 0 : 1;
 }
 
-/* ---- The tablet: four tabs, one per spirit ---------------------------------------- */
+/* ---- The tablet: six tabs of settings -------------------------------------------------- */
 typedef enum { ROW_OPTION, ROW_ROM, ROW_CONTROLS, ROW_TRACK, ROW_OUTFIT } RowKind;
 typedef struct { RowKind kind; const char *label; int id; const char *about; } Row;
 
@@ -607,6 +613,8 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Texture pack", OPT_TEXPACK, "High-resolution tile replacements from a folder in texture_packs." } },
     { { ROW_OPTION, "Lighting", OPT_LIGHTING, "Fire, magic and bright light glow into their surroundings." },
       { ROW_OPTION, "HDR look", OPT_HDR, "Deeper shadows, brighter highlights, richer colour." },
+      { ROW_OPTION, "Colour tone", OPT_TONE, "Warm sunlit gold, cool moonlit blue, or vivid colour." },
+      { ROW_OPTION, "Colour-blind help", OPT_BLIND, "Moves apart colours a red-, green- or blue-blind eye sees as one." },
       { ROW_OPTION, "Spirit effects", OPT_ELEMENTS, "The spirits and their magic give off embers, drops, wisps or leaves." },
       { ROW_OPTION, "Water", OPT_WATER, "Water swells, foams at the shore, glints and reflects what stands above it." },
       { ROW_OPTION, "Footsteps", OPT_FOOTSTEPS, "Ali kicks up dust, grass or splashes as he walks." },
@@ -636,7 +644,7 @@ static const Row tab_rows[TABS][9] = {
       { ROW_OPTION, "Merged finishing pass", OPT_MERGED, "The CPU's effects in one pass over the picture." },
       { ROW_OPTION, "AVX2 pixel loops", OPT_AVX2, "Eight pixels at a time, on CPUs that have AVX2." } },
 };
-static const int tab_count[TABS] = { 9, 7, 9, 5, 6, 5 };
+static const int tab_count[TABS] = { 9, 9, 9, 5, 6, 5 };
 
 /* ---- Layout (1280x720 units) ------------------------------------------------------- */
 #define CASE_X 84                       /* the steelbook */
@@ -681,7 +689,6 @@ static struct {
     float changed_t0;                   /* when a value last changed (it pulses) */
     float selected_t0;                  /* when the selection last moved (the preview fades in) */
     int changed_item;
-    float flash;                        /* the spirits' flare on a choice, fading */
     float t;
 } ui;
 
@@ -735,7 +742,6 @@ static void open_tab(int tab) {
     ui.selected_t0 = ui.t;
     ui.snap = true;
     if (ui.selected >= 0 && ui.selected < 100 && ui.selected >= tab_count[tab]) ui.selected = tab_count[tab] - 1;
-    ui.flash = 1;
     music_sfx(SFX_CURSOR);
 }
 
@@ -1216,7 +1222,6 @@ static void row_action(SDL_Window *win, int dir) {
     ui.changed_item = ui.selected;
     ui.changed_dir = dir ? dir : 1;
     ui.changed_t0 = ui.t;
-    ui.flash = 1;
     music_sfx(SFX_CONFIRM);
 }
 
